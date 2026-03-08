@@ -18,7 +18,7 @@ import {
 	parseFramedChunk,
 } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import type { AeadId, KdfId, KeyConfig } from "./keyConfig.js";
+import { type AeadId, type KdfId, type KeyConfig, isValidAeadId, isValidKdfId } from "./keyConfig.js";
 import { concat } from "./utils.js";
 
 /**
@@ -109,20 +109,25 @@ export class OHTTPClient {
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 
-		// Find the first matching symmetric algorithm
-		const kdfId = suite.KDF.id as KdfId;
-		const aeadId = suite.AEAD.id as AeadId;
+		// Validate and extract cipher suite IDs
+		const rawKdfId = suite.KDF.id;
+		const rawAeadId = suite.AEAD.id;
 
+		if (!isValidKdfId(rawKdfId) || !isValidAeadId(rawAeadId)) {
+			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+		}
+
+		// Find the first matching symmetric algorithm
 		const matchingAlgo = keyConfig.symmetricAlgorithms.find(
-			(a) => a.kdfId === kdfId && a.aeadId === aeadId,
+			(a) => a.kdfId === rawKdfId && a.aeadId === rawAeadId,
 		);
 
 		if (matchingAlgo === undefined) {
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 		}
 
-		this.kdfId = kdfId;
-		this.aeadId = aeadId;
+		this.kdfId = rawKdfId;
+		this.aeadId = rawAeadId;
 	}
 
 	/**
@@ -187,20 +192,25 @@ export class ChunkedOHTTPClient {
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
 
-		// Find the first matching symmetric algorithm
-		const kdfId = suite.KDF.id as KdfId;
-		const aeadId = suite.AEAD.id as AeadId;
+		// Validate and extract cipher suite IDs
+		const rawKdfId = suite.KDF.id;
+		const rawAeadId = suite.AEAD.id;
 
+		if (!isValidKdfId(rawKdfId) || !isValidAeadId(rawAeadId)) {
+			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+		}
+
+		// Find the first matching symmetric algorithm
 		const matchingAlgo = keyConfig.symmetricAlgorithms.find(
-			(a) => a.kdfId === kdfId && a.aeadId === aeadId,
+			(a) => a.kdfId === rawKdfId && a.aeadId === rawAeadId,
 		);
 
 		if (matchingAlgo === undefined) {
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 		}
 
-		this.kdfId = kdfId;
-		this.aeadId = aeadId;
+		this.kdfId = rawKdfId;
+		this.aeadId = rawAeadId;
 	}
 
 	/**

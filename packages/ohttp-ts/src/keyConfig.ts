@@ -346,115 +346,23 @@ export async function deriveKeyConfig(
 }
 
 /**
- * Derive public key bytes from private key bytes using WebCrypto
- *
- * Works for X25519 and ECDH curves (P-256, P-384, P-521).
- */
-async function derivePublicKeyFromPrivate(
-	kemId: KemId,
-	privateKeyBytes: Uint8Array,
-): Promise<Uint8Array> {
-	switch (kemId) {
-		case KemId.X25519_HKDF_SHA256: {
-			// X25519: Import as private, export public component
-			const privateKey = await crypto.subtle.importKey(
-				"raw",
-				privateKeyBytes,
-				{ name: "X25519" },
-				true,
-				["deriveBits"],
-			);
-			// Get the public key by exporting the key pair info
-			const jwk = await crypto.subtle.exportKey("jwk", privateKey);
-			if (jwk.x === undefined) {
-				throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
-			}
-			// JWK 'x' is the public key, base64url encoded
-			return base64UrlDecode(jwk.x);
-		}
-		case KemId.P256_HKDF_SHA256:
-		case KemId.P384_HKDF_SHA384:
-		case KemId.P521_HKDF_SHA512: {
-			// ECDH: Need to import as PKCS8 or JWK with 'd' parameter
-			// For raw private key bytes, we construct JWK
-			const curveName =
-				kemId === KemId.P256_HKDF_SHA256
-					? "P-256"
-					: kemId === KemId.P384_HKDF_SHA384
-						? "P-384"
-						: "P-521";
-
-			// For NIST curves, the private key is the 'd' value
-			// We need to derive the public point (x, y) from the scalar
-			// This requires elliptic curve multiplication which WebCrypto doesn't expose directly
-			// We'd need to import with the public key or use a library
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-		}
-		case KemId.X448_HKDF_SHA512:
-			// X448 not widely supported in WebCrypto yet
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-		default:
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-	}
-}
-
-/**
- * Decode base64url string to Uint8Array
- */
-function base64UrlDecode(str: string): Uint8Array {
-	// Add padding if needed
-	const padded = str + "=".repeat((4 - (str.length % 4)) % 4);
-	// Convert base64url to base64
-	const base64 = padded.replace(/-/g, "+").replace(/_/g, "/");
-	const binary = atob(base64);
-	const bytes = new Uint8Array(binary.length);
-	for (let i = 0; i < binary.length; i++) {
-		bytes[i] = binary.charCodeAt(i);
-	}
-	return bytes;
-}
-
-/**
- * Import a private key to create a KeyConfigWithPrivate
- *
- * Derives the public key from the private key. Currently only supports X25519.
- * For NIST curves (P-256, P-384, P-521), use the overload that accepts both keys.
- *
- * @param suite - HPKE cipher suite
- * @param keyId - Key identifier (0-255)
- * @param privateKeyBytes - Serialized private key
- * @param symmetricAlgorithms - Supported symmetric algorithms
- */
-export async function importKeyConfig(
-	suite: CipherSuite,
-	keyId: number,
-	privateKeyBytes: Uint8Array,
-	symmetricAlgorithms: readonly SymmetricAlgorithm[],
-): Promise<KeyConfigWithPrivate>;
-
-/**
  * Import a key pair to create a KeyConfigWithPrivate
  *
+ * Both public and private key bytes are required since deriving the public key
+ * from the private key is KEM-specific and not exposed by the hpke library.
+ *
  * @param suite - HPKE cipher suite
  * @param keyId - Key identifier (0-255)
+ * @param publicKeyBytes - Serialized public key
  * @param privateKeyBytes - Serialized private key
- * @param publicKeyBytes - Serialized public key (required for NIST curves)
  * @param symmetricAlgorithms - Supported symmetric algorithms
  */
 export async function importKeyConfig(
 	suite: CipherSuite,
 	keyId: number,
+	publicKeyBytes: Uint8Array,
 	privateKeyBytes: Uint8Array,
-	publicKeyBytesOrAlgorithms: Uint8Array | readonly SymmetricAlgorithm[],
-	symmetricAlgorithms?: readonly SymmetricAlgorithm[],
-): Promise<KeyConfigWithPrivate>;
-
-export async function importKeyConfig(
-	suite: CipherSuite,
-	keyId: number,
-	privateKeyBytes: Uint8Array,
-	publicKeyBytesOrAlgorithms: Uint8Array | readonly SymmetricAlgorithm[],
-	symmetricAlgorithmsArg?: readonly SymmetricAlgorithm[],
+	symmetricAlgorithms: readonly SymmetricAlgorithm[],
 ): Promise<KeyConfigWithPrivate> {
 	if (keyId < 0 || keyId > 255) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
@@ -464,23 +372,6 @@ export async function importKeyConfig(
 	const kemId = suite.KEM.id;
 	if (!isValidKemId(kemId)) {
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-	}
-
-	let publicKeyBytes: Uint8Array;
-	let symmetricAlgorithms: readonly SymmetricAlgorithm[];
-
-	// Determine overload based on argument types
-	if (publicKeyBytesOrAlgorithms instanceof Uint8Array) {
-		// Overload with explicit public key
-		publicKeyBytes = publicKeyBytesOrAlgorithms;
-		if (symmetricAlgorithmsArg === undefined) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
-		}
-		symmetricAlgorithms = symmetricAlgorithmsArg;
-	} else {
-		// Overload with derived public key
-		symmetricAlgorithms = publicKeyBytesOrAlgorithms;
-		publicKeyBytes = await derivePublicKeyFromPrivate(kemId, privateKeyBytes);
 	}
 
 	const publicKey = await suite.DeserializePublicKey(publicKeyBytes);

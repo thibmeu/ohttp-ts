@@ -1,7 +1,7 @@
 import type { CipherSuite, Key, RecipientContext, SenderContext } from "hpke";
 import { encode as encodeVarint, decode as decodeVarint } from "quicvarint";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import type { AeadId, KdfId, KemId, KeyConfig, KeyConfigWithPrivate } from "./keyConfig.js";
+import { KemId, type AeadId, type KdfId, type KeyConfig, type KeyConfigWithPrivate } from "./keyConfig.js";
 import { concat, encodeNumber, encodeString, xor } from "./utils.js";
 
 /**
@@ -17,13 +17,16 @@ export const CHUNKED_REQUEST_LABEL = "message/bhttp chunked request";
 export const CHUNKED_RESPONSE_LABEL = "message/bhttp chunked response";
 
 /**
- * Encapsulated request header structure
+ * Encapsulated request header structure (raw wire values)
+ *
+ * Note: kemId, kdfId, aeadId are raw numbers from the wire.
+ * They must be validated against supported values before use.
  */
 export interface EncapsulatedRequestHeader {
 	readonly keyId: number;
-	readonly kemId: KemId;
-	readonly kdfId: KdfId;
-	readonly aeadId: AeadId;
+	readonly kemId: number;
+	readonly kdfId: number;
+	readonly aeadId: number;
 	readonly enc: Uint8Array;
 }
 
@@ -35,9 +38,9 @@ export interface EncapsulatedRequestHeader {
  */
 export function buildRequestInfo(
 	keyId: number,
-	kemId: KemId,
-	kdfId: KdfId,
-	aeadId: AeadId,
+	kemId: number,
+	kdfId: number,
+	aeadId: number,
 	label: string = DEFAULT_REQUEST_LABEL,
 ): Uint8Array {
 	const hdr = concat(
@@ -57,9 +60,9 @@ export function buildRequestInfo(
  */
 export function buildRequestHeader(
 	keyId: number,
-	kemId: KemId,
-	kdfId: KdfId,
-	aeadId: AeadId,
+	kemId: number,
+	kdfId: number,
+	aeadId: number,
 ): Uint8Array {
 	return concat(
 		encodeNumber(keyId, 1),
@@ -71,18 +74,21 @@ export function buildRequestHeader(
 
 /**
  * Get the encapsulated secret length for a KEM
+ *
+ * @param kemId - KEM identifier (validated internally)
+ * @throws OHTTPError if kemId is not a supported KEM
  */
-export function getEncLength(kemId: KemId): number {
+export function getEncLength(kemId: number): number {
 	switch (kemId) {
-		case 0x0020: // X25519
+		case KemId.X25519_HKDF_SHA256:
 			return 32;
-		case 0x0021: // X448
+		case KemId.X448_HKDF_SHA512:
 			return 56;
-		case 0x0010: // P-256
+		case KemId.P256_HKDF_SHA256:
 			return 65;
-		case 0x0011: // P-384
+		case KemId.P384_HKDF_SHA384:
 			return 97;
-		case 0x0012: // P-521
+		case KemId.P521_HKDF_SHA512:
 			return 133;
 		default:
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
@@ -98,6 +104,9 @@ export function getResponseNonceLength(suite: CipherSuite): number {
 
 /**
  * Parse an encapsulated request header
+ *
+ * Returns raw wire values. Caller must validate kemId/kdfId/aeadId
+ * against supported values before use.
  */
 export function parseRequestHeader(
 	data: Uint8Array,
@@ -111,11 +120,13 @@ export function parseRequestHeader(
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
 
+	// Read raw wire values - validation happens in consumer
 	const kemId = ((data[1] ?? 0) << 8) | (data[2] ?? 0);
 	const kdfId = ((data[3] ?? 0) << 8) | (data[4] ?? 0);
 	const aeadId = ((data[5] ?? 0) << 8) | (data[6] ?? 0);
 
-	const encLength = getEncLength(kemId as KemId);
+	// getEncLength validates kemId is supported, throws if not
+	const encLength = getEncLength(kemId);
 	if (data.length < 7 + encLength) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
@@ -125,9 +136,9 @@ export function parseRequestHeader(
 	return {
 		header: {
 			keyId,
-			kemId: kemId as KemId,
-			kdfId: kdfId as KdfId,
-			aeadId: aeadId as AeadId,
+			kemId,
+			kdfId,
+			aeadId,
 			enc,
 		},
 		offset: 7 + encLength,
@@ -525,15 +536,24 @@ export interface ParsedChunk {
 /**
  * Parse a framed chunk, returning the ciphertext and whether it's final
  *
- * Returns undefined if not enough data available
+ * Returns undefined if not enough data available.
+ * Throws OHTTPError if varint encoding is malformed.
  */
 export function parseFramedChunk(data: Uint8Array): ParsedChunk | undefined {
 	if (data.length === 0) {
 		return undefined;
 	}
 
-	// Decode varint length
-	const { value: length, usize: varintLength } = decodeVarint(data);
+	// Decode varint length - may throw on malformed input
+	let length: number;
+	let varintLength: number;
+	try {
+		const result = decodeVarint(data);
+		length = result.value;
+		varintLength = result.usize;
+	} catch {
+		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+	}
 
 	if (length === 0) {
 		// Final chunk - extends to end of stream
