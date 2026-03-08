@@ -12,7 +12,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/ohttp-ts:
+  packages/ohttp:
     dependencies:
       '@dajiaji/bhttp':
         specifier: npm:@jsr/dajiaji__bhttp@^0.3.6
