@@ -182,6 +182,40 @@ describe("RFC 9458 Appendix A test vectors", () => {
 	// The round-trip tests above verify correctness.
 });
 
+describe("Interoperability with chris-wood/ohttp-js", () => {
+	it("decrypts a request encapsulated by ohttp-js", async () => {
+		// Test vector from ohttp-js: https://github.com/chris-wood/ohttp-js
+		// This is a known-good encapsulated request that ohttp-js can produce/parse
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		// Seed used in ohttp-js test: "Request label bug" test
+		const seed = fromHex(
+			"4504e22451e6535cac1e894e35b07541c00f8aa245b8360c06433c46859a79d7",
+		);
+		expect(seed).toBeDefined();
+		if (!seed) throw new Error("Invalid seed");
+
+		const keyConfig = await deriveKeyConfig(suite, seed, 0x01, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const server = new OHTTPServer([keyConfig]);
+
+		// Encapsulated request from ohttp-js test
+		const encodedClientRequest = fromHex(
+			"010020000100016f026e20fa4024c3852641f91177cf188c70b341d20e4f51ee8e8f1b6ad9a8566bd28fa76ce7869a0db0555f251db8411c32f4686661db5141d76e6dcc538c30a6e6cb6d0b1554ec9d5a6256b2fec49b47ebec510e70d12f249744d638a3275168e56e4c4cebd56288091ae448a1d42f6573611b32242907dfa3ed589e4537821d",
+		);
+		expect(encodedClientRequest).toBeDefined();
+		if (!encodedClientRequest) throw new Error("Invalid request");
+
+		const { request } = await server.decapsulate(encodedClientRequest);
+
+		// The request should be a binary HTTP message for the OHTTP spec URL
+		// Just verify we can decrypt it
+		expect(request.length).toBeGreaterThan(0);
+	});
+});
+
 describe("OHTTP error handling", () => {
 	it("produces opaque decryption errors", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
