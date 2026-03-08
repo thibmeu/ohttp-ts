@@ -17,7 +17,7 @@ import {
 	serializeKeyConfig,
 	serializeKeyConfigs,
 } from "../src/keyConfig.js";
-import { fromHex, toHex } from "../src/utils.js";
+import { fromHex, toHex } from "./test-utils.js";
 import rfc9458Vectors from "./vectors/rfc9458.json";
 
 describe("KeyConfig serialization", () => {

@@ -50,12 +50,13 @@
   "homepage": "https://github.com/thibmeu/ohttp-ts#readme",
   "dependencies": {
     "@dajiaji/bhttp": "npm:@jsr/dajiaji__bhttp@^0.3.6",
-    "hpke": "^1.0.6",
     "@panva/hpke-noble": "^1.0.6",
+    "hpke": "^1.0.6",
     "quicvarint": "^0.1.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "@hpke/chacha20poly1305": "^1.7.1",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

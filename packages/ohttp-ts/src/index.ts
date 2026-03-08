@@ -8,9 +8,6 @@ export const VERSION = "0.0.1";
 // Errors
 export { OHTTPError, OHTTPErrorCode, isOHTTPError } from "./errors.js";
 
-// Utils
-export { constantTimeEqual, fromHex, toHex } from "./utils.js";
-
 // Key configuration
 export {
 	AeadId,

@@ -20,7 +20,8 @@ import {
 	generateKeyConfig,
 } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
-import { concat, fromHex, toHex } from "../src/utils.js";
+import { concat } from "../src/utils.js";
+import { fromHex, toHex } from "./test-utils.js";
 import chunkedVectors from "./vectors/chunked-ohttp-08.json";
 
 describe("chunk framing", () => {

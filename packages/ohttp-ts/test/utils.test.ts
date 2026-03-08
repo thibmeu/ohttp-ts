@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-	concat,
-	constantTimeEqual,
-	decodeNumber,
-	encodeNumber,
-	encodeString,
-	fromHex,
-	toHex,
-	xor,
-} from "../src/utils.js";
+import { concat, decodeNumber, encodeNumber, encodeString, xor } from "../src/utils.js";
+import { constantTimeEqual, fromHex, toHex } from "./test-utils.js";
 
 describe("toHex", () => {
 	it("encodes empty array", () => {
@@ -108,8 +100,18 @@ describe("encodeNumber", () => {
 		expect(encodeNumber(0xffff, 2)).toEqual(new Uint8Array([0xff, 0xff]));
 	});
 
-	it("encodes with zero padding", () => {
+	it("encodes four bytes with zero padding", () => {
 		expect(encodeNumber(1, 4)).toEqual(new Uint8Array([0x00, 0x00, 0x00, 0x01]));
+	});
+
+	it("encodes arbitrary length for nonce counter", () => {
+		// 12-byte encoding for AEAD nonce XOR
+		expect(encodeNumber(1, 12)).toEqual(
+			new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+		);
+		expect(encodeNumber(0x0102, 12)).toEqual(
+			new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2]),
+		);
 	});
 });
 
@@ -122,12 +124,16 @@ describe("decodeNumber", () => {
 		expect(decodeNumber(new Uint8Array([0x01, 0x02]))).toBe(0x0102);
 	});
 
-	it("returns undefined for too many bytes", () => {
-		expect(decodeNumber(new Uint8Array(7))).toBeUndefined();
+	it("decodes four bytes big-endian", () => {
+		expect(decodeNumber(new Uint8Array([0x00, 0x00, 0x00, 0x01]))).toBe(1);
+		expect(decodeNumber(new Uint8Array([0x12, 0x34, 0x56, 0x78]))).toBe(0x12345678);
 	});
 
-	it("handles empty array", () => {
-		expect(decodeNumber(new Uint8Array([]))).toBe(0);
+	it("returns undefined for unsupported lengths", () => {
+		expect(decodeNumber(new Uint8Array([]))).toBeUndefined();
+		expect(decodeNumber(new Uint8Array(3))).toBeUndefined();
+		expect(decodeNumber(new Uint8Array(5))).toBeUndefined();
+		expect(decodeNumber(new Uint8Array(12))).toBeUndefined();
 	});
 });
 
