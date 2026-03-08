@@ -644,8 +644,10 @@ export function computeChunkNonce(baseNonce: Uint8Array, counter: number): Uint8
 	// XOR counter bytes from the right
 	let c = counter;
 	for (let i = baseNonce.length - 1; i >= 0 && c > 0; i--) {
-		// biome-ignore lint/style/noNonNullAssertion: loop bounds guarantee valid index
-		result[i] ^= c & 0xff;
+		const current = result[i];
+		if (current !== undefined) {
+			result[i] = current ^ (c & 0xff);
+		}
 		c = Math.floor(c / 256);
 	}
 	return result;
