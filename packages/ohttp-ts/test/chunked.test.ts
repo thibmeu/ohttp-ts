@@ -9,6 +9,7 @@ import { ChunkedOHTTPClient } from "../src/client.js";
 import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
+	computeChunkNonce,
 	frameChunk,
 	parseFramedChunk,
 } from "../src/encapsulation.js";
@@ -498,5 +499,99 @@ describe("chunked OHTTP error handling", () => {
 		);
 
 		expect(decryptedResponse).toEqual(response);
+	});
+});
+
+describe("chunk nonce computation", () => {
+	it("computes nonce correctly for counter 0", () => {
+		const baseNonce = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c]);
+		const nonce = computeChunkNonce(baseNonce, 0);
+		expect(nonce).toEqual(baseNonce);
+	});
+
+	it("computes nonce correctly for counter 1", () => {
+		const baseNonce = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+		const nonce = computeChunkNonce(baseNonce, 1);
+		expect(nonce[11]).toBe(0x01);
+		expect(nonce.slice(0, 11)).toEqual(new Uint8Array(11));
+	});
+
+	it("computes nonce correctly for counter 256", () => {
+		const baseNonce = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+		const nonce = computeChunkNonce(baseNonce, 256);
+		expect(nonce[10]).toBe(0x01);
+		expect(nonce[11]).toBe(0x00);
+	});
+
+	it("computes nonce correctly for max counter (2^32 - 1)", () => {
+		const baseNonce = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+		const maxCounter = 2 ** 32 - 1;
+		const nonce = computeChunkNonce(baseNonce, maxCounter);
+		expect(nonce[8]).toBe(0xff);
+		expect(nonce[9]).toBe(0xff);
+		expect(nonce[10]).toBe(0xff);
+		expect(nonce[11]).toBe(0xff);
+	});
+});
+
+describe("varint edge cases", () => {
+	it("frames and parses 2-byte varint (length 64)", () => {
+		const data = new Uint8Array(64).fill(0xab);
+		const framed = frameChunk(data, false);
+		expect(framed[0]).toBe(0x40);
+		expect(framed[1]).toBe(0x40);
+		const parsed = parseFramedChunk(framed);
+		expect(parsed?.ciphertext).toEqual(data);
+		expect(parsed?.isFinal).toBe(false);
+	});
+
+	it("frames and parses 4-byte varint (length 16384)", () => {
+		const data = new Uint8Array(16384).fill(0xcd);
+		const framed = frameChunk(data, false);
+		expect((framed[0] ?? 0) & 0xc0).toBe(0x80);
+		const parsed = parseFramedChunk(framed);
+		expect(parsed?.ciphertext).toEqual(data);
+		expect(parsed?.isFinal).toBe(false);
+	});
+
+	it("throws for incomplete varint", () => {
+		// 2-byte varint marker (0x40) but only 1 byte provided - can't parse
+		const incomplete = new Uint8Array([0x40]);
+		expect(() => parseFramedChunk(incomplete)).toThrow(OHTTPError);
+	});
+
+	it("returns undefined for truncated chunk data", () => {
+		const truncated = new Uint8Array([10, 1, 2, 3, 4, 5]);
+		expect(parseFramedChunk(truncated)).toBeUndefined();
+	});
+});
+
+describe("empty chunk handling", () => {
+	it("handles zero-length non-final chunk in streaming", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		const client = new ChunkedOHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+		const requestCtx = await client.createRequestContext();
+
+		// Seal and frame chunks - sealChunk returns raw ciphertext, need to frame it
+		const emptySealed = await requestCtx.sealChunk(new Uint8Array(0));
+		const emptyFramed = frameChunk(emptySealed, false);
+
+		const finalSealed = await requestCtx.sealFinalChunk(new Uint8Array([1, 2, 3]));
+		const finalFramed = frameChunk(finalSealed, true);
+
+		const fullRequest = concat(requestCtx.header, emptyFramed, finalFramed);
+		const { request: decrypted } = await server.decapsulate(fullRequest);
+
+		// Empty chunk + [1,2,3] should give us [1,2,3]
+		expect(decrypted).toEqual(new Uint8Array([1, 2, 3]));
 	});
 });

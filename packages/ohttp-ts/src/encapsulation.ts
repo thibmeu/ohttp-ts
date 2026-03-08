@@ -396,13 +396,17 @@ export async function decapsulateResponse(
 // Helper functions for HKDF operations using the suite's KDF
 
 /**
- * Convert Uint8Array to ArrayBuffer (handles SharedArrayBuffer case)
+ * Get ArrayBuffer from Uint8Array, copying if backed by SharedArrayBuffer.
+ * WebCrypto requires ArrayBuffer, not SharedArrayBuffer.
  */
-function toArrayBuffer(data: Uint8Array): ArrayBuffer {
-	// Create a new ArrayBuffer and copy the data
-	const buffer = new ArrayBuffer(data.byteLength);
-	new Uint8Array(buffer).set(data);
-	return buffer;
+function asArrayBuffer(data: Uint8Array): ArrayBuffer {
+	if (data.buffer instanceof SharedArrayBuffer) {
+		const copy = new ArrayBuffer(data.byteLength);
+		new Uint8Array(copy).set(data);
+		return copy;
+	}
+	// Return a view of the underlying buffer at the correct offset
+	return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
 }
 
 async function extractPrk(
@@ -421,15 +425,11 @@ async function extractPrk(
 			? "SHA-384"
 			: "SHA-512";
 
-	// Convert to ArrayBuffer for WebCrypto compatibility
-	const saltBuffer = toArrayBuffer(salt);
-	const ikmBuffer = toArrayBuffer(ikm);
-
-	const key = await crypto.subtle.importKey("raw", saltBuffer, { name: "HMAC", hash: algorithm }, false, [
+	const key = await crypto.subtle.importKey("raw", asArrayBuffer(salt), { name: "HMAC", hash: algorithm }, false, [
 		"sign",
 	]);
 
-	const prk = await crypto.subtle.sign("HMAC", key, ikmBuffer);
+	const prk = await crypto.subtle.sign("HMAC", key, asArrayBuffer(ikm));
 	return new Uint8Array(prk);
 }
 
@@ -449,18 +449,14 @@ async function expandPrk(
 	const n = Math.ceil(length / hashLen);
 	const okm = new Uint8Array(n * hashLen);
 
-	// Convert to ArrayBuffer for WebCrypto compatibility
-	const prkBuffer = toArrayBuffer(prk);
-
-	const key = await crypto.subtle.importKey("raw", prkBuffer, { name: "HMAC", hash: algorithm }, false, [
+	const key = await crypto.subtle.importKey("raw", asArrayBuffer(prk), { name: "HMAC", hash: algorithm }, false, [
 		"sign",
 	]);
 
 	let t = new Uint8Array(0);
 	for (let i = 1; i <= n; i++) {
 		const input = concat(t, info, new Uint8Array([i]));
-		const inputBuffer = toArrayBuffer(input);
-		const block = await crypto.subtle.sign("HMAC", key, inputBuffer);
+		const block = await crypto.subtle.sign("HMAC", key, asArrayBuffer(input));
 		t = new Uint8Array(block);
 		okm.set(t, (i - 1) * hashLen);
 	}
@@ -478,19 +474,13 @@ async function sealWithRawAead(
 	const algorithm = aead.name.includes("AES") ? "AES-GCM" : "ChaCha20-Poly1305";
 
 	if (algorithm === "AES-GCM") {
-		// Convert to ArrayBuffer for WebCrypto compatibility
-		const keyBuffer = toArrayBuffer(key);
-		const nonceBuffer = toArrayBuffer(nonce);
-		const aadBuffer = toArrayBuffer(aad);
-		const plaintextBuffer = toArrayBuffer(plaintext);
-
-		const cryptoKey = await crypto.subtle.importKey("raw", keyBuffer, { name: "AES-GCM" }, false, [
+		const cryptoKey = await crypto.subtle.importKey("raw", asArrayBuffer(key), { name: "AES-GCM" }, false, [
 			"encrypt",
 		]);
 		const ct = await crypto.subtle.encrypt(
-			{ name: "AES-GCM", iv: nonceBuffer, additionalData: aadBuffer },
+			{ name: "AES-GCM", iv: asArrayBuffer(nonce), additionalData: asArrayBuffer(aad) },
 			cryptoKey,
-			plaintextBuffer,
+			asArrayBuffer(plaintext),
 		);
 		return new Uint8Array(ct);
 	}
@@ -508,19 +498,13 @@ async function openWithRawAead(
 	const algorithm = aead.name.includes("AES") ? "AES-GCM" : "ChaCha20-Poly1305";
 
 	if (algorithm === "AES-GCM") {
-		// Convert to ArrayBuffer for WebCrypto compatibility
-		const keyBuffer = toArrayBuffer(key);
-		const nonceBuffer = toArrayBuffer(nonce);
-		const aadBuffer = toArrayBuffer(aad);
-		const ciphertextBuffer = toArrayBuffer(ciphertext);
-
-		const cryptoKey = await crypto.subtle.importKey("raw", keyBuffer, { name: "AES-GCM" }, false, [
+		const cryptoKey = await crypto.subtle.importKey("raw", asArrayBuffer(key), { name: "AES-GCM" }, false, [
 			"decrypt",
 		]);
 		const pt = await crypto.subtle.decrypt(
-			{ name: "AES-GCM", iv: nonceBuffer, additionalData: aadBuffer },
+			{ name: "AES-GCM", iv: asArrayBuffer(nonce), additionalData: asArrayBuffer(aad) },
 			cryptoKey,
-			ciphertextBuffer,
+			asArrayBuffer(ciphertext),
 		);
 		return new Uint8Array(pt);
 	}

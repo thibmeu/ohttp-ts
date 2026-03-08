@@ -268,4 +268,43 @@ describe("OHTTP error handling", () => {
 			});
 		}).toThrow(OHTTPError);
 	});
+
+	it("rejects request with truncated header", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const server = new OHTTPServer([serverKeyConfig]);
+
+		// Truncated request - only keyId + kemId (3 bytes), missing rest of header
+		const truncated = new Uint8Array([1, 0, 0x20]);
+
+		await expect(server.decapsulate(truncated)).rejects.toThrow(OHTTPError);
+	});
+
+	it("rejects response with wrong nonce length", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const client = new OHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+
+		const request = new Uint8Array([1, 2, 3]);
+		const { context } = await client.encapsulate(request);
+
+		// Response nonce should be 16 bytes for AES-128-GCM (max(Nn=12, Nk=16))
+		// Send a truncated response with only 8 bytes of nonce
+		const badResponse = new Uint8Array(8 + 16 + 16); // 8-byte nonce + fake ciphertext
+
+		await expect(context.decryptResponse(badResponse)).rejects.toThrow();
+	});
 });
