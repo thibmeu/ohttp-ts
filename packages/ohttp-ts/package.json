@@ -1,5 +1,5 @@
 {
-  "name": "ohttp-ts",
+  "name": "ohttp",
   "version": "0.0.1",
   "description": "Oblivious HTTP (RFC 9458) implementation with chunked extension support",
   "type": "module",
@@ -25,6 +25,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "vitest bench",
     "lint": "biome check src test",
     "format": "biome format --write src test",
     "typecheck": "tsc --noEmit"
