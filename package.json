@@ -58,6 +58,8 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
     "@hpke/chacha20poly1305": "^1.7.1",
+    "esbuild": "^0.27.3",
+    "esbuild-visualizer": "^0.7.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

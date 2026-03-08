@@ -4,13 +4,24 @@ import { concat } from "./utils.js";
 
 /**
  * HPKE KEM identifiers (RFC 9458 Section 3.1)
+ *
+ * Includes post-quantum ML-KEM variants from @panva/hpke-noble
  */
 export const KemId = {
-	X25519_HKDF_SHA256: 0x0020,
-	X448_HKDF_SHA512: 0x0021,
+	// Standard KEMs (RFC 9180)
 	P256_HKDF_SHA256: 0x0010,
 	P384_HKDF_SHA384: 0x0011,
 	P521_HKDF_SHA512: 0x0012,
+	X25519_HKDF_SHA256: 0x0020,
+	X448_HKDF_SHA512: 0x0021,
+	// Post-quantum KEMs (ML-KEM, FIPS 203)
+	ML_KEM_512: 0x0040,
+	ML_KEM_768: 0x0041,
+	ML_KEM_1024: 0x0042,
+	// Hybrid KEMs
+	MLKEM768_P256: 0x0050,
+	MLKEM1024_P384: 0x0051,
+	MLKEM768_X25519: 0x647a,
 } as const;
 
 export type KemId = (typeof KemId)[keyof typeof KemId];
@@ -47,11 +58,20 @@ export type AeadId = (typeof AeadId)[keyof typeof AeadId];
  */
 export function isValidKemId(id: number): id is KemId {
 	return (
-		id === KemId.X25519_HKDF_SHA256 ||
-		id === KemId.X448_HKDF_SHA512 ||
+		// Standard KEMs
 		id === KemId.P256_HKDF_SHA256 ||
 		id === KemId.P384_HKDF_SHA384 ||
-		id === KemId.P521_HKDF_SHA512
+		id === KemId.P521_HKDF_SHA512 ||
+		id === KemId.X25519_HKDF_SHA256 ||
+		id === KemId.X448_HKDF_SHA512 ||
+		// Post-quantum KEMs
+		id === KemId.ML_KEM_512 ||
+		id === KemId.ML_KEM_768 ||
+		id === KemId.ML_KEM_1024 ||
+		// Hybrid KEMs
+		id === KemId.MLKEM768_P256 ||
+		id === KemId.MLKEM1024_P384 ||
+		id === KemId.MLKEM768_X25519
 	);
 }
 
@@ -106,6 +126,7 @@ export interface KeyConfigWithPrivate extends KeyConfig {
  */
 export function getPublicKeyLength(kemId: KemId): number {
 	switch (kemId) {
+		// Standard KEMs
 		case KemId.X25519_HKDF_SHA256:
 			return 32;
 		case KemId.X448_HKDF_SHA512:
@@ -116,6 +137,20 @@ export function getPublicKeyLength(kemId: KemId): number {
 			return 97;
 		case KemId.P521_HKDF_SHA512:
 			return 133;
+		// ML-KEM (FIPS 203)
+		case KemId.ML_KEM_512:
+			return 800;
+		case KemId.ML_KEM_768:
+			return 1184;
+		case KemId.ML_KEM_1024:
+			return 1568;
+		// Hybrid KEMs (ML-KEM + ECDH)
+		case KemId.MLKEM768_P256:
+			return 1184 + 65; // ML-KEM-768 + P-256 uncompressed
+		case KemId.MLKEM1024_P384:
+			return 1568 + 97; // ML-KEM-1024 + P-384 uncompressed
+		case KemId.MLKEM768_X25519:
+			return 1184 + 32; // ML-KEM-768 + X25519
 		default:
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
