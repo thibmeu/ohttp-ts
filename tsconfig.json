@@ -13,6 +13,8 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
-    "exactOptionalPropertyTypes": true
-  }
+    "exactOptionalPropertyTypes": true,
+    "outDir": "./dist"
+  },
+  "include": ["src"]
 }

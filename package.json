@@ -1,13 +1,68 @@
 {
-  "name": "ohttp-ts-workspace",
-  "private": true,
+  "name": "ohttp-ts",
+  "version": "0.0.1",
+  "description": "Oblivious HTTP (RFC 9458) implementation with chunked extension support",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
-    "format": "pnpm -r format"
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "vitest bench",
+    "lint": "biome check src test",
+    "format": "biome format --write src test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "ohttp",
+    "oblivious-http",
+    "hpke",
+    "privacy",
+    "encryption",
+    "rfc9458",
+    "cloudflare-workers"
+  ],
+  "author": "Thibault Meunier",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thibmeu/ohttp-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thibmeu/ohttp-ts/issues"
+  },
+  "homepage": "https://github.com/thibmeu/ohttp-ts#readme",
+  "dependencies": {
+    "@dajiaji/bhttp": "npm:@jsr/dajiaji__bhttp@^0.3.6",
+    "@panva/hpke-noble": "^1.0.6",
+    "hpke": "^1.0.6",
+    "quicvarint": "^0.1.4"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "@biomejs/biome": "^1.9.0",
+    "@hpke/chacha20poly1305": "^1.7.1",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

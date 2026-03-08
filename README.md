@@ -1,7 +1,7 @@
-# ohttp
+# ohttp-ts
 
-[![NPM](https://img.shields.io/npm/v/ohttp?style=flat-square)](https://www.npmjs.com/package/ohttp)
-[![License](https://img.shields.io/npm/l/ohttp?style=flat-square)](LICENSE)
+[![NPM](https://img.shields.io/npm/v/ohttp-ts?style=flat-square)](https://www.npmjs.com/package/ohttp-ts)
+[![License](https://img.shields.io/npm/l/ohttp-ts?style=flat-square)](LICENSE)
 
 TypeScript implementation of Oblivious HTTP (OHTTP) with streaming support.
 
@@ -17,18 +17,18 @@ TypeScript implementation of Oblivious HTTP (OHTTP) with streaming support.
 ## Installation
 
 ```bash
-npm install ohttp hpke
+npm install ohttp-ts hpke
 # or
-pnpm add ohttp hpke
+pnpm add ohttp-ts hpke
 ```
 
-See [`packages/ohttp/examples/`](packages/ohttp/examples/) for complete examples.
+See [`examples/`](examples/) for complete examples.
 
 ## Quick Start
 
 ```typescript
 import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM } from "hpke";
-import { KeyConfig, OHTTPClient, OHTTPServer, AeadId, KdfId } from "ohttp";
+import { KeyConfig, OHTTPClient, OHTTPServer, AeadId, KdfId } from "ohttp-ts";
 
 // Gateway: generate key configuration
 const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
@@ -83,7 +83,7 @@ const decryptedResponse = await context.decryptResponse(encapsulatedResponse);
 For large payloads or streaming responses:
 
 ```typescript
-import { ChunkedOHTTPClient, ChunkedOHTTPServer } from "ohttp";
+import { ChunkedOHTTPClient, ChunkedOHTTPServer } from "ohttp-ts";
 
 const gateway = new ChunkedOHTTPServer([keyConfig], { maxChunkSize: 16384 });
 const client = new ChunkedOHTTPClient(suite, keyConfig, { maxChunkSize: 16384 });
@@ -132,7 +132,7 @@ const bytes = KeyConfig.serializeMultiple(configs);
 ### Algorithm IDs
 
 ```typescript
-import { KemId, KdfId, AeadId } from "ohttp";
+import { KemId, KdfId, AeadId } from "ohttp-ts";
 
 // KEM algorithms
 KemId.P256_HKDF_SHA256    // 0x0010
@@ -155,7 +155,7 @@ AeadId.ChaCha20Poly1305 // 0x0003 (parsing only, not implemented)
 ### Media Types
 
 ```typescript
-import { MediaType } from "ohttp";
+import { MediaType } from "ohttp-ts";
 
 MediaType.KEYS              // "application/ohttp-keys"
 MediaType.REQUEST           // "message/ohttp-req"
@@ -167,7 +167,7 @@ MediaType.CHUNKED_RESPONSE  // "message/ohttp-chunked-res"
 ### Incremental Header
 
 ```typescript
-import { Incremental } from "ohttp";
+import { Incremental } from "ohttp-ts";
 
 // Parse header value
 const isIncremental = Incremental.parse("?1");  // true
@@ -182,7 +182,7 @@ const value = Incremental.get(headers);  // true | false | undefined
 ### Error Handling
 
 ```typescript
-import { OHTTPError, OHTTPErrorCode, isOHTTPError } from "ohttp";
+import { OHTTPError, OHTTPErrorCode, isOHTTPError } from "ohttp-ts";
 
 try {
   await gateway.decapsulate(malformedRequest);

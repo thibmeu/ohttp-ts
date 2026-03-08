@@ -13,7 +13,7 @@ See [README.md](README.md) for usage, API reference, and installation.
 ## Architecture
 
 ```
-packages/ohttp/src/
+src/
 ├── index.ts           # unified exports
 ├── keyConfig.ts       # KeyConfig parse/serialize/derive
 ├── client.ts          # OHTTPClient, ChunkedOHTTPClient
@@ -72,7 +72,7 @@ packages/ohttp/src/
 
 ## Testing
 
-- Tests in `packages/ohttp/test/`
+- Tests in `test/`
 - RFC 9458 Appendix A test vectors
 - draft-08 Appendix A chunked vectors
 - Deterministic tests via `KeyConfig.derive()`
