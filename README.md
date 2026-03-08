@@ -35,15 +35,29 @@ const publicKeyBytes = KeyConfig.serialize(keyConfig);
 const clientKeyConfig = KeyConfig.parse(publicKeyBytes);
 const client = new OHTTPClient(suite, clientKeyConfig);
 
-// Encapsulate request (Binary HTTP encoded, see below)
-const { encapsulatedRequest, context } = await client.encapsulate(binaryHttpRequest);
+// Client: encapsulate HTTP request
+const httpRequest = new Request("https://target.example/api", {
+  method: "POST",
+  body: JSON.stringify({ data: "sensitive" }),
+});
+const { request: relayRequest, context } = await client.encapsulateRequest(
+  httpRequest,
+  "https://relay.example/ohttp",
+);
 
-// Gateway: decapsulate and respond
-const { request, context: serverContext } = await gateway.decapsulate(encapsulatedRequest);
-const encapsulatedResponse = await serverContext.encryptResponse(binaryHttpResponse);
+// Send to relay: fetch(relayRequest)
 
-// Client: decrypt response
-const response = await context.decryptResponse(encapsulatedResponse);
+// Gateway: decapsulate request
+const { request: innerRequest, context: serverContext } = await gateway.decapsulateRequest(relayRequest);
+// innerRequest is the original Request object
+
+// Gateway: encapsulate response
+const httpResponse = new Response(JSON.stringify({ result: "ok" }), { status: 200 });
+const encapsulatedResponse = await serverContext.encapsulateResponse(httpResponse);
+
+// Client: decapsulate response
+const innerResponse = await context.decapsulateResponse(encapsulatedResponse);
+// innerResponse is the original Response object
 ```
 
 ### Protocol Flow
@@ -70,34 +84,14 @@ const response = await context.decryptResponse(encapsulatedResponse);
 
 ## Binary HTTP
 
-OHTTP encapsulates [Binary HTTP (RFC 9292)](https://www.rfc-editor.org/rfc/rfc9292.html) messages. Use `@dajiaji/bhttp` to encode/decode:
+OHTTP encapsulates [Binary HTTP (RFC 9292)](https://www.rfc-editor.org/rfc/rfc9292.html) messages. The high-level API (`encapsulateRequest`, `decapsulateRequest`, etc.) handles encoding automatically.
 
-```bash
-npm install @dajiaji/bhttp
-```
+For advanced use cases, the low-level bytes API is also available:
 
 ```typescript
-import { BHttpEncoder, BHttpDecoder } from "@dajiaji/bhttp";
-
-const encoder = new BHttpEncoder();
-const decoder = new BHttpDecoder();
-
-// Client: encode HTTP request to binary format
-const httpRequest = new Request("https://target.example/api", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ data: "sensitive" }),
-});
-const binaryRequest = await encoder.encodeRequest(httpRequest);
-
-// Encapsulate with OHTTP
-const { encapsulatedRequest, context } = await client.encapsulate(binaryRequest);
-
-// ... relay to gateway ...
-
-// Gateway: decapsulate and decode
-const { request: binaryReq, context: serverCtx } = await gateway.decapsulate(encapsulatedRequest);
-const httpReq = decoder.decodeRequest(binaryReq);
+// Low-level API: work with raw Binary HTTP bytes
+const { encapsulatedRequest, context } = await client.encapsulate(binaryHttpBytes);
+const { request: binaryBytes, context: serverCtx } = await gateway.decapsulate(encapsulatedRequest);
 ```
 
 See [`examples/bhttp.example.ts`](examples/bhttp.example.ts) for a complete example.
@@ -108,7 +102,7 @@ See [`examples/bhttp.example.ts`](examples/bhttp.example.ts) for a complete exam
 |---------|-------------|
 | [`ohttp.example.ts`](examples/ohttp.example.ts) | Basic OHTTP round-trip |
 | [`chunked.example.ts`](examples/chunked.example.ts) | Streaming with chunked OHTTP |
-| [`bhttp.example.ts`](examples/bhttp.example.ts) | Binary HTTP encoding |
+| [`bhttp.example.ts`](examples/bhttp.example.ts) | Request/Response API |
 | [`mlkem.example.ts`](examples/mlkem.example.ts) | Post-quantum with ML-KEM-768 |
 
 ## Post-Quantum Support

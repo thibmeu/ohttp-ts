@@ -3,14 +3,14 @@
 
 import { obliviousHTTP } from "./ohttp.example.js";
 import { chunkedOHTTP } from "./chunked.example.js";
-import { obliviousHTTPWithBinaryHTTP } from "./bhttp.example.js";
+import { obliviousHTTPWithRequestResponse } from "./bhttp.example.js";
 import { postQuantumOHTTP } from "./mlkem.example.js";
 
 async function main() {
 	const results = await Promise.all([
 		obliviousHTTP().then((ok) => ({ name: "Oblivious HTTP (RFC 9458)", ok })),
 		chunkedOHTTP().then((ok) => ({ name: "Chunked OHTTP (draft-08)", ok })),
-		obliviousHTTPWithBinaryHTTP().then((ok) => ({ name: "OHTTP + Binary HTTP (RFC 9292)", ok })),
+		obliviousHTTPWithRequestResponse().then((ok) => ({ name: "OHTTP Request/Response API", ok })),
 		postQuantumOHTTP().then((ok) => ({ name: "Post-Quantum OHTTP (ML-KEM-768)", ok })),
 	]);
 

@@ -1,4 +1,5 @@
 import type { RecipientContext } from "hpke";
+import { MediaType, bhttp } from "./constants.js";
 import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
@@ -19,7 +20,7 @@ import {
 } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 import type { KeyConfigWithPrivate } from "./keyConfig.js";
-import { concat } from "./utils.js";
+import { concat, toArrayBuffer } from "./utils.js";
 
 /**
  * Options for OHTTP server
@@ -44,7 +45,7 @@ export interface ChunkedOHTTPServerOptions {
 }
 
 /**
- * Result of decapsulating a request
+ * Result of decapsulating a request (bytes API)
  */
 export interface DecapsulatedRequest {
 	/** The decrypted binary HTTP request */
@@ -54,11 +55,29 @@ export interface DecapsulatedRequest {
 }
 
 /**
- * Server context for encrypting responses
+ * Result of decapsulating a request (Request/Response API)
+ */
+export interface DecapsulatedHttpRequest {
+	/** The decrypted HTTP request */
+	readonly request: Request;
+	/** Context needed to encrypt the response */
+	readonly context: HttpServerContext;
+}
+
+/**
+ * Server context for encrypting responses (bytes API)
  */
 export interface ServerContext {
 	/** Encrypt a response */
 	encryptResponse(response: Uint8Array): Promise<Uint8Array>;
+}
+
+/**
+ * Server context for encrypting responses (Request/Response API)
+ */
+export interface HttpServerContext {
+	/** Encrypt a response and return as OHTTP Response */
+	encapsulateResponse(response: Response): Promise<Response>;
 }
 
 /**
@@ -108,10 +127,10 @@ export class OHTTPServer {
 	}
 
 	/**
-	 * Decapsulate an encrypted request
+	 * Decapsulate an encrypted request (low-level API)
 	 *
 	 * @param encapsulatedRequest - The encapsulated request bytes
-	 * @returns The decrypted request and context for encrypting the response
+	 * @returns The decrypted request bytes and context for encrypting the response
 	 */
 	async decapsulate(encapsulatedRequest: Uint8Array): Promise<DecapsulatedRequest> {
 		const ctx = await decapsulateRequest(encapsulatedRequest, this.keyConfigs, this.requestLabel);
@@ -130,6 +149,62 @@ export class OHTTPServer {
 			request: ctx.request,
 			context,
 		};
+	}
+
+	/**
+	 * Decapsulate an OHTTP Request (high-level API)
+	 *
+	 * Decrypts and decodes Binary HTTP to return the inner Request.
+	 *
+	 * @param request - The OHTTP request from the relay
+	 * @returns The decrypted inner Request and context for encapsulating the response
+	 */
+	async decapsulateRequest(request: Request): Promise<DecapsulatedHttpRequest> {
+		// Validate content type
+		const contentType = request.headers.get("content-type");
+		if (contentType !== MediaType.REQUEST) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+		}
+
+		// Read and decrypt
+		const encapsulatedRequest = new Uint8Array(await request.arrayBuffer());
+		const { request: binaryRequest, context: bytesContext } =
+			await this.decapsulate(encapsulatedRequest);
+
+		// Decode Binary HTTP to Request
+		let innerRequest: Request;
+		try {
+			innerRequest = bhttp.decoder.decodeRequest(binaryRequest);
+		} catch {
+			// Wrap bhttp errors as opaque DecryptionFailed to prevent info leak
+			throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+		}
+
+		// Create HTTP context
+		const context: HttpServerContext = {
+			async encapsulateResponse(response: Response): Promise<Response> {
+				// Encode response to Binary HTTP
+				let binaryResponse: Uint8Array;
+				try {
+					binaryResponse = await bhttp.encoder.encodeResponse(response);
+				} catch {
+					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+				}
+
+				// Encrypt
+				const encapsulatedResponse = await bytesContext.encryptResponse(binaryResponse);
+
+				// Return as OHTTP response
+				return new Response(toArrayBuffer(encapsulatedResponse), {
+					status: 200,
+					headers: {
+						"Content-Type": MediaType.RESPONSE,
+					},
+				});
+			},
+		};
+
+		return { request: innerRequest, context };
 	}
 }
 

@@ -1,4 +1,5 @@
 import type { CipherSuite, SenderContext } from "hpke";
+import { MediaType, bhttp } from "./constants.js";
 import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
@@ -25,7 +26,7 @@ import {
 	isValidAeadId,
 	isValidKdfId,
 } from "./keyConfig.js";
-import { concat } from "./utils.js";
+import { concat, toArrayBuffer } from "./utils.js";
 
 /**
  * Options for OHTTP client
@@ -50,7 +51,7 @@ export interface ChunkedOHTTPClientOptions {
 }
 
 /**
- * Result of encapsulating a request
+ * Result of encapsulating a request (bytes API)
  */
 export interface EncapsulatedRequest {
 	/** The encapsulated request bytes */
@@ -60,11 +61,29 @@ export interface EncapsulatedRequest {
 }
 
 /**
- * Client context for decrypting responses
+ * Result of encapsulating a request (Request/Response API)
+ */
+export interface EncapsulatedHttpRequest {
+	/** The encapsulated request as a Request object (POST, Content-Type: message/ohttp-req) */
+	readonly request: Request;
+	/** Context needed to decrypt the response */
+	readonly context: HttpClientContext;
+}
+
+/**
+ * Client context for decrypting responses (bytes API)
  */
 export interface ClientContext {
 	/** Decrypt an encapsulated response */
 	decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array>;
+}
+
+/**
+ * Client context for decrypting responses (Request/Response API)
+ */
+export interface HttpClientContext {
+	/** Decrypt an encapsulated response and decode to HTTP Response */
+	decapsulateResponse(response: Response): Promise<Response>;
 }
 
 /**
@@ -137,10 +156,10 @@ export class OHTTPClient {
 	}
 
 	/**
-	 * Encapsulate an HTTP request
+	 * Encapsulate a binary HTTP request (low-level API)
 	 *
-	 * @param request - The binary HTTP request to encapsulate
-	 * @returns The encapsulated request and context for decrypting the response
+	 * @param request - The binary HTTP request bytes to encapsulate
+	 * @returns The encapsulated request bytes and context for decrypting the response
 	 */
 	async encapsulate(request: Uint8Array): Promise<EncapsulatedRequest> {
 		// Deserialize the public key
@@ -169,6 +188,68 @@ export class OHTTPClient {
 			encapsulatedRequest: ctx.encapsulatedRequest,
 			context,
 		};
+	}
+
+	/**
+	 * Encapsulate an HTTP Request (high-level API)
+	 *
+	 * Encodes the request using Binary HTTP (RFC 9292), then encapsulates with OHTTP.
+	 * Returns a Request object ready to send to the relay.
+	 *
+	 * @param request - The HTTP Request to encapsulate
+	 * @param relayUrl - The URL of the OHTTP relay
+	 * @returns A Request for the relay and context for decapsulating the response
+	 */
+	async encapsulateRequest(request: Request, relayUrl: string): Promise<EncapsulatedHttpRequest> {
+		// Encode request to Binary HTTP
+		let binaryRequest: Uint8Array;
+		try {
+			binaryRequest = await bhttp.encoder.encodeRequest(request);
+		} catch {
+			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+		}
+
+		// Encapsulate
+		const { encapsulatedRequest, context: bytesContext } = await this.encapsulate(binaryRequest);
+
+		// Create HTTP context
+		const context: HttpClientContext = {
+			async decapsulateResponse(response: Response): Promise<Response> {
+				// Validate content type
+				const contentType = response.headers.get("content-type");
+				if (contentType !== MediaType.RESPONSE) {
+					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+				}
+
+				// Read and decrypt
+				const encapsulatedResponse = new Uint8Array(await response.arrayBuffer());
+				let binaryResponse: Uint8Array;
+				try {
+					binaryResponse = await bytesContext.decryptResponse(encapsulatedResponse);
+				} catch {
+					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+				}
+
+				// Decode Binary HTTP to Response
+				try {
+					return bhttp.decoder.decodeResponse(binaryResponse);
+				} catch {
+					// Wrap bhttp errors as opaque DecryptionFailed to prevent info leak
+					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+				}
+			},
+		};
+
+		// Build relay request
+		const relayRequest = new Request(relayUrl, {
+			method: "POST",
+			headers: {
+				"Content-Type": MediaType.REQUEST,
+			},
+			body: toArrayBuffer(encapsulatedRequest),
+		});
+
+		return { request: relayRequest, context };
 	}
 }
 

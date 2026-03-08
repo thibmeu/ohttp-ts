@@ -7,6 +7,7 @@ import {
 } from "hpke";
 import { describe, expect, it } from "vitest";
 import { OHTTPClient } from "../src/client.js";
+import { MediaType } from "../src/constants.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
 	AeadId,
@@ -306,5 +307,152 @@ describe("OHTTP error handling", () => {
 		const badResponse = new Uint8Array(8 + 16 + 16); // 8-byte nonce + fake ciphertext
 
 		await expect(context.decryptResponse(badResponse)).rejects.toThrow();
+	});
+});
+
+describe("OHTTP Request/Response API", () => {
+	it("round-trips HTTP Request/Response", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const client = new OHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+
+		const server = new OHTTPServer([serverKeyConfig]);
+
+		// Client creates and encapsulates HTTP Request
+		const httpRequest = new Request("https://target.example.com/api/data", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ query: "test" }),
+		});
+
+		const { request: relayRequest, context: clientContext } = await client.encapsulateRequest(
+			httpRequest,
+			"https://relay.example.com/ohttp",
+		);
+
+		// Verify relay request format
+		expect(relayRequest.method).toBe("POST");
+		expect(relayRequest.headers.get("content-type")).toBe(MediaType.REQUEST);
+
+		// Server decapsulates
+		const { request: innerRequest, context: serverContext } =
+			await server.decapsulateRequest(relayRequest);
+
+		// Verify inner request
+		expect(innerRequest.url).toBe("https://target.example.com/api/data");
+		expect(innerRequest.method).toBe("POST");
+		expect(innerRequest.headers.get("content-type")).toBe("application/json");
+		const body = await innerRequest.json();
+		expect(body).toEqual({ query: "test" });
+
+		// Server creates and encapsulates response
+		const httpResponse = new Response(JSON.stringify({ result: "success" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+
+		const encapsulatedResponse = await serverContext.encapsulateResponse(httpResponse);
+
+		// Verify encapsulated response format
+		expect(encapsulatedResponse.status).toBe(200);
+		expect(encapsulatedResponse.headers.get("content-type")).toBe(MediaType.RESPONSE);
+
+		// Client decapsulates response
+		const innerResponse = await clientContext.decapsulateResponse(encapsulatedResponse);
+
+		// Verify inner response
+		expect(innerResponse.status).toBe(200);
+		expect(innerResponse.headers.get("content-type")).toBe("application/json");
+		const responseBody = await innerResponse.json();
+		expect(responseBody).toEqual({ result: "success" });
+	});
+
+	it("rejects request with wrong content-type", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const server = new OHTTPServer([serverKeyConfig]);
+
+		// Request with wrong content-type
+		const badRequest = new Request("https://relay.example.com/ohttp", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "{}",
+		});
+
+		await expect(server.decapsulateRequest(badRequest)).rejects.toThrow(OHTTPError);
+	});
+
+	it("rejects response with wrong content-type", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const client = new OHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+
+		const httpRequest = new Request("https://target.example.com/", { method: "GET" });
+		const { context } = await client.encapsulateRequest(httpRequest, "https://relay.example.com/");
+
+		// Response with wrong content-type
+		const badResponse = new Response("data", {
+			headers: { "Content-Type": "text/plain" },
+		});
+
+		await expect(context.decapsulateResponse(badResponse)).rejects.toThrow(OHTTPError);
+	});
+
+	it("wraps bhttp decode errors as opaque DecryptionFailed", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const server = new OHTTPServer([serverKeyConfig]);
+		const client = new OHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+
+		// Create valid OHTTP encapsulation but with invalid binary HTTP inside
+		const invalidBinaryHttp = new Uint8Array([0xff, 0xff, 0xff]); // Invalid binary HTTP
+		const { encapsulatedRequest, context } = await client.encapsulate(invalidBinaryHttp);
+
+		// Server decrypts successfully but bhttp decode fails
+		// Error should be opaque DecryptionFailed
+		try {
+			// Build a proper OHTTP request
+			const ohttpRequest = new Request("https://relay.example.com/", {
+				method: "POST",
+				headers: { "Content-Type": MediaType.REQUEST },
+				body: encapsulatedRequest,
+			});
+			await server.decapsulateRequest(ohttpRequest);
+			expect.fail("Should have thrown");
+		} catch (e) {
+			expect(e).toBeInstanceOf(OHTTPError);
+			expect((e as OHTTPError).code).toBe(OHTTPErrorCode.DecryptionFailed);
+		}
 	});
 });

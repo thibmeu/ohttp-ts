@@ -11,3 +11,13 @@ export function concat(...arrays: Uint8Array[]): Uint8Array {
 	}
 	return result;
 }
+
+/**
+ * Convert Uint8Array to ArrayBuffer for use as BodyInit.
+ * Creates a copy to ensure it's a plain ArrayBuffer (not SharedArrayBuffer).
+ */
+export function toArrayBuffer(data: Uint8Array): ArrayBuffer {
+	const buffer = new ArrayBuffer(data.byteLength);
+	new Uint8Array(buffer).set(data);
+	return buffer;
+}

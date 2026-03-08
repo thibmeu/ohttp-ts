@@ -11,9 +11,6 @@ importers:
       '@dajiaji/bhttp':
         specifier: npm:@jsr/dajiaji__bhttp@^0.3.6
         version: '@jsr/dajiaji__bhttp@0.3.6'
-      '@panva/hpke-noble':
-        specifier: ^1.0.6
-        version: 1.0.6(hpke@1.0.6)
       hpke:
         specifier: ^1.0.6
         version: 1.0.6
@@ -27,6 +24,9 @@ importers:
       '@hpke/chacha20poly1305':
         specifier: ^1.7.1
         version: 1.7.1
+      '@panva/hpke-noble':
+        specifier: ^1.0.6
+        version: 1.0.6(hpke@1.0.6)
       esbuild:
         specifier: ^0.27.3
         version: 0.27.3

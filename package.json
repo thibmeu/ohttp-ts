@@ -1,6 +1,6 @@
 {
   "name": "ohttp-ts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Oblivious HTTP (RFC 9458) implementation with chunked extension support",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -51,13 +51,13 @@
   "homepage": "https://github.com/thibmeu/ohttp-ts#readme",
   "dependencies": {
     "@dajiaji/bhttp": "npm:@jsr/dajiaji__bhttp@^0.3.6",
-    "@panva/hpke-noble": "^1.0.6",
     "hpke": "^1.0.6",
     "quicvarint": "^0.1.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
     "@hpke/chacha20poly1305": "^1.7.1",
+    "@panva/hpke-noble": "^1.0.6",
     "esbuild": "^0.27.3",
     "esbuild-visualizer": "^0.7.0",
     "tsup": "^8.3.0",

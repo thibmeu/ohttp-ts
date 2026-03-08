@@ -3,8 +3,6 @@
 // Chunked OHTTP: https://www.ietf.org/archive/id/draft-ietf-ohai-chunked-ohttp-08.txt
 // Incremental: https://www.ietf.org/archive/id/draft-ietf-httpbis-incremental-04.txt
 
-export const VERSION = "0.0.1";
-
 // ============================================================================
 // Errors
 // ============================================================================
@@ -22,7 +20,9 @@ export {
 	type ChunkedRequestContext,
 	type ChunkedResponseContext,
 	type ClientContext,
+	type EncapsulatedHttpRequest,
 	type EncapsulatedRequest,
+	type HttpClientContext,
 	type OHTTPClientOptions,
 } from "./client.js";
 
@@ -32,7 +32,9 @@ export {
 	type ChunkedOHTTPServerOptions,
 	type ChunkedServerRequestContext,
 	type ChunkedServerResponseContext,
+	type DecapsulatedHttpRequest,
 	type DecapsulatedRequest,
+	type HttpServerContext,
 	type OHTTPServerOptions,
 	type ServerContext,
 } from "./server.js";
@@ -97,19 +99,7 @@ export type SymmetricAlgorithm = SymmetricAlgorithmType;
 // Media Types (RFC 9458 Section 9, draft-ietf-ohai-chunked-ohttp-08 Section 8)
 // ============================================================================
 
-/** OHTTP media types for Content-Type headers */
-export const MediaType = {
-	/** Key configuration: application/ohttp-keys (RFC 9458 Section 9.1) */
-	KEYS: "application/ohttp-keys",
-	/** Encapsulated request: message/ohttp-req (RFC 9458 Section 9.2) */
-	REQUEST: "message/ohttp-req",
-	/** Encapsulated response: message/ohttp-res (RFC 9458 Section 9.3) */
-	RESPONSE: "message/ohttp-res",
-	/** Chunked encapsulated request: message/ohttp-chunked-req (draft-08 Section 8.1) */
-	CHUNKED_REQUEST: "message/ohttp-chunked-req",
-	/** Chunked encapsulated response: message/ohttp-chunked-res (draft-08 Section 8.2) */
-	CHUNKED_RESPONSE: "message/ohttp-chunked-res",
-} as const;
+export { MediaType } from "./constants.js";
 
 // ============================================================================
 // Labels namespace
