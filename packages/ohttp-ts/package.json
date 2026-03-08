@@ -48,6 +48,7 @@
     "url": "https://github.com/thibmeu/ohttp-ts/issues"
   },
   "homepage": "https://github.com/thibmeu/ohttp-ts#readme",
+  "readme": "../../README.md",
   "dependencies": {
     "@dajiaji/bhttp": "npm:@jsr/dajiaji__bhttp@^0.3.6",
     "@panva/hpke-noble": "^1.0.6",
