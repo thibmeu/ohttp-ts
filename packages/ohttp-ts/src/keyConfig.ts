@@ -1,6 +1,6 @@
 import type { CipherSuite, Key, KeyPair } from "hpke";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { concat, decodeNumber, encodeNumber } from "./utils.js";
+import { concat } from "./utils.js";
 
 /**
  * HPKE KEM identifiers (RFC 9458 §3.1)
@@ -127,23 +127,29 @@ export function getPublicKeyLength(kemId: KemId): number {
  * - Symmetric Algorithms (4 bytes each: KDF ID + AEAD ID)
  */
 export function serializeKeyConfig(config: KeyConfig): Uint8Array {
-	const symmetricAlgorithmsBytes = new Uint8Array(config.symmetricAlgorithms.length * 4);
-	for (let i = 0; i < config.symmetricAlgorithms.length; i++) {
-		const algo = config.symmetricAlgorithms[i];
-		if (algo === undefined) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
-		}
-		symmetricAlgorithmsBytes.set(encodeNumber(algo.kdfId, 2), i * 4);
-		symmetricAlgorithmsBytes.set(encodeNumber(algo.aeadId, 2), i * 4 + 2);
+	const symAlgosLen = config.symmetricAlgorithms.length * 4;
+	// keyId(1) + kemId(2) + publicKey + symAlgosLen(2) + symAlgos
+	const totalLen = 1 + 2 + config.publicKey.length + 2 + symAlgosLen;
+	const result = new Uint8Array(totalLen);
+	const view = new DataView(result.buffer);
+
+	let offset = 0;
+	view.setUint8(offset, config.keyId);
+	offset += 1;
+	view.setUint16(offset, config.kemId);
+	offset += 2;
+	result.set(config.publicKey, offset);
+	offset += config.publicKey.length;
+	view.setUint16(offset, symAlgosLen);
+	offset += 2;
+
+	for (const algo of config.symmetricAlgorithms) {
+		view.setUint16(offset, algo.kdfId);
+		view.setUint16(offset + 2, algo.aeadId);
+		offset += 4;
 	}
 
-	return concat(
-		encodeNumber(config.keyId, 1),
-		encodeNumber(config.kemId, 2),
-		config.publicKey,
-		encodeNumber(symmetricAlgorithmsBytes.length, 2),
-		symmetricAlgorithmsBytes,
-	);
+	return result;
 }
 
 /**
@@ -154,19 +160,16 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
 
+	const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 	let offset = 0;
 
 	// Key Identifier (1 byte)
-	const keyId = data[offset];
-	if (keyId === undefined) {
-		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
-	}
+	const keyId = view.getUint8(offset);
 	offset += 1;
 
 	// KEM ID (2 bytes)
-	const kemIdBytes = data.slice(offset, offset + 2);
-	const kemIdRaw = decodeNumber(kemIdBytes);
-	if (kemIdRaw === undefined || !isValidKemId(kemIdRaw)) {
+	const kemIdRaw = view.getUint16(offset);
+	if (!isValidKemId(kemIdRaw)) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
 	const kemId = kemIdRaw;
@@ -184,10 +187,7 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 	if (offset + 2 > data.length) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
-	const symmetricAlgorithmsLength = decodeNumber(data.slice(offset, offset + 2));
-	if (symmetricAlgorithmsLength === undefined) {
-		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
-	}
+	const symmetricAlgorithmsLength = view.getUint16(offset);
 	offset += 2;
 
 	// Symmetric algorithms must be multiple of 4 bytes
@@ -199,18 +199,16 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 	}
 
 	const symmetricAlgorithms: SymmetricAlgorithm[] = [];
-	for (let i = 0; i < symmetricAlgorithmsLength; i += 4) {
-		const kdfIdRaw = decodeNumber(data.slice(offset + i, offset + i + 2));
-		const aeadIdRaw = decodeNumber(data.slice(offset + i + 2, offset + i + 4));
-		if (kdfIdRaw === undefined || aeadIdRaw === undefined) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
-		}
+	const endOffset = offset + symmetricAlgorithmsLength;
+	while (offset < endOffset) {
+		const kdfIdRaw = view.getUint16(offset);
+		const aeadIdRaw = view.getUint16(offset + 2);
 		if (!isValidKdfId(kdfIdRaw) || !isValidAeadId(aeadIdRaw)) {
 			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 		}
 		symmetricAlgorithms.push({ kdfId: kdfIdRaw, aeadId: aeadIdRaw });
+		offset += 4;
 	}
-	offset += symmetricAlgorithmsLength;
 
 	if (symmetricAlgorithms.length === 0) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
@@ -235,15 +233,27 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
  * Format: For each config: 2-byte length prefix + serialized KeyConfig
  */
 export function serializeKeyConfigs(configs: readonly KeyConfig[]): Uint8Array {
-	const parts: Uint8Array[] = [];
-
+	// First pass: serialize all configs and calculate total size
+	const serialized: Uint8Array[] = [];
+	let totalLen = 0;
 	for (const config of configs) {
-		const serialized = serializeKeyConfig(config);
-		parts.push(encodeNumber(serialized.length, 2));
-		parts.push(serialized);
+		const s = serializeKeyConfig(config);
+		serialized.push(s);
+		totalLen += 2 + s.length; // 2-byte length prefix + config
 	}
 
-	return concat(...parts);
+	// Second pass: write to result buffer
+	const result = new Uint8Array(totalLen);
+	const view = new DataView(result.buffer);
+	let offset = 0;
+	for (const s of serialized) {
+		view.setUint16(offset, s.length);
+		offset += 2;
+		result.set(s, offset);
+		offset += s.length;
+	}
+
+	return result;
 }
 
 /**
@@ -251,6 +261,7 @@ export function serializeKeyConfigs(configs: readonly KeyConfig[]): Uint8Array {
  */
 export function parseKeyConfigs(data: Uint8Array): KeyConfig[] {
 	const configs: KeyConfig[] = [];
+	const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 	let offset = 0;
 
 	while (offset < data.length) {
@@ -258,10 +269,7 @@ export function parseKeyConfigs(data: Uint8Array): KeyConfig[] {
 			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 		}
 
-		const length = decodeNumber(data.slice(offset, offset + 2));
-		if (length === undefined) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
-		}
+		const length = view.getUint16(offset);
 		offset += 2;
 
 		if (offset + length > data.length) {

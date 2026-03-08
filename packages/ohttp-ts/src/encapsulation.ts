@@ -30,6 +30,28 @@ export interface EncapsulatedRequestHeader {
 	readonly enc: Uint8Array;
 }
 
+/** Header size: keyId(1) + kemId(2) + kdfId(2) + aeadId(2) = 7 bytes */
+const HEADER_SIZE = 7;
+
+/**
+ * Write request header fields into a buffer at the given offset
+ * Returns bytes written (always 7)
+ */
+function writeHeader(
+	view: DataView,
+	offset: number,
+	keyId: number,
+	kemId: number,
+	kdfId: number,
+	aeadId: number,
+): number {
+	view.setUint8(offset, keyId);
+	view.setUint16(offset + 1, kemId);
+	view.setUint16(offset + 3, kdfId);
+	view.setUint16(offset + 5, aeadId);
+	return HEADER_SIZE;
+}
+
 /**
  * Build the HPKE info string for request encryption (RFC 9458 §4.3)
  *
@@ -43,14 +65,15 @@ export function buildRequestInfo(
 	aeadId: number,
 	label: string = DEFAULT_REQUEST_LABEL,
 ): Uint8Array {
-	const hdr = concat(
-		encodeNumber(keyId, 1),
-		encodeNumber(kemId, 2),
-		encodeNumber(kdfId, 2),
-		encodeNumber(aeadId, 2),
-	);
+	const labelBytes = encodeString(label);
+	const result = new Uint8Array(labelBytes.length + 1 + HEADER_SIZE);
+	const view = new DataView(result.buffer);
 
-	return concat(encodeString(label), encodeNumber(0, 1), hdr);
+	result.set(labelBytes, 0);
+	view.setUint8(labelBytes.length, 0); // separator byte
+	writeHeader(view, labelBytes.length + 1, keyId, kemId, kdfId, aeadId);
+
+	return result;
 }
 
 /**
@@ -64,12 +87,10 @@ export function buildRequestHeader(
 	kdfId: number,
 	aeadId: number,
 ): Uint8Array {
-	return concat(
-		encodeNumber(keyId, 1),
-		encodeNumber(kemId, 2),
-		encodeNumber(kdfId, 2),
-		encodeNumber(aeadId, 2),
-	);
+	const result = new Uint8Array(HEADER_SIZE);
+	const view = new DataView(result.buffer);
+	writeHeader(view, 0, keyId, kemId, kdfId, aeadId);
+	return result;
 }
 
 /**
