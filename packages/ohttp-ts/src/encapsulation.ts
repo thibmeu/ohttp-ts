@@ -13,13 +13,13 @@ function encodeString(s: string): Uint8Array {
 }
 
 /**
- * Default labels for OHTTP request/response (RFC 9458 §4.3-4.4)
+ * Default labels for OHTTP request/response (RFC 9458 Section 4.3-4.4)
  */
 export const DEFAULT_REQUEST_LABEL = "message/bhttp request";
 export const DEFAULT_RESPONSE_LABEL = "message/bhttp response";
 
 /**
- * Labels for chunked OHTTP (draft-ietf-ohai-chunked-ohttp-08 §6.1-6.2)
+ * Labels for chunked OHTTP (draft-ietf-ohai-chunked-ohttp-08 Section 6.1-6.2)
  */
 export const CHUNKED_REQUEST_LABEL = "message/bhttp chunked request";
 export const CHUNKED_RESPONSE_LABEL = "message/bhttp chunked response";
@@ -61,7 +61,7 @@ function writeHeader(
 }
 
 /**
- * Build the HPKE info string for request encryption (RFC 9458 §4.3)
+ * Build the HPKE info string for request encryption (RFC 9458 Section 4.3)
  *
  * info = concat(encode_str(label), encode(1, 0), hdr)
  * where hdr = concat(encode(1, key_id), encode(2, kem_id), encode(2, kdf_id), encode(2, aead_id))
@@ -85,7 +85,7 @@ export function buildRequestInfo(
 }
 
 /**
- * Build the encapsulated request header (RFC 9458 §4.1)
+ * Build the encapsulated request header (RFC 9458 Section 4.1)
  *
  * hdr = concat(encode(1, key_id), encode(2, kem_id), encode(2, kdf_id), encode(2, aead_id))
  */
@@ -125,7 +125,7 @@ export function getEncLength(kemId: number): number {
 }
 
 /**
- * Get response nonce length: max(Nn, Nk) (RFC 9458 §4.2)
+ * Get response nonce length: max(Nn, Nk) (RFC 9458 Section 4.2)
  */
 export function getResponseNonceLength(suite: CipherSuite): number {
 	return Math.max(suite.AEAD.Nn, suite.AEAD.Nk);
@@ -205,7 +205,7 @@ export interface ServerEncapsulationContext {
 }
 
 /**
- * Encapsulate a request using HPKE (RFC 9458 §4.3)
+ * Encapsulate a request using HPKE (RFC 9458 Section 4.3)
  */
 export async function encapsulateRequest(
 	suite: CipherSuite,
@@ -240,7 +240,7 @@ export async function encapsulateRequest(
 }
 
 /**
- * Decapsulate a request using HPKE (RFC 9458 §4.3)
+ * Decapsulate a request using HPKE (RFC 9458 Section 4.3)
  */
 export async function decapsulateRequest(
 	encapsulatedRequest: Uint8Array,
@@ -303,7 +303,7 @@ export async function decapsulateRequest(
 }
 
 /**
- * Encapsulate a response using HPKE-derived keys (RFC 9458 §4.4)
+ * Encapsulate a response using HPKE-derived keys (RFC 9458 Section 4.4)
  */
 export async function encapsulateResponse(
 	serverContext: ServerEncapsulationContext,
@@ -356,7 +356,7 @@ export async function encapsulateResponse(
 }
 
 /**
- * Decapsulate a response using HPKE-derived keys (RFC 9458 §4.4)
+ * Decapsulate a response using HPKE-derived keys (RFC 9458 Section 4.4)
  */
 export async function decapsulateResponse(
 	clientContext: ClientEncapsulationContext,
@@ -494,7 +494,7 @@ async function sealWithRawAead(
 		);
 		return new Uint8Array(ct);
 	}
-	// ChaCha20-Poly1305 may not be available in all environments
+	// ChaCha20-Poly1305 not supported: WebCrypto lacks native support
 	throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 }
 
@@ -524,6 +524,7 @@ async function openWithRawAead(
 		);
 		return new Uint8Array(pt);
 	}
+	// ChaCha20-Poly1305 not supported: WebCrypto lacks native support
 	throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 }
 
@@ -532,12 +533,12 @@ async function openWithRawAead(
 // ============================================================================
 
 /**
- * Default maximum chunk size (draft-08 §3)
+ * Default maximum chunk size (draft-08 Section 3)
  */
 export const DEFAULT_MAX_CHUNK_SIZE = 16384;
 
 /**
- * AAD for final chunk (draft-08 §6.1-6.2)
+ * AAD for final chunk (draft-08 Section 6.1-6.2)
  */
 export const FINAL_CHUNK_AAD = encodeString("final");
 
@@ -608,7 +609,7 @@ export function parseFramedChunk(data: Uint8Array): ParsedChunk | undefined {
 }
 
 /**
- * Derive response AEAD key and base nonce for chunked responses (draft-08 §6.2)
+ * Derive response AEAD key and base nonce for chunked responses (draft-08 Section 6.2)
  */
 export async function deriveChunkedResponseKeys(
 	suite: CipherSuite,
@@ -635,7 +636,7 @@ export async function deriveChunkedResponseKeys(
 }
 
 /**
- * Compute chunk nonce by XORing base nonce with counter (draft-08 §6.2)
+ * Compute chunk nonce by XORing base nonce with counter (draft-08 Section 6.2)
  * Counter is encoded big-endian, right-aligned to nonce length
  */
 export function computeChunkNonce(baseNonce: Uint8Array, counter: number): Uint8Array {
@@ -654,7 +655,7 @@ export function computeChunkNonce(baseNonce: Uint8Array, counter: number): Uint8
 }
 
 /**
- * Seal a chunk for response (server-side, draft-08 §6.2)
+ * Seal a chunk for response (server-side, draft-08 Section 6.2)
  */
 export async function sealResponseChunk(
 	suite: CipherSuite,
@@ -670,7 +671,7 @@ export async function sealResponseChunk(
 }
 
 /**
- * Open a chunk from response (client-side, draft-08 §6.2)
+ * Open a chunk from response (client-side, draft-08 Section 6.2)
  */
 export async function openResponseChunk(
 	suite: CipherSuite,

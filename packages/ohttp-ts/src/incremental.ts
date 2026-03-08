@@ -37,7 +37,7 @@ export function serializeIncremental(incremental: boolean): string {
 export function parseIncremental(value: string): boolean | undefined {
 	const trimmed = value.trim();
 
-	// Per RFC 9651 §3.3.6, boolean is "?" followed by "0" or "1"
+	// Per RFC 9651 Section 3.3.6, boolean is "?" followed by "0" or "1"
 	// Parameters may follow after ";"
 	if (trimmed.startsWith("?1")) {
 		// Check for valid continuation (end of string, whitespace, or parameters)

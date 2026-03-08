@@ -3,7 +3,7 @@ import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 import { concat } from "./utils.js";
 
 /**
- * HPKE KEM identifiers (RFC 9458 §3.1)
+ * HPKE KEM identifiers (RFC 9458 Section 3.1)
  */
 export const KemId = {
 	X25519_HKDF_SHA256: 0x0020,
@@ -16,7 +16,7 @@ export const KemId = {
 export type KemId = (typeof KemId)[keyof typeof KemId];
 
 /**
- * HPKE KDF identifiers (RFC 9458 §3.1)
+ * HPKE KDF identifiers (RFC 9458 Section 3.1)
  */
 export const KdfId = {
 	HKDF_SHA256: 0x0001,
@@ -27,11 +27,16 @@ export const KdfId = {
 export type KdfId = (typeof KdfId)[keyof typeof KdfId];
 
 /**
- * HPKE AEAD identifiers (RFC 9458 §3.1)
+ * HPKE AEAD identifiers (RFC 9458 Section 3.1)
+ *
+ * Note: ChaCha20Poly1305 is defined for KeyConfig parsing but not implemented
+ * for encryption. WebCrypto doesn't support ChaCha20-Poly1305 natively.
+ * Use AES_128_GCM or AES_256_GCM for actual operations.
  */
 export const AeadId = {
 	AES_128_GCM: 0x0001,
 	AES_256_GCM: 0x0002,
+	/** Defined for parsing; not implemented for encryption (use AES-GCM) */
 	ChaCha20Poly1305: 0x0003,
 } as const;
 
@@ -73,7 +78,7 @@ export interface SymmetricAlgorithm {
 }
 
 /**
- * Key configuration for OHTTP (RFC 9458 §3.1)
+ * Key configuration for OHTTP (RFC 9458 Section 3.1)
  */
 export interface KeyConfig {
 	/** Key identifier (0-255) */
@@ -117,7 +122,7 @@ export function getPublicKeyLength(kemId: KemId): number {
 }
 
 /**
- * Serialize a KeyConfig to bytes (RFC 9458 §3.1)
+ * Serialize a KeyConfig to bytes (RFC 9458 Section 3.1)
  *
  * Format:
  * - Key Identifier (1 byte)
@@ -153,7 +158,7 @@ export function serializeKeyConfig(config: KeyConfig): Uint8Array {
 }
 
 /**
- * Parse a KeyConfig from bytes (RFC 9458 §3.1)
+ * Parse a KeyConfig from bytes (RFC 9458 Section 3.1)
  */
 export function parseKeyConfig(data: Uint8Array): KeyConfig {
 	if (data.length < 7) {
@@ -228,7 +233,7 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 }
 
 /**
- * Serialize key configurations to application/ohttp-keys format (RFC 9458 §3.2)
+ * Serialize key configurations to application/ohttp-keys format (RFC 9458 Section 3.2)
  *
  * Format: For each config: 2-byte length prefix + serialized KeyConfig
  */
@@ -257,7 +262,7 @@ export function serializeKeyConfigs(configs: readonly KeyConfig[]): Uint8Array {
 }
 
 /**
- * Parse application/ohttp-keys format to KeyConfig array (RFC 9458 §3.2)
+ * Parse application/ohttp-keys format to KeyConfig array (RFC 9458 Section 3.2)
  */
 export function parseKeyConfigs(data: Uint8Array): KeyConfig[] {
 	const configs: KeyConfig[] = [];

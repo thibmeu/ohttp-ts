@@ -269,15 +269,23 @@ export class ChunkedOHTTPClient {
 				);
 
 				let counter = 0;
+				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
+				const maxChunks = 2 ** 32;
 
 				return {
 					async openChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+						if (counter >= maxChunks) {
+							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+						}
 						const pt = await openResponseChunk(suite, aeadKey, aeadNonce, counter, ciphertext, false);
 						counter++;
 						return pt;
 					},
 
 					async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+						if (counter >= maxChunks) {
+							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+						}
 						return openResponseChunk(suite, aeadKey, aeadNonce, counter, ciphertext, true);
 					},
 				};
