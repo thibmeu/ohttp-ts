@@ -96,12 +96,16 @@ const { request: binaryBytes, context: serverCtx } = await gateway.decapsulate(e
 
 See [`examples/bhttp.example.ts`](examples/bhttp.example.ts) for a complete example.
 
+### Chunked OHTTP
+
+For streaming large responses, use `ChunkedOHTTPClient`/`ChunkedOHTTPServer` with the low-level bytes API. The high-level Request/Response API requires buffering the entire body for Binary HTTP encoding, so chunked mode operates on raw bytes only.
+
 ## Examples
 
 | Example | Description |
 |---------|-------------|
 | [`ohttp.example.ts`](examples/ohttp.example.ts) | Basic OHTTP round-trip |
-| [`chunked.example.ts`](examples/chunked.example.ts) | Streaming with chunked OHTTP |
+| [`chunked.example.ts`](examples/chunked.example.ts) | Streaming with chunked OHTTP (low-level bytes API) |
 | [`bhttp.example.ts`](examples/bhttp.example.ts) | Request/Response API |
 | [`mlkem.example.ts`](examples/mlkem.example.ts) | Post-quantum with ML-KEM-768 |
 
