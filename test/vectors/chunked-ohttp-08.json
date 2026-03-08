@@ -1,63 +1,63 @@
 {
-  "description": "Test vectors from draft-ietf-ohai-chunked-ohttp-08 Appendix A",
-  "vectors": [
-    {
-      "description": "Example from Appendix A",
-      "skR": "1c190d72acdbe4dbc69e680503bb781a932c70a12c8f3754434c67d8640d8698",
-      "keyConfig": "010020668eb21aace159803974a4c67f08b4152d29bed10735fd08f98ccdd6fe0957080008000100010001000300",
-      "keyId": 1,
-      "kemId": 32,
-      "kdfId": 1,
-      "aeadId": 1,
-      "request": "00034745540568747470730b6578616d706c652e636f6d012f",
-      "skE": "b26d565f3f875ed480d1abced3d665159650c99174fd0b124ac4bda0c64ae324",
-      "enc": "8811eb457e100811c40a0aa71340a1b81d804bb986f736f2f566a7199761a032",
-      "info": "6d6573736167652f6268747470206368756e6b65642072657175657374000100200001000100",
-      "requestChunks": [
-        {
-          "plaintext": "000347455405",
-          "ciphertext": "1c2ad24942d4d692563012f2980c8fef437a336b9b2fc938ef77a5834f"
-        },
-        {
-          "plaintext": "68747470730b6578",
-          "ciphertext": "1d2e33d8fd25577afe31bd1c79d094f76b6250ae6549b473ecd950501311"
-        },
-        {
-          "plaintext": "616d706c652e636f6d012f",
-          "final": true,
-          "ciphertext": "001c6c1395d0ef7c1022297966307b8a7f"
-        }
-      ],
-      "encapsulatedRequest": "010020000100018811eb457e100811c40a0aa71340a1b81d804bb986f736f2f566a7199761a0321c2ad24942d4d692563012f2980c8fef437a336b9b2fc938ef77a5834f1d2e33d8fd25577afe31bd1c79d094f76b6250ae6549b473ecd950501311001c6c1395d0ef7c1022297966307b8a7f",
-      "response": "0140c8",
-      "responseNonce": "bcce7f4cb921309ba5d62edf1769ef09",
-      "salt": "8811eb457e100811c40a0aa71340a1b81d804bb986f736f2f566a7199761a032bcce7f4cb921309ba5d62edf1769ef09",
-      "secret": "1d4484834ae36102a6ac42a5523454d9",
-      "prk": "3967884b5f7b4bce4a5320a3e3f79fdc97389f7deba1c1e11c5ea62278187786",
-      "aeadKey": "8209f78f2a1610d80c7125009b00aff0",
-      "aeadNonce": "fead854635d2d5527d64f546",
-      "responseChunks": [
-        {
-          "plaintext": "01",
-          "counter": 0,
-          "chunkNonce": "fead854635d2d5527d64f546",
-          "ciphertext": "1179bf1cc87fa0e2c02de4546945aa3d1e48"
-        },
-        {
-          "plaintext": "40c8",
-          "counter": 1,
-          "chunkNonce": "fead854635d2d5527d64f547",
-          "ciphertext": "12b348b5bd4c594c16b6170b07b475845d1f32"
-        },
-        {
-          "plaintext": "",
-          "counter": 2,
-          "chunkNonce": "fead854635d2d5527d64f544",
-          "final": true,
-          "ciphertext": "ed9d8a796617a5b27265f4d73247f639"
-        }
-      ],
-      "encapsulatedResponse": "bcce7f4cb921309ba5d62edf1769ef091179bf1cc87fa0e2c02de4546945aa3d1e4812b348b5bd4c594c16b6170b07b475845d1f3200ed9d8a796617a5b27265f4d73247f639"
-    }
-  ]
+	"description": "Test vectors from draft-ietf-ohai-chunked-ohttp-08 Appendix A",
+	"vectors": [
+		{
+			"description": "Example from Appendix A",
+			"skR": "1c190d72acdbe4dbc69e680503bb781a932c70a12c8f3754434c67d8640d8698",
+			"keyConfig": "010020668eb21aace159803974a4c67f08b4152d29bed10735fd08f98ccdd6fe0957080008000100010001000300",
+			"keyId": 1,
+			"kemId": 32,
+			"kdfId": 1,
+			"aeadId": 1,
+			"request": "00034745540568747470730b6578616d706c652e636f6d012f",
+			"skE": "b26d565f3f875ed480d1abced3d665159650c99174fd0b124ac4bda0c64ae324",
+			"enc": "8811eb457e100811c40a0aa71340a1b81d804bb986f736f2f566a7199761a032",
+			"info": "6d6573736167652f6268747470206368756e6b65642072657175657374000100200001000100",
+			"requestChunks": [
+				{
+					"plaintext": "000347455405",
+					"ciphertext": "1c2ad24942d4d692563012f2980c8fef437a336b9b2fc938ef77a5834f"
+				},
+				{
+					"plaintext": "68747470730b6578",
+					"ciphertext": "1d2e33d8fd25577afe31bd1c79d094f76b6250ae6549b473ecd950501311"
+				},
+				{
+					"plaintext": "616d706c652e636f6d012f",
+					"final": true,
+					"ciphertext": "001c6c1395d0ef7c1022297966307b8a7f"
+				}
+			],
+			"encapsulatedRequest": "010020000100018811eb457e100811c40a0aa71340a1b81d804bb986f736f2f566a7199761a0321c2ad24942d4d692563012f2980c8fef437a336b9b2fc938ef77a5834f1d2e33d8fd25577afe31bd1c79d094f76b6250ae6549b473ecd950501311001c6c1395d0ef7c1022297966307b8a7f",
+			"response": "0140c8",
+			"responseNonce": "bcce7f4cb921309ba5d62edf1769ef09",
+			"salt": "8811eb457e100811c40a0aa71340a1b81d804bb986f736f2f566a7199761a032bcce7f4cb921309ba5d62edf1769ef09",
+			"secret": "1d4484834ae36102a6ac42a5523454d9",
+			"prk": "3967884b5f7b4bce4a5320a3e3f79fdc97389f7deba1c1e11c5ea62278187786",
+			"aeadKey": "8209f78f2a1610d80c7125009b00aff0",
+			"aeadNonce": "fead854635d2d5527d64f546",
+			"responseChunks": [
+				{
+					"plaintext": "01",
+					"counter": 0,
+					"chunkNonce": "fead854635d2d5527d64f546",
+					"ciphertext": "1179bf1cc87fa0e2c02de4546945aa3d1e48"
+				},
+				{
+					"plaintext": "40c8",
+					"counter": 1,
+					"chunkNonce": "fead854635d2d5527d64f547",
+					"ciphertext": "12b348b5bd4c594c16b6170b07b475845d1f32"
+				},
+				{
+					"plaintext": "",
+					"counter": 2,
+					"chunkNonce": "fead854635d2d5527d64f544",
+					"final": true,
+					"ciphertext": "ed9d8a796617a5b27265f4d73247f639"
+				}
+			],
+			"encapsulatedResponse": "bcce7f4cb921309ba5d62edf1769ef091179bf1cc87fa0e2c02de4546945aa3d1e4812b348b5bd4c594c16b6170b07b475845d1f3200ed9d8a796617a5b27265f4d73247f639"
+		}
+	]
 }

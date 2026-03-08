@@ -18,7 +18,13 @@ import {
 	parseFramedChunk,
 } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { type AeadId, type KdfId, type KeyConfig, isValidAeadId, isValidKdfId } from "./keyConfig.js";
+import {
+	type AeadId,
+	type KdfId,
+	type KeyConfig,
+	isValidAeadId,
+	isValidKdfId,
+} from "./keyConfig.js";
 import { concat } from "./utils.js";
 
 /**
@@ -235,12 +241,20 @@ export class ChunkedOHTTPClient {
 		);
 
 		// Setup sender context
-		const { encapsulatedSecret: enc, ctx: senderContext } = await this.suite.SetupSender(publicKey, {
-			info,
-		});
+		const { encapsulatedSecret: enc, ctx: senderContext } = await this.suite.SetupSender(
+			publicKey,
+			{
+				info,
+			},
+		);
 
 		// Build header
-		const hdr = buildRequestHeader(this.keyConfig.keyId, this.keyConfig.kemId, this.kdfId, this.aeadId);
+		const hdr = buildRequestHeader(
+			this.keyConfig.keyId,
+			this.keyConfig.kemId,
+			this.kdfId,
+			this.aeadId,
+		);
 		const header = concat(hdr, enc);
 
 		const suite = this.suite;
@@ -277,7 +291,14 @@ export class ChunkedOHTTPClient {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						const pt = await openResponseChunk(suite, aeadKey, aeadNonce, counter, ciphertext, false);
+						const pt = await openResponseChunk(
+							suite,
+							aeadKey,
+							aeadNonce,
+							counter,
+							ciphertext,
+							false,
+						);
 						counter++;
 						return pt;
 					},

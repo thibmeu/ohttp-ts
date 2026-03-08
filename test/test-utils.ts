@@ -63,9 +63,10 @@ export function encodeNumber(value: number, byteLength: number): Uint8Array {
 	} else if (byteLength === 4) {
 		view.setUint32(0, value);
 	} else {
-		for (let i = byteLength - 1; i >= 0 && value > 0; i--) {
-			bytes[i] = value & 0xff;
-			value = Math.floor(value / 256);
+		let remaining = value;
+		for (let i = byteLength - 1; i >= 0 && remaining > 0; i--) {
+			bytes[i] = remaining & 0xff;
+			remaining = Math.floor(remaining / 256);
 		}
 	}
 	return bytes;

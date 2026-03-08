@@ -1,25 +1,22 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "RFC 9458 Appendix A test vectors for Oblivious HTTP",
-  "source": "https://www.rfc-editor.org/rfc/rfc9458.txt",
-  "vectors": [
-    {
-      "name": "RFC 9458 Appendix A",
-      "keyConfig": "01002031e1f05a740102115220e9af918f738674aec95f54db6e04eb705aae8e79815500080001000100010003",
-      "privateKey": "3c168975674b2fa8e465970b79c8dcf09f1c741626480bd4c6162fc5b6a98e1a",
-      "publicKey": "31e1f05a740102115220e9af918f738674aec95f54db6e04eb705aae8e798155",
-      "keyId": 1,
-      "kemId": 32,
-      "kdfId": 1,
-      "aeadId": 1,
-      "symmetricAlgorithms": [
-        { "kdfId": 1, "aeadId": 1 },
-        { "kdfId": 1, "aeadId": 3 }
-      ],
-      "request": "00034745540568747470730b6578616d706c652e636f6d012f",
-      "response": "0140c8",
-      "clientEphemeralPrivate": "37b03c960a8d06e0f41a8fed85f15f37ba8ec8b3d03d5fee0e1b32e4b46a4c47",
-      "responseNonce": "4b93c8c8b0d8eca9c25fbd9a"
-    }
-  ]
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"description": "RFC 9458 Appendix A test vectors for Oblivious HTTP",
+	"source": "https://www.rfc-editor.org/rfc/rfc9458.txt",
+	"vectors": [
+		{
+			"name": "RFC 9458 Appendix A",
+			"keyConfig": "01002031e1f05a740102115220e9af918f738674aec95f54db6e04eb705aae8e79815500080001000100010003",
+			"privateKey": "3c168975674b2fa8e465970b79c8dcf09f1c741626480bd4c6162fc5b6a98e1a",
+			"publicKey": "31e1f05a740102115220e9af918f738674aec95f54db6e04eb705aae8e798155",
+			"keyId": 1,
+			"kemId": 32,
+			"kdfId": 1,
+			"aeadId": 1,
+			"symmetricAlgorithms": [{ "kdfId": 1, "aeadId": 1 }, { "kdfId": 1, "aeadId": 3 }],
+			"request": "00034745540568747470730b6578616d706c652e636f6d012f",
+			"response": "0140c8",
+			"clientEphemeralPrivate": "37b03c960a8d06e0f41a8fed85f15f37ba8ec8b3d03d5fee0e1b32e4b46a4c47",
+			"responseNonce": "4b93c8c8b0d8eca9c25fbd9a"
+		}
+	]
 }

@@ -64,7 +64,7 @@ export function parseIncremental(value: string): boolean | undefined {
  * @param incremental - true to request incremental forwarding
  * @returns Headers object with Incremental field
  */
-export function createIncrementalHeaders(incremental: boolean = true): Headers {
+export function createIncrementalHeaders(incremental = true): Headers {
 	const headers = new Headers();
 	headers.set(INCREMENTAL_HEADER, serializeIncremental(incremental));
 	return headers;

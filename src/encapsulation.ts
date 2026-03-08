@@ -1,7 +1,13 @@
 import type { CipherSuite, Key, RecipientContext, SenderContext } from "hpke";
-import { encode as encodeVarint, decode as decodeVarint } from "quicvarint";
+import { decode as decodeVarint, encode as encodeVarint } from "quicvarint";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { KemId, type AeadId, type KdfId, type KeyConfig, type KeyConfigWithPrivate } from "./keyConfig.js";
+import {
+	type AeadId,
+	type KdfId,
+	KemId,
+	type KeyConfig,
+	type KeyConfigWithPrivate,
+} from "./keyConfig.js";
 import { concat } from "./utils.js";
 
 /** Shared TextEncoder instance */
@@ -137,9 +143,10 @@ export function getResponseNonceLength(suite: CipherSuite): number {
  * Returns raw wire values. Caller must validate kemId/kdfId/aeadId
  * against supported values before use.
  */
-export function parseRequestHeader(
-	data: Uint8Array,
-): { header: EncapsulatedRequestHeader; offset: number } {
+export function parseRequestHeader(data: Uint8Array): {
+	header: EncapsulatedRequestHeader;
+	offset: number;
+} {
 	if (data.length < 7) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
@@ -425,9 +432,13 @@ async function extractPrk(
 			? "SHA-384"
 			: "SHA-512";
 
-	const key = await crypto.subtle.importKey("raw", asArrayBuffer(salt), { name: "HMAC", hash: algorithm }, false, [
-		"sign",
-	]);
+	const key = await crypto.subtle.importKey(
+		"raw",
+		asArrayBuffer(salt),
+		{ name: "HMAC", hash: algorithm },
+		false,
+		["sign"],
+	);
 
 	const prk = await crypto.subtle.sign("HMAC", key, asArrayBuffer(ikm));
 	return new Uint8Array(prk);
@@ -449,9 +460,13 @@ async function expandPrk(
 	const n = Math.ceil(length / hashLen);
 	const okm = new Uint8Array(n * hashLen);
 
-	const key = await crypto.subtle.importKey("raw", asArrayBuffer(prk), { name: "HMAC", hash: algorithm }, false, [
-		"sign",
-	]);
+	const key = await crypto.subtle.importKey(
+		"raw",
+		asArrayBuffer(prk),
+		{ name: "HMAC", hash: algorithm },
+		false,
+		["sign"],
+	);
 
 	let t = new Uint8Array(0);
 	for (let i = 1; i <= n; i++) {
@@ -474,9 +489,13 @@ async function sealWithRawAead(
 	const algorithm = aead.name.includes("AES") ? "AES-GCM" : "ChaCha20-Poly1305";
 
 	if (algorithm === "AES-GCM") {
-		const cryptoKey = await crypto.subtle.importKey("raw", asArrayBuffer(key), { name: "AES-GCM" }, false, [
-			"encrypt",
-		]);
+		const cryptoKey = await crypto.subtle.importKey(
+			"raw",
+			asArrayBuffer(key),
+			{ name: "AES-GCM" },
+			false,
+			["encrypt"],
+		);
 		const ct = await crypto.subtle.encrypt(
 			{ name: "AES-GCM", iv: asArrayBuffer(nonce), additionalData: asArrayBuffer(aad) },
 			cryptoKey,
@@ -498,9 +517,13 @@ async function openWithRawAead(
 	const algorithm = aead.name.includes("AES") ? "AES-GCM" : "ChaCha20-Poly1305";
 
 	if (algorithm === "AES-GCM") {
-		const cryptoKey = await crypto.subtle.importKey("raw", asArrayBuffer(key), { name: "AES-GCM" }, false, [
-			"decrypt",
-		]);
+		const cryptoKey = await crypto.subtle.importKey(
+			"raw",
+			asArrayBuffer(key),
+			{ name: "AES-GCM" },
+			false,
+			["decrypt"],
+		);
 		const pt = await crypto.subtle.decrypt(
 			{ name: "AES-GCM", iv: asArrayBuffer(nonce), additionalData: asArrayBuffer(aad) },
 			cryptoKey,

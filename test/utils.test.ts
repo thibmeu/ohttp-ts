@@ -114,12 +114,8 @@ describe("encodeNumber", () => {
 
 	it("encodes arbitrary length for nonce counter", () => {
 		// 12-byte encoding for AEAD nonce XOR
-		expect(encodeNumber(1, 12)).toEqual(
-			new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
-		);
-		expect(encodeNumber(0x0102, 12)).toEqual(
-			new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2]),
-		);
+		expect(encodeNumber(1, 12)).toEqual(new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+		expect(encodeNumber(0x0102, 12)).toEqual(new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2]));
 	});
 });
 

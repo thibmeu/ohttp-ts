@@ -101,10 +101,7 @@ export class OHTTPServer {
 	 * @param keyConfigs - Array of key configurations with private keys
 	 * @param options - Optional configuration
 	 */
-	constructor(
-		keyConfigs: readonly KeyConfigWithPrivate[],
-		options: OHTTPServerOptions = {},
-	) {
+	constructor(keyConfigs: readonly KeyConfigWithPrivate[], options: OHTTPServerOptions = {}) {
 		this.keyConfigs = keyConfigs;
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
@@ -117,11 +114,7 @@ export class OHTTPServer {
 	 * @returns The decrypted request and context for encrypting the response
 	 */
 	async decapsulate(encapsulatedRequest: Uint8Array): Promise<DecapsulatedRequest> {
-		const ctx = await decapsulateRequest(
-			encapsulatedRequest,
-			this.keyConfigs,
-			this.requestLabel,
-		);
+		const ctx = await decapsulateRequest(encapsulatedRequest, this.keyConfigs, this.requestLabel);
 
 		const responseLabel = this.responseLabel;
 		const context: ServerContext = {

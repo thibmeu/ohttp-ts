@@ -1,9 +1,4 @@
-import {
-	AEAD_AES_128_GCM,
-	CipherSuite,
-	KDF_HKDF_SHA256,
-	KEM_DHKEM_X25519_HKDF_SHA256,
-} from "hpke";
+import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { describe, expect, it } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
 import {
@@ -14,12 +9,7 @@ import {
 	parseFramedChunk,
 } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
-import {
-	AeadId,
-	KdfId,
-	deriveKeyConfig,
-	generateKeyConfig,
-} from "../src/keyConfig.js";
+import { AeadId, KdfId, deriveKeyConfig, generateKeyConfig } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
 import { concat } from "../src/utils.js";
 import { fromHex, toHex } from "./test-utils.js";
@@ -166,7 +156,9 @@ describe("chunked OHTTP round-trip", () => {
 		const server = new ChunkedOHTTPServer([serverKeyConfig]);
 
 		// Empty request
-		const { encapsulatedRequest, createResponseContext } = await client.encapsulate(new Uint8Array(0));
+		const { encapsulatedRequest, createResponseContext } = await client.encapsulate(
+			new Uint8Array(0),
+		);
 
 		const { request: decryptedRequest, createResponseContext: serverCreateResponse } =
 			await server.decapsulate(encapsulatedRequest);
@@ -504,27 +496,35 @@ describe("chunked OHTTP error handling", () => {
 
 describe("chunk nonce computation", () => {
 	it("computes nonce correctly for counter 0", () => {
-		const baseNonce = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c]);
+		const baseNonce = new Uint8Array([
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+		]);
 		const nonce = computeChunkNonce(baseNonce, 0);
 		expect(nonce).toEqual(baseNonce);
 	});
 
 	it("computes nonce correctly for counter 1", () => {
-		const baseNonce = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+		const baseNonce = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		]);
 		const nonce = computeChunkNonce(baseNonce, 1);
 		expect(nonce[11]).toBe(0x01);
 		expect(nonce.slice(0, 11)).toEqual(new Uint8Array(11));
 	});
 
 	it("computes nonce correctly for counter 256", () => {
-		const baseNonce = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+		const baseNonce = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		]);
 		const nonce = computeChunkNonce(baseNonce, 256);
 		expect(nonce[10]).toBe(0x01);
 		expect(nonce[11]).toBe(0x00);
 	});
 
 	it("computes nonce correctly for max counter (2^32 - 1)", () => {
-		const baseNonce = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+		const baseNonce = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		]);
 		const maxCounter = 2 ** 32 - 1;
 		const nonce = computeChunkNonce(baseNonce, maxCounter);
 		expect(nonce[8]).toBe(0xff);

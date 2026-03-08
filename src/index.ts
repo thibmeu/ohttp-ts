@@ -55,6 +55,9 @@ export {
 // ============================================================================
 
 import {
+	type KeyConfig as KeyConfigType,
+	type KeyConfigWithPrivate as KeyConfigWithPrivateType,
+	type SymmetricAlgorithm as SymmetricAlgorithmType,
 	deriveKeyConfig,
 	generateKeyConfig,
 	getPublicKeyLength,
@@ -63,9 +66,6 @@ import {
 	parseKeyConfigs,
 	serializeKeyConfig,
 	serializeKeyConfigs,
-	type KeyConfig as KeyConfigType,
-	type KeyConfigWithPrivate as KeyConfigWithPrivateType,
-	type SymmetricAlgorithm as SymmetricAlgorithmType,
 } from "./keyConfig.js";
 
 /** KeyConfig utilities for parsing, serializing, and generating OHTTP key configurations */
