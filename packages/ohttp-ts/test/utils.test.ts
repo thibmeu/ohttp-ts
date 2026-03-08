@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { concat, decodeNumber, encodeNumber, encodeString, xor } from "../src/utils.js";
-import { constantTimeEqual, fromHex, toHex } from "./test-utils.js";
+import { concat } from "../src/utils.js";
+import {
+	constantTimeEqual,
+	decodeNumber,
+	encodeNumber,
+	encodeString,
+	fromHex,
+	toHex,
+	xor,
+} from "./test-utils.js";
 
 describe("toHex", () => {
 	it("encodes empty array", () => {

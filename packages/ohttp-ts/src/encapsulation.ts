@@ -2,7 +2,15 @@ import type { CipherSuite, Key, RecipientContext, SenderContext } from "hpke";
 import { encode as encodeVarint, decode as decodeVarint } from "quicvarint";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 import { KemId, type AeadId, type KdfId, type KeyConfig, type KeyConfigWithPrivate } from "./keyConfig.js";
-import { concat, encodeNumber, encodeString, xor } from "./utils.js";
+import { concat } from "./utils.js";
+
+/** Shared TextEncoder instance */
+const textEncoder = new TextEncoder();
+
+/** Encode ASCII string to bytes */
+function encodeString(s: string): Uint8Array {
+	return textEncoder.encode(s);
+}
 
 /**
  * Default labels for OHTTP request/response (RFC 9458 §4.3-4.4)
@@ -628,10 +636,19 @@ export async function deriveChunkedResponseKeys(
 
 /**
  * Compute chunk nonce by XORing base nonce with counter (draft-08 §6.2)
+ * Counter is encoded big-endian, right-aligned to nonce length
  */
 export function computeChunkNonce(baseNonce: Uint8Array, counter: number): Uint8Array {
-	const counterBytes = encodeNumber(counter, baseNonce.length);
-	return xor(baseNonce, counterBytes);
+	// Copy base nonce first
+	const result = new Uint8Array(baseNonce);
+	// XOR counter bytes from the right
+	let c = counter;
+	for (let i = baseNonce.length - 1; i >= 0 && c > 0; i--) {
+		// biome-ignore lint/style/noNonNullAssertion: loop bounds guarantee valid index
+		result[i] ^= c & 0xff;
+		c = Math.floor(c / 256);
+	}
+	return result;
 }
 
 /**
