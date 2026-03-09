@@ -48,8 +48,7 @@
 	},
 	"homepage": "https://github.com/thibmeu/ohttp-ts#readme",
 	"dependencies": {
-		"@dajiaji/bhttp": "npm:@jsr/dajiaji__bhttp@^0.3.6",
-		"bhttp-js": "file:../bhttp-js/npm",
+		"bhttp-js": "file:vendor/bhttp-js-0.4.0.tgz",
 		"hpke": "^1.0.6",
 		"quicvarint": "^0.1.4"
 	},

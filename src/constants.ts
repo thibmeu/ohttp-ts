@@ -1,5 +1,5 @@
-import { BHttpDecoder, BHttpEncoder } from "@dajiaji/bhttp";
-// Streaming BHTTP from fork
+import { BHttpDecoder, BHttpEncoder } from "bhttp-js";
+
 export {
 	BHttpRequestStreamEncoder,
 	BHttpResponseStreamEncoder,

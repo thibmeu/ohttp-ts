@@ -232,3 +232,64 @@ describe("chunked HTTP round-trip", () => {
 		await context.decapsulateResponse(encRes);
 	});
 });
+
+// Direct comparison: normal OHTTP HTTP API vs chunked OHTTP HTTP API
+describe("HTTP API comparison: normal vs chunked (100KB)", () => {
+	const req100KB = new Request("https://example.com/api", {
+		method: "POST",
+		headers: { "Content-Type": "application/octet-stream" },
+		body: _100KB,
+	});
+
+	bench("normal OHTTP", async () => {
+		const { request, context } = await client.encapsulateRequest(
+			req100KB.clone(),
+			"https://relay.example.com",
+		);
+		const { context: sctx } = await server.decapsulateRequest(request);
+		const res = new Response(_100KB, { status: 200 });
+		const encRes = await sctx.encapsulateResponse(res);
+		await context.decapsulateResponse(encRes);
+	});
+
+	bench("chunked OHTTP", async () => {
+		const { request, context } = await chunkedClient.encapsulateRequest(
+			req100KB.clone(),
+			"https://relay.example.com",
+		);
+		const { context: sctx } = await chunkedServer.decapsulateRequest(request);
+		const res = new Response(_100KB, { status: 200 });
+		const encRes = await sctx.encapsulateResponse(res);
+		await context.decapsulateResponse(encRes);
+	});
+});
+
+describe("HTTP API comparison: normal vs chunked (1MB)", () => {
+	const req1MB = new Request("https://example.com/api", {
+		method: "POST",
+		headers: { "Content-Type": "application/octet-stream" },
+		body: _1MB,
+	});
+
+	bench("normal OHTTP", async () => {
+		const { request, context } = await client.encapsulateRequest(
+			req1MB.clone(),
+			"https://relay.example.com",
+		);
+		const { context: sctx } = await server.decapsulateRequest(request);
+		const res = new Response(_1MB, { status: 200 });
+		const encRes = await sctx.encapsulateResponse(res);
+		await context.decapsulateResponse(encRes);
+	});
+
+	bench("chunked OHTTP", async () => {
+		const { request, context } = await chunkedClient.encapsulateRequest(
+			req1MB.clone(),
+			"https://relay.example.com",
+		);
+		const { context: sctx } = await chunkedServer.decapsulateRequest(request);
+		const res = new Response(_1MB, { status: 200 });
+		const encRes = await sctx.encapsulateResponse(res);
+		await context.decapsulateResponse(encRes);
+	});
+});
