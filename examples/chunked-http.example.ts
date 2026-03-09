@@ -101,37 +101,133 @@ export async function chunkedHttpApi(): Promise<boolean> {
 }
 
 /**
- * Example: Large file upload through chunked OHTTP
+ * Example: Streaming large body through chunked OHTTP
+ *
+ * Demonstrates that the body streams through without full buffering.
+ * The client/gateway can start processing before the entire body arrives.
+ *
+ * Note: Chunk boundaries are NOT preserved through the streaming pipeline.
+ * Data flows through multiple transforms (chunker, encryption, BHTTP, decryption)
+ * and chunks get reassembled. Only total content integrity is guaranteed.
  */
 export async function chunkedHttpLargeBody(): Promise<boolean> {
 	const { gateway, client } = await setup();
 
-	// Simulate a large upload (100KB)
-	const largePayload = "X".repeat(100 * 1024);
+	// Create a streaming source that yields chunks incrementally
+	// Each 10KB chunk is filled with a repeating pattern for verification
+	const chunkCount = 10;
+	const chunkSize = 10 * 1024; // 10KB per chunk = 100KB total
+	let chunksProduced = 0;
+	let byteIndex = 0;
+
+	const sourceStream = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (chunksProduced >= chunkCount) {
+				controller.close();
+				return;
+			}
+			// Fill chunk with sequential byte values (mod 256) for verification
+			const chunk = new Uint8Array(chunkSize);
+			for (let i = 0; i < chunkSize; i++) {
+				chunk[i] = (byteIndex + i) % 256;
+			}
+			byteIndex += chunkSize;
+			chunksProduced++;
+			controller.enqueue(chunk);
+		},
+	});
 
 	const originalRequest = new Request("https://storage.example.com/upload", {
 		method: "PUT",
 		headers: { "Content-Type": "application/octet-stream" },
-		body: largePayload,
+		body: sourceStream,
+		// @ts-expect-error - duplex required for streaming request bodies in Node.js
+		duplex: "half",
 	});
 
-	// The chunked OHTTP will automatically split this into encrypted chunks
+	// Encapsulate - body streams through chunked OHTTP encryption
 	const { request: relayRequest, context } = await client.encapsulateRequest(
 		originalRequest,
 		"https://relay.example.com/ohttp",
 	);
 
+	// Decapsulate - body streams through decryption
 	const { request: innerRequest, context: serverContext } =
 		await gateway.decapsulateRequest(relayRequest);
 
-	// Verify large body was transmitted correctly
-	const receivedBody = await innerRequest.text();
-	const uploadValid = receivedBody === largePayload;
+	// Consume the streaming body incrementally
+	// This demonstrates we can process chunks as they arrive
+	let totalBytes = 0;
+	let receivedByteIndex = 0;
+	let valid = true;
 
-	// Server responds
-	const serverResponse = new Response(null, { status: 204 });
+	const body = innerRequest.body;
+	if (body === null) {
+		return false;
+	}
+
+	// Process body as it streams - verify content byte-by-byte
+	for await (const chunk of body) {
+		for (let i = 0; i < chunk.length; i++) {
+			if (chunk[i] !== (receivedByteIndex + i) % 256) {
+				valid = false;
+				break;
+			}
+		}
+		receivedByteIndex += chunk.length;
+		totalBytes += chunk.length;
+	}
+
+	const expectedTotal = chunkCount * chunkSize;
+	const uploadValid = valid && totalBytes === expectedTotal;
+
+	// Server responds with streaming body
+	const responseSize = 5 * 1024;
+	let responseByteIndex = 0;
+	const responseStream = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (responseByteIndex >= responseSize) {
+				controller.close();
+				return;
+			}
+			const remaining = responseSize - responseByteIndex;
+			const chunkLen = Math.min(1024, remaining);
+			const chunk = new Uint8Array(chunkLen);
+			for (let i = 0; i < chunkLen; i++) {
+				chunk[i] = (responseByteIndex + i) % 256;
+			}
+			responseByteIndex += chunkLen;
+			controller.enqueue(chunk);
+		},
+	});
+
+	const serverResponse = new Response(responseStream, {
+		status: 200,
+		headers: { "Content-Type": "application/octet-stream" },
+	});
 	const encapsulatedResponse = await serverContext.encapsulateResponse(serverResponse);
+
+	// Client decapsulates and consumes streaming response
 	const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
 
-	return uploadValid && finalResponse.status === 204;
+	let responseBytesReceived = 0;
+	let responseReceivedIndex = 0;
+	const responseBody = finalResponse.body;
+	if (responseBody === null) {
+		return false;
+	}
+
+	// Verify response content byte-by-byte
+	for await (const chunk of responseBody) {
+		for (let i = 0; i < chunk.length; i++) {
+			if (chunk[i] !== (responseReceivedIndex + i) % 256) {
+				valid = false;
+				break;
+			}
+		}
+		responseReceivedIndex += chunk.length;
+		responseBytesReceived += chunk.length;
+	}
+
+	return uploadValid && valid && responseBytesReceived === responseSize;
 }

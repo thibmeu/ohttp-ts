@@ -429,16 +429,21 @@ export async function decodeBHttpRequestStream(
 				}
 
 				const events = decoder.push(value);
+				let enqueuedContent = false;
 				for (const event of events) {
 					if (event.type === "content") {
 						controller.enqueue(event.data);
-						return; // Yield control after enqueuing
+						enqueuedContent = true;
 					} else if (event.type === "end") {
 						sourceExhausted = true;
 						controller.close();
 						return;
 					}
 					// Ignore trailers for now
+				}
+				// Yield control after enqueuing all content from this read
+				if (enqueuedContent) {
+					return;
 				}
 			}
 		},
@@ -523,15 +528,20 @@ export async function decodeBHttpResponseStream(
 				}
 
 				const events = decoder.push(value);
+				let enqueuedContent = false;
 				for (const event of events) {
 					if (event.type === "content") {
 						controller.enqueue(event.data);
-						return;
+						enqueuedContent = true;
 					} else if (event.type === "end") {
 						sourceExhausted = true;
 						controller.close();
 						return;
 					}
+				}
+				// Yield control after enqueuing all content from this read
+				if (enqueuedContent) {
+					return;
 				}
 			}
 		},

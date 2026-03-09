@@ -96,17 +96,61 @@ const { request: binaryBytes, context: serverCtx } = await gateway.decapsulate(e
 
 See [`examples/bhttp.example.ts`](examples/bhttp.example.ts) for a complete example.
 
-### Chunked OHTTP
+### Chunked OHTTP (Streaming)
 
-For streaming large responses, use `ChunkedOHTTPClient`/`ChunkedOHTTPServer` with the low-level bytes API. The high-level Request/Response API requires buffering the entire body for Binary HTTP encoding, so chunked mode operates on raw bytes only.
+For streaming large requests/responses, use `ChunkedOHTTPClient`/`ChunkedOHTTPServer`:
+
+```typescript
+import { ChunkedOHTTPClient, ChunkedOHTTPServer } from "ohttp-ts";
+
+// Setup (same key configuration as above)
+const gateway = new ChunkedOHTTPServer([keyConfig]);
+const client = new ChunkedOHTTPClient(suite, keyConfig);
+
+// Client: encapsulate streaming request
+const streamingRequest = new Request("https://target.example/upload", {
+  method: "POST",
+  body: largeReadableStream,
+  // @ts-expect-error - required for streaming bodies in Node.js
+  duplex: "half",
+});
+const { request: relayRequest, context } = await client.encapsulateRequest(
+  streamingRequest,
+  "https://relay.example/ohttp",
+);
+
+// Gateway: decapsulate (body streams through)
+const { request: innerRequest, context: serverContext } =
+  await gateway.decapsulateRequest(relayRequest);
+
+// Process body incrementally
+for await (const chunk of innerRequest.body!) {
+  // Process chunk without buffering entire body
+}
+
+// Gateway: stream response back
+const streamingResponse = new Response(responseStream, { status: 200 });
+const encapsulatedResponse = await serverContext.encapsulateResponse(streamingResponse);
+
+// Client: decapsulate and consume streaming response
+const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
+for await (const chunk of finalResponse.body!) {
+  // Process chunk as it arrives
+}
+```
+
+**Note**: Request/Response bodies stream through without full buffering. Only the BHTTP preamble (method/status, headers) is buffered before the body can flow.
+
+For the low-level bytes API, see [`examples/chunked.example.ts`](examples/chunked.example.ts).
 
 ## Examples
 
 | Example | Description |
 |---------|-------------|
 | [`ohttp.example.ts`](examples/ohttp.example.ts) | Basic OHTTP round-trip |
-| [`chunked.example.ts`](examples/chunked.example.ts) | Streaming with chunked OHTTP (low-level bytes API) |
-| [`bhttp.example.ts`](examples/bhttp.example.ts) | Request/Response API |
+| [`chunked-http.example.ts`](examples/chunked-http.example.ts) | Streaming Request/Response API |
+| [`chunked.example.ts`](examples/chunked.example.ts) | Low-level bytes API |
+| [`bhttp.example.ts`](examples/bhttp.example.ts) | Request/Response API (non-streaming) |
 | [`mlkem.example.ts`](examples/mlkem.example.ts) | Post-quantum with ML-KEM-768 |
 
 ## Post-Quantum Support
