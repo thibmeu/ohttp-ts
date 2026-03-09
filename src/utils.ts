@@ -1,7 +1,7 @@
 /**
  * Concatenate multiple Uint8Arrays into one
  */
-export function concat(...arrays: Uint8Array[]): Uint8Array {
+export function concat(...arrays: Uint8Array[]): Uint8Array<ArrayBuffer> {
 	const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0);
 	const result = new Uint8Array(totalLength);
 	let offset = 0;

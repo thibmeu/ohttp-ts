@@ -1,12 +1,5 @@
 import type { CipherSuite, SenderContext } from "hpke";
-import {
-	type BHttpContentEvent,
-	BHttpRequestStreamEncoder,
-	type BHttpResponsePreambleEvent,
-	BHttpStreamDecoder,
-	MediaType,
-	bhttp,
-} from "./constants.js";
+import { MediaType, bhttp } from "./constants.js";
 import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
@@ -33,6 +26,13 @@ import {
 	isValidAeadId,
 	isValidKdfId,
 } from "./keyConfig.js";
+import {
+	createChunkerTransform,
+	createRequestEncryptTransform,
+	createResponseDecryptTransform,
+	decodeBHttpResponseStream,
+	encodeBHttpRequestStream,
+} from "./streaming.js";
 import { concat, toArrayBuffer } from "./utils.js";
 
 /**
@@ -105,6 +105,10 @@ export interface ChunkedRequestContext {
 	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array>;
 	/** Create a response context after receiving the response nonce */
 	createResponseContext(responseNonce: Uint8Array): Promise<ChunkedResponseContext>;
+	/** @internal HPKE sender context for streaming transforms */
+	readonly _senderContext: SenderContext;
+	/** @internal Encapsulated secret for response key derivation */
+	readonly _enc: Uint8Array;
 }
 
 /**
@@ -368,6 +372,8 @@ export class ChunkedOHTTPClient {
 
 		return {
 			header,
+			_senderContext: senderContext,
+			_enc: enc,
 
 			async sealChunk(chunk: Uint8Array): Promise<Uint8Array> {
 				// Non-final: empty AAD
@@ -509,118 +515,82 @@ export class ChunkedOHTTPClient {
 	}
 
 	/**
-	 * Encapsulate an HTTP Request as chunked OHTTP (high-level API)
+	 * Encapsulate an HTTP Request as chunked OHTTP (high-level streaming API)
 	 *
 	 * Encodes the request using streaming Binary HTTP (RFC 9292 indeterminate-length),
-	 * then encapsulates with chunked OHTTP.
+	 * then encapsulates with chunked OHTTP. The request body streams through without
+	 * full buffering.
 	 *
 	 * @param request - The HTTP Request to encapsulate
 	 * @param relayUrl - The URL of the OHTTP relay
-	 * @returns A Request for the relay and context for decapsulating the response
+	 * @returns A Request for the relay (with streaming body) and context for decapsulating the response
 	 */
 	async encapsulateRequest(
 		request: Request,
 		relayUrl: string,
 	): Promise<EncapsulatedChunkedHttpRequest> {
-		const ctx = await this.createRequestContext();
-
-		// Encode request preamble using streaming BHTTP
-		const url = new URL(request.url);
-		const bhttpEncoder = new BHttpRequestStreamEncoder();
-		const preamble = bhttpEncoder.encodePreamble(
-			request.method,
-			url.protocol.replace(":", ""),
-			url.host,
-			url.pathname + url.search,
-			request.headers,
-		);
-
-		// Build the encrypted stream
+		const requestCtx = await this.createRequestContext();
+		const suite = this.suite;
 		const maxChunkSize = this.maxChunkSize;
-		const encryptedChunks: Uint8Array[] = [ctx.header];
 
-		// Encrypt preamble as first chunk(s)
-		let pendingBytes = preamble;
-		const body = request.body;
+		// Get the HPKE sender context for creating the encrypt transform
+		// We need to access it through the request context internals
+		// For now, we'll build the pipeline manually
 
-		if (body === null) {
-			// No body - encode end and send as final chunk
-			const endBytes = bhttpEncoder.encodeEnd();
-			const finalData = concat(pendingBytes, endBytes);
+		// Encode request to BHTTP stream
+		const bhttpStream = encodeBHttpRequestStream(request);
 
-			// Split into chunks if needed
-			let offset = 0;
-			while (offset < finalData.length) {
-				const remaining = finalData.length - offset;
-				const isLast = remaining <= maxChunkSize;
-				const chunkSize = Math.min(remaining, maxChunkSize);
-				const chunk = finalData.slice(offset, offset + chunkSize);
-				offset += chunkSize;
+		// Create the encryption pipeline:
+		// BHTTP bytes → chunker → OHTTP encrypt → framed ciphertext
+		const chunkerTransform = createChunkerTransform(maxChunkSize);
+		const encryptTransform = createRequestEncryptTransform(requestCtx._senderContext);
 
-				if (isLast) {
-					const sealed = await ctx.sealFinalChunk(chunk);
-					encryptedChunks.push(frameChunk(sealed, true));
-				} else {
-					const sealed = await ctx.sealChunk(chunk);
-					encryptedChunks.push(frameChunk(sealed, false));
-				}
-			}
-		} else {
-			// Stream body chunks
-			const reader = body.getReader();
+		// Pipe through transforms
+		const encryptedStream = bhttpStream.pipeThrough(chunkerTransform).pipeThrough(encryptTransform);
 
-			while (true) {
+		// Create output stream that prepends header
+		const headerSent = { value: false };
+		const header = requestCtx.header;
+		const outputStream = new ReadableStream<Uint8Array>({
+			async start(controller) {
+				// Send header first
+				controller.enqueue(header);
+				headerSent.value = true;
+			},
+
+			async pull(controller) {
+				const reader = encryptedStream.getReader();
 				const { done, value } = await reader.read();
+				reader.releaseLock();
 
 				if (done) {
-					// Encode end and send final chunk
-					const endBytes = bhttpEncoder.encodeEnd();
-					const finalData = concat(pendingBytes, endBytes);
+					controller.close();
+				} else {
+					controller.enqueue(value);
+				}
+			},
+		});
 
-					let offset = 0;
-					while (offset < finalData.length) {
-						const remaining = finalData.length - offset;
-						const isLast = remaining <= maxChunkSize;
-						const chunkSize = Math.min(remaining, maxChunkSize);
-						const chunk = finalData.slice(offset, offset + chunkSize);
-						offset += chunkSize;
+		// Actually, simpler approach - collect header + stream
+		const finalStream = new ReadableStream<Uint8Array>({
+			async start(controller) {
+				controller.enqueue(header);
 
-						if (isLast) {
-							const sealed = await ctx.sealFinalChunk(chunk);
-							encryptedChunks.push(frameChunk(sealed, true));
-						} else {
-							const sealed = await ctx.sealChunk(chunk);
-							encryptedChunks.push(frameChunk(sealed, false));
-						}
+				const reader = encryptedStream.getReader();
+				try {
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+						controller.enqueue(value);
 					}
-					break;
+				} finally {
+					reader.releaseLock();
 				}
+				controller.close();
+			},
+		});
 
-				// Encode body chunk
-				const bodyChunk = bhttpEncoder.encodeContentChunk(value);
-				const combined = concat(pendingBytes, bodyChunk);
-				pendingBytes = new Uint8Array(0);
-
-				// Encrypt and frame
-				let offset = 0;
-				while (offset + maxChunkSize <= combined.length) {
-					const chunk = combined.slice(offset, offset + maxChunkSize);
-					const sealed = await ctx.sealChunk(chunk);
-					encryptedChunks.push(frameChunk(sealed, false));
-					offset += maxChunkSize;
-				}
-
-				// Keep remainder for next iteration
-				if (offset < combined.length) {
-					pendingBytes = combined.slice(offset);
-				}
-			}
-		}
-
-		const encapsulatedBody = concat(...encryptedChunks);
-		const suite = this.suite;
-
-		// Create context for decapsulating response
+		// Create context for decapsulating response (streaming)
 		const context: ChunkedHttpClientContext = {
 			async decapsulateResponse(response: Response): Promise<Response> {
 				// Validate content type
@@ -629,86 +599,87 @@ export class ChunkedOHTTPClient {
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
 
-				// Read response body
-				const responseBody = new Uint8Array(await response.arrayBuffer());
-				const nonceLength = getResponseNonceLength(suite);
-				if (responseBody.length < nonceLength) {
+				const responseBody = response.body;
+				if (responseBody === null) {
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
 
-				// Extract response nonce and create response context
-				const responseNonce = responseBody.slice(0, nonceLength);
-				const responseCtx = await ctx.createResponseContext(responseNonce);
+				// Read response nonce first (need to buffer just enough)
+				const nonceLength = getResponseNonceLength(suite);
+				const reader = responseBody.getReader();
+				let buffer = new Uint8Array(0);
 
-				// Parse, decrypt, and decode BHTTP response
-				const bhttpDecoder = new BHttpStreamDecoder();
-				let data = responseBody.slice(nonceLength);
-
-				let status = 0;
-				let headers = new Headers();
-				const bodyChunks: Uint8Array[] = [];
-
-				while (data.length > 0) {
-					const parsed = parseFramedChunk(data);
-					if (parsed === undefined) {
+				// Read until we have the nonce
+				while (buffer.length < nonceLength) {
+					const { done, value } = await reader.read();
+					if (done) {
 						throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 					}
-
-					let decrypted: Uint8Array;
-					try {
-						if (parsed.isFinal) {
-							decrypted = await responseCtx.openFinalChunk(parsed.ciphertext);
-						} else {
-							decrypted = await responseCtx.openChunk(parsed.ciphertext);
-						}
-					} catch {
-						throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
-					}
-
-					// Feed to BHTTP decoder
-					const events = bhttpDecoder.push(decrypted);
-					for (const event of events) {
-						switch (event.type) {
-							case "response-preamble":
-								status = (event as BHttpResponsePreambleEvent).status;
-								headers = (event as BHttpResponsePreambleEvent).headers;
-								break;
-							case "content":
-								bodyChunks.push((event as BHttpContentEvent).data);
-								break;
-							// informational and trailers ignored for now
-						}
-					}
-
-					if (parsed.isFinal) {
-						break;
-					}
-					data = data.slice(parsed.bytesConsumed);
+					buffer = concat(buffer, value);
 				}
 
-				// Finalize decoder
-				try {
-					bhttpDecoder.end();
-				} catch {
-					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
-				}
+				const responseNonce = buffer.slice(0, nonceLength);
+				const remainder = buffer.slice(nonceLength);
 
-				// Build Response
-				const responseBodyData = concat(...bodyChunks);
-				return new Response(responseBodyData.length > 0 ? toArrayBuffer(responseBodyData) : null, {
-					status,
-					headers,
+				// Derive response keys
+				const { aeadKey, aeadNonce } = await deriveChunkedResponseKeys(
+					suite,
+					requestCtx._senderContext,
+					requestCtx._enc,
+					responseNonce,
+					CHUNKED_RESPONSE_LABEL,
+				);
+
+				// Create decrypt transform
+				const decryptTransform = createResponseDecryptTransform(suite, aeadKey, aeadNonce);
+
+				// Create a stream from remainder + rest of response
+				const ciphertextStream = new ReadableStream<Uint8Array>({
+					async start(controller) {
+						// Enqueue any buffered remainder
+						if (remainder.length > 0) {
+							controller.enqueue(remainder);
+						}
+
+						// Continue reading from original stream
+						try {
+							while (true) {
+								const { done, value } = await reader.read();
+								if (done) break;
+								controller.enqueue(value);
+							}
+						} finally {
+							reader.releaseLock();
+						}
+						controller.close();
+					},
+				});
+
+				// Decrypt stream
+				const plaintextStream = ciphertextStream.pipeThrough(decryptTransform);
+
+				// Decode BHTTP response
+				const decoded = await decodeBHttpResponseStream(plaintextStream);
+
+				// Return Response with streaming body
+				// Note: 204/304 responses must not have a body per HTTP semantics
+				const bodylessStatus = decoded.status === 204 || decoded.status === 304;
+				return new Response(bodylessStatus ? null : decoded.body, {
+					status: decoded.status,
+					headers: decoded.headers,
 				});
 			},
 		};
 
-		// Build relay request
+		// Build relay request with streaming body
 		const relayRequest = new Request(relayUrl, {
 			method: "POST",
 			headers: {
 				"Content-Type": MediaType.CHUNKED_REQUEST,
 			},
-			body: toArrayBuffer(encapsulatedBody),
+			body: finalStream,
+			// @ts-expect-error - duplex required for streaming request bodies in Node.js
+			duplex: "half",
 		});
 
 		return { request: relayRequest, context };

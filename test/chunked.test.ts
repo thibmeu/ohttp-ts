@@ -751,4 +751,170 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 		expect(await finalResponse.text()).toBe(largeResponseBody);
 	});
+
+	it("streams large body with integrity", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		// Small chunk size to force many OHTTP chunks
+		const client = new ChunkedOHTTPClient(
+			suite,
+			{
+				keyId: serverKeyConfig.keyId,
+				kemId: serverKeyConfig.kemId,
+				publicKey: serverKeyConfig.publicKey,
+				symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+			},
+			{ maxChunkSize: 1024 },
+		);
+		const server = new ChunkedOHTTPServer([serverKeyConfig], { maxChunkSize: 1024 });
+
+		// 1MB body
+		const bodySize = 1024 * 1024;
+		const originalBody = new Uint8Array(bodySize);
+		for (let i = 0; i < bodySize; i++) {
+			originalBody[i] = i % 256;
+		}
+
+		const originalRequest = new Request("https://example.com/upload", {
+			method: "POST",
+			body: originalBody,
+		});
+
+		// Encapsulate and decapsulate
+		const { request: relayRequest, context } = await client.encapsulateRequest(
+			originalRequest,
+			"https://relay.example.com/ohttp",
+		);
+
+		const { request: innerRequest, context: serverContext } =
+			await server.decapsulateRequest(relayRequest);
+
+		// Read body incrementally
+		const reader = innerRequest.body?.getReader();
+		expect(reader).toBeDefined();
+
+		let totalReceived = 0;
+		const chunks: Uint8Array[] = [];
+
+		// eslint-disable-next-line no-constant-condition
+		while (true) {
+			const { done, value } = await reader!.read();
+			if (done) break;
+			chunks.push(value);
+			totalReceived += value.length;
+		}
+
+		expect(totalReceived).toBe(bodySize);
+
+		// Verify content integrity
+		const received = concat(...chunks);
+		expect(received).toEqual(originalBody);
+
+		// Response with large body
+		const responseBody = new Uint8Array(bodySize);
+		for (let i = 0; i < bodySize; i++) {
+			responseBody[i] = (255 - i) % 256;
+		}
+
+		const serverResponse = new Response(responseBody, { status: 200 });
+		const encapsulatedResponse = await serverContext.encapsulateResponse(serverResponse);
+		const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
+
+		// Read response body
+		const responseReader = finalResponse.body?.getReader();
+		expect(responseReader).toBeDefined();
+
+		let responseTotalReceived = 0;
+		const responseChunks: Uint8Array[] = [];
+
+		// eslint-disable-next-line no-constant-condition
+		while (true) {
+			const { done, value } = await responseReader!.read();
+			if (done) break;
+			responseChunks.push(value);
+			responseTotalReceived += value.length;
+		}
+
+		expect(responseTotalReceived).toBe(bodySize);
+
+		const receivedResponse = concat(...responseChunks);
+		expect(receivedResponse).toEqual(responseBody);
+	});
+
+	it("handles body with patterned data", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const client = new ChunkedOHTTPClient(
+			suite,
+			{
+				keyId: serverKeyConfig.keyId,
+				kemId: serverKeyConfig.kemId,
+				publicKey: serverKeyConfig.publicKey,
+				symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+			},
+			{ maxChunkSize: 256 },
+		);
+		const server = new ChunkedOHTTPServer([serverKeyConfig], { maxChunkSize: 256 });
+
+		// Create body with pattern to verify content integrity
+		const chunkCount = 10;
+		const chunkSize = 100;
+		const fullBody = new Uint8Array(chunkCount * chunkSize);
+		for (let i = 0; i < chunkCount; i++) {
+			fullBody.fill(i, i * chunkSize, (i + 1) * chunkSize);
+		}
+
+		const originalRequest = new Request("https://example.com/stream", {
+			method: "POST",
+			body: fullBody,
+		});
+
+		const { request: relayRequest, context } = await client.encapsulateRequest(
+			originalRequest,
+			"https://relay.example.com/ohttp",
+		);
+
+		const { request: innerRequest, context: serverContext } =
+			await server.decapsulateRequest(relayRequest);
+
+		// Verify all chunks received correctly
+		const receivedBody = await innerRequest.arrayBuffer();
+		const received = new Uint8Array(receivedBody);
+
+		expect(received.length).toBe(chunkCount * chunkSize);
+
+		// Verify each chunk's content
+		for (let i = 0; i < chunkCount; i++) {
+			const chunkStart = i * chunkSize;
+			for (let j = 0; j < chunkSize; j++) {
+				expect(received[chunkStart + j]).toBe(i);
+			}
+		}
+
+		// Complete roundtrip with patterned response
+		const responseBody = new Uint8Array(250);
+		for (let i = 0; i < 5; i++) {
+			responseBody.fill(i + 100, i * 50, (i + 1) * 50);
+		}
+
+		const serverResponse = new Response(responseBody, { status: 200 });
+		const encapsulatedResponse = await serverContext.encapsulateResponse(serverResponse);
+		const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
+
+		const finalResponseBody = new Uint8Array(await finalResponse.arrayBuffer());
+		expect(finalResponseBody.length).toBe(250);
+
+		// Verify response pattern
+		for (let i = 0; i < 5; i++) {
+			for (let j = 0; j < 50; j++) {
+				expect(finalResponseBody[i * 50 + j]).toBe(i + 100);
+			}
+		}
+	});
 });
