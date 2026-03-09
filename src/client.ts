@@ -532,6 +532,7 @@ export class ChunkedOHTTPClient {
 		const requestCtx = await this.createRequestContext();
 		const suite = this.suite;
 		const maxChunkSize = this.maxChunkSize;
+		const responseLabel = this.responseLabel;
 
 		// Get the HPKE sender context for creating the encrypt transform
 		// We need to access it through the request context internals
@@ -548,30 +549,8 @@ export class ChunkedOHTTPClient {
 		// Pipe through transforms
 		const encryptedStream = bhttpStream.pipeThrough(chunkerTransform).pipeThrough(encryptTransform);
 
-		// Create output stream that prepends header
-		const headerSent = { value: false };
+		// Create output stream that prepends header to encrypted chunks
 		const header = requestCtx.header;
-		const outputStream = new ReadableStream<Uint8Array>({
-			async start(controller) {
-				// Send header first
-				controller.enqueue(header);
-				headerSent.value = true;
-			},
-
-			async pull(controller) {
-				const reader = encryptedStream.getReader();
-				const { done, value } = await reader.read();
-				reader.releaseLock();
-
-				if (done) {
-					controller.close();
-				} else {
-					controller.enqueue(value);
-				}
-			},
-		});
-
-		// Actually, simpler approach - collect header + stream
 		const finalStream = new ReadableStream<Uint8Array>({
 			async start(controller) {
 				controller.enqueue(header);
@@ -627,7 +606,7 @@ export class ChunkedOHTTPClient {
 					requestCtx._senderContext,
 					requestCtx._enc,
 					responseNonce,
-					CHUNKED_RESPONSE_LABEL,
+					responseLabel,
 				);
 
 				// Create decrypt transform

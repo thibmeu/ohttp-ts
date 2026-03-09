@@ -18,6 +18,7 @@ import {
 } from "./constants.js";
 import {
 	FINAL_CHUNK_AAD,
+	type ParsedChunk,
 	openResponseChunk,
 	parseFramedChunk,
 	sealResponseChunk,
@@ -56,7 +57,7 @@ export function createRequestEncryptTransform(
 					const lengthBytes = encodeVarint(sealed.length);
 					controller.enqueue(concat(lengthBytes, sealed));
 				} catch {
-					controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
+					controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
 					return;
 				}
 			}
@@ -73,7 +74,7 @@ export function createRequestEncryptTransform(
 				const lengthBytes = encodeVarint(0);
 				controller.enqueue(concat(lengthBytes, sealed));
 			} catch {
-				controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
+				controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
 			}
 		},
 	});
@@ -105,7 +106,7 @@ export function createRequestDecryptTransform(
 
 			// Parse and decrypt complete frames
 			while (buffer.length > 0) {
-				let parsed;
+				let parsed: ParsedChunk | undefined;
 				try {
 					parsed = parseFramedChunk(buffer);
 				} catch (e) {
@@ -251,7 +252,7 @@ export function createResponseDecryptTransform(
 
 			// Parse and decrypt complete frames
 			while (buffer.length > 0) {
-				let parsed;
+				let parsed: ParsedChunk | undefined;
 				try {
 					parsed = parseFramedChunk(buffer);
 				} catch (e) {
@@ -378,8 +379,6 @@ export async function decodeBHttpRequestStream(
 
 	let preamble: BHttpRequestPreambleEvent | undefined;
 	const pendingBodyChunks: Uint8Array[] = [];
-	let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
-	let bodyStreamStarted = false;
 	let sourceExhausted = false;
 
 	// Read until we have the preamble
@@ -392,10 +391,10 @@ export async function decodeBHttpRequestStream(
 		const events = decoder.push(value);
 		for (const event of events) {
 			if (event.type === "request-preamble") {
-				preamble = event as BHttpRequestPreambleEvent;
+				preamble = event;
 			} else if (event.type === "content") {
 				// Buffer body chunks that arrived with preamble
-				pendingBodyChunks.push((event as BHttpContentEvent).data);
+				pendingBodyChunks.push(event.data);
 			}
 		}
 	}
@@ -403,9 +402,6 @@ export async function decodeBHttpRequestStream(
 	// Create body stream that continues reading from source
 	const body = new ReadableStream<Uint8Array>({
 		start(controller) {
-			bodyController = controller;
-			bodyStreamStarted = true;
-
 			// Enqueue any chunks we already received
 			for (const chunk of pendingBodyChunks) {
 				controller.enqueue(chunk);
@@ -435,7 +431,7 @@ export async function decodeBHttpRequestStream(
 				const events = decoder.push(value);
 				for (const event of events) {
 					if (event.type === "content") {
-						controller.enqueue((event as BHttpContentEvent).data);
+						controller.enqueue(event.data);
 						return; // Yield control after enqueuing
 					} else if (event.type === "end") {
 						sourceExhausted = true;
@@ -491,9 +487,9 @@ export async function decodeBHttpResponseStream(
 		const events = decoder.push(value);
 		for (const event of events) {
 			if (event.type === "response-preamble") {
-				preamble = event as BHttpResponsePreambleEvent;
+				preamble = event;
 			} else if (event.type === "content") {
-				pendingBodyChunks.push((event as BHttpContentEvent).data);
+				pendingBodyChunks.push(event.data);
 			}
 			// Ignore informational responses for now
 		}
@@ -529,7 +525,7 @@ export async function decodeBHttpResponseStream(
 				const events = decoder.push(value);
 				for (const event of events) {
 					if (event.type === "content") {
-						controller.enqueue((event as BHttpContentEvent).data);
+						controller.enqueue(event.data);
 						return;
 					} else if (event.type === "end") {
 						sourceExhausted = true;
