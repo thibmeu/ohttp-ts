@@ -1,9 +1,4 @@
-import {
-	AEAD_AES_128_GCM,
-	CipherSuite,
-	KDF_HKDF_SHA256,
-	KEM_DHKEM_X25519_HKDF_SHA256,
-} from "hpke";
+import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { bench, describe } from "vitest";
 import {
 	AeadId,
@@ -150,8 +145,7 @@ describe("full round-trip", () => {
 
 describe("chunked round-trip", () => {
 	bench("1KB", async () => {
-		const { encapsulatedRequest, createResponseContext } =
-			await chunkedClient.encapsulate(_1KB);
+		const { encapsulatedRequest, createResponseContext } = await chunkedClient.encapsulate(_1KB);
 		const { createResponseContext: serverCreate } =
 			await chunkedServer.decapsulate(encapsulatedRequest);
 		const resCtx = await serverCreate();
@@ -160,8 +154,7 @@ describe("chunked round-trip", () => {
 	});
 
 	bench("16KB", async () => {
-		const { encapsulatedRequest, createResponseContext } =
-			await chunkedClient.encapsulate(_16KB);
+		const { encapsulatedRequest, createResponseContext } = await chunkedClient.encapsulate(_16KB);
 		const { createResponseContext: serverCreate } =
 			await chunkedServer.decapsulate(encapsulatedRequest);
 		const resCtx = await serverCreate();
@@ -170,8 +163,7 @@ describe("chunked round-trip", () => {
 	});
 
 	bench("100KB", async () => {
-		const { encapsulatedRequest, createResponseContext } =
-			await chunkedClient.encapsulate(_100KB);
+		const { encapsulatedRequest, createResponseContext } = await chunkedClient.encapsulate(_100KB);
 		const { createResponseContext: serverCreate } =
 			await chunkedServer.decapsulate(encapsulatedRequest);
 		const resCtx = await serverCreate();
@@ -180,12 +172,63 @@ describe("chunked round-trip", () => {
 	});
 
 	bench("1MB", async () => {
-		const { encapsulatedRequest, createResponseContext } =
-			await chunkedClient.encapsulate(_1MB);
+		const { encapsulatedRequest, createResponseContext } = await chunkedClient.encapsulate(_1MB);
 		const { createResponseContext: serverCreate } =
 			await chunkedServer.decapsulate(encapsulatedRequest);
 		const resCtx = await serverCreate();
 		const encRes = await chunkedServer.encapsulateResponse(resCtx, _1MB);
 		await chunkedClient.decapsulateResponse(createResponseContext, encRes);
+	});
+});
+
+describe("chunked HTTP round-trip", () => {
+	// Pre-create Request objects for benchmarks
+	const req1KB = new Request("https://example.com/api", {
+		method: "POST",
+		headers: { "Content-Type": "application/octet-stream" },
+		body: _1KB,
+	});
+	const req16KB = new Request("https://example.com/api", {
+		method: "POST",
+		headers: { "Content-Type": "application/octet-stream" },
+		body: _16KB,
+	});
+	const req100KB = new Request("https://example.com/api", {
+		method: "POST",
+		headers: { "Content-Type": "application/octet-stream" },
+		body: _100KB,
+	});
+
+	bench("1KB", async () => {
+		const { request, context } = await chunkedClient.encapsulateRequest(
+			req1KB.clone(),
+			"https://relay.example.com",
+		);
+		const { context: sctx } = await chunkedServer.decapsulateRequest(request);
+		const res = new Response(_1KB, { status: 200 });
+		const encRes = await sctx.encapsulateResponse(res);
+		await context.decapsulateResponse(encRes);
+	});
+
+	bench("16KB", async () => {
+		const { request, context } = await chunkedClient.encapsulateRequest(
+			req16KB.clone(),
+			"https://relay.example.com",
+		);
+		const { context: sctx } = await chunkedServer.decapsulateRequest(request);
+		const res = new Response(_16KB, { status: 200 });
+		const encRes = await sctx.encapsulateResponse(res);
+		await context.decapsulateResponse(encRes);
+	});
+
+	bench("100KB", async () => {
+		const { request, context } = await chunkedClient.encapsulateRequest(
+			req100KB.clone(),
+			"https://relay.example.com",
+		);
+		const { context: sctx } = await chunkedServer.decapsulateRequest(request);
+		const res = new Response(_100KB, { status: 200 });
+		const encRes = await sctx.encapsulateResponse(res);
+		await context.decapsulateResponse(encRes);
 	});
 });

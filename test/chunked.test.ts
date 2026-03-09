@@ -595,3 +595,160 @@ describe("empty chunk handling", () => {
 		expect(decrypted).toEqual(new Uint8Array([1, 2, 3]));
 	});
 });
+
+describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
+	it("encapsulates and decapsulates HTTP Request with body", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const client = new ChunkedOHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+
+		// Create a request with body
+		const originalRequest = new Request("https://example.com/api/test?q=hello", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "hello world" }),
+		});
+
+		// Client encapsulates
+		const { request: relayRequest, context } = await client.encapsulateRequest(
+			originalRequest,
+			"https://relay.example.com/ohttp",
+		);
+
+		expect(relayRequest.method).toBe("POST");
+		expect(relayRequest.headers.get("Content-Type")).toBe("message/ohttp-chunked-req");
+
+		// Simulate relay forwarding to gateway (server decapsulates)
+		const { request: innerRequest, context: serverContext } =
+			await server.decapsulateRequest(relayRequest);
+
+		// Verify inner request
+		expect(innerRequest.method).toBe("POST");
+		expect(innerRequest.url).toBe("https://example.com/api/test?q=hello");
+		expect(innerRequest.headers.get("Content-Type")).toBe("application/json");
+		const innerBody = await innerRequest.text();
+		expect(JSON.parse(innerBody)).toEqual({ message: "hello world" });
+
+		// Server creates response
+		const serverResponse = new Response(JSON.stringify({ status: "ok" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+
+		// Server encapsulates response
+		const encapsulatedResponse = await serverContext.encapsulateResponse(serverResponse);
+		expect(encapsulatedResponse.headers.get("Content-Type")).toBe("message/ohttp-chunked-res");
+
+		// Client decapsulates response
+		const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
+
+		expect(finalResponse.status).toBe(200);
+		expect(finalResponse.headers.get("Content-Type")).toBe("application/json");
+		const responseBody = await finalResponse.text();
+		expect(JSON.parse(responseBody)).toEqual({ status: "ok" });
+	});
+
+	it("encapsulates and decapsulates HTTP Request without body", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const client = new ChunkedOHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+
+		// Create a GET request (no body)
+		const originalRequest = new Request("https://example.com/resource", {
+			method: "GET",
+			headers: { Accept: "text/plain" },
+		});
+
+		// Client encapsulates
+		const { request: relayRequest, context } = await client.encapsulateRequest(
+			originalRequest,
+			"https://relay.example.com/ohttp",
+		);
+
+		// Server decapsulates
+		const { request: innerRequest, context: serverContext } =
+			await server.decapsulateRequest(relayRequest);
+
+		expect(innerRequest.method).toBe("GET");
+		expect(innerRequest.url).toBe("https://example.com/resource");
+		expect(innerRequest.headers.get("Accept")).toBe("text/plain");
+
+		// Server creates empty response
+		const serverResponse = new Response(null, {
+			status: 204,
+		});
+
+		// Server encapsulates response
+		const encapsulatedResponse = await serverContext.encapsulateResponse(serverResponse);
+
+		// Client decapsulates response
+		const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
+
+		expect(finalResponse.status).toBe(204);
+	});
+
+	it("handles large request body", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		// Use small chunk size to test chunking
+		const client = new ChunkedOHTTPClient(
+			suite,
+			{
+				keyId: serverKeyConfig.keyId,
+				kemId: serverKeyConfig.kemId,
+				publicKey: serverKeyConfig.publicKey,
+				symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+			},
+			{ maxChunkSize: 100 },
+		);
+		const server = new ChunkedOHTTPServer([serverKeyConfig], { maxChunkSize: 100 });
+
+		// Create request with body larger than chunk size
+		const largeBody = "x".repeat(500);
+		const originalRequest = new Request("https://example.com/upload", {
+			method: "POST",
+			body: largeBody,
+		});
+
+		// Roundtrip
+		const { request: relayRequest, context } = await client.encapsulateRequest(
+			originalRequest,
+			"https://relay.example.com/ohttp",
+		);
+
+		const { request: innerRequest, context: serverContext } =
+			await server.decapsulateRequest(relayRequest);
+
+		const receivedBody = await innerRequest.text();
+		expect(receivedBody).toBe(largeBody);
+
+		// Large response
+		const largeResponseBody = "y".repeat(500);
+		const serverResponse = new Response(largeResponseBody, { status: 200 });
+		const encapsulatedResponse = await serverContext.encapsulateResponse(serverResponse);
+		const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
+
+		expect(await finalResponse.text()).toBe(largeResponseBody);
+	});
+});

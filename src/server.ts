@@ -1,5 +1,12 @@
 import type { RecipientContext } from "hpke";
-import { MediaType, bhttp } from "./constants.js";
+import {
+	type BHttpContentEvent,
+	type BHttpRequestPreambleEvent,
+	BHttpResponseStreamEncoder,
+	BHttpStreamDecoder,
+	MediaType,
+	bhttp,
+} from "./constants.js";
 import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
@@ -104,6 +111,24 @@ export interface ChunkedServerResponseContext {
 	sealChunk(chunk: Uint8Array): Promise<Uint8Array>;
 	/** Seal the final chunk */
 	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array>;
+}
+
+/**
+ * Result of decapsulating a chunked HTTP request (Request/Response API)
+ */
+export interface DecapsulatedChunkedHttpRequest {
+	/** The decrypted HTTP request */
+	readonly request: Request;
+	/** Context needed to encrypt the chunked response */
+	readonly context: ChunkedHttpServerContext;
+}
+
+/**
+ * Server context for encrypting chunked responses (Request/Response API)
+ */
+export interface ChunkedHttpServerContext {
+	/** Encrypt a response and return as chunked OHTTP Response */
+	encapsulateResponse(response: Response): Promise<Response>;
 }
 
 /**
@@ -431,5 +456,202 @@ export class ChunkedOHTTPServer {
 		}
 
 		return concat(...chunks);
+	}
+
+	/**
+	 * Decapsulate a chunked OHTTP Request (high-level API)
+	 *
+	 * Decrypts and decodes streaming Binary HTTP to return the inner Request.
+	 *
+	 * @param request - The chunked OHTTP request from the relay
+	 * @returns The decrypted inner Request and context for encapsulating the response
+	 */
+	async decapsulateRequest(request: Request): Promise<DecapsulatedChunkedHttpRequest> {
+		// Validate content type
+		const contentType = request.headers.get("content-type");
+		if (contentType !== MediaType.CHUNKED_REQUEST) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+		}
+
+		// Read encapsulated request body
+		const encapsulatedRequest = new Uint8Array(await request.arrayBuffer());
+
+		// Parse header to get offset
+		const { offset: headerOffset } = parseRequestHeader(encapsulatedRequest);
+		const header = encapsulatedRequest.slice(0, headerOffset);
+
+		const requestCtx = await this.createRequestContext(header);
+
+		// Parse, decrypt, and decode BHTTP request
+		const bhttpDecoder = new BHttpStreamDecoder();
+		let data = encapsulatedRequest.slice(headerOffset);
+
+		let method = "";
+		let scheme = "";
+		let authority = "";
+		let path = "";
+		let headers = new Headers();
+		const bodyChunks: Uint8Array[] = [];
+
+		while (data.length > 0) {
+			const parsed = parseFramedChunk(data);
+			if (parsed === undefined) {
+				throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+			}
+
+			let decrypted: Uint8Array;
+			try {
+				if (parsed.isFinal) {
+					decrypted = await requestCtx.openFinalChunk(parsed.ciphertext);
+				} else {
+					decrypted = await requestCtx.openChunk(parsed.ciphertext);
+				}
+			} catch {
+				throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+			}
+
+			// Feed to BHTTP decoder
+			const events = bhttpDecoder.push(decrypted);
+			for (const event of events) {
+				switch (event.type) {
+					case "request-preamble": {
+						const preamble = event as BHttpRequestPreambleEvent;
+						method = preamble.method;
+						scheme = preamble.scheme;
+						authority = preamble.authority;
+						path = preamble.path;
+						headers = preamble.headers;
+						break;
+					}
+					case "content":
+						bodyChunks.push((event as BHttpContentEvent).data);
+						break;
+					// trailers ignored for now
+				}
+			}
+
+			if (parsed.isFinal) {
+				break;
+			}
+			data = data.slice(parsed.bytesConsumed);
+		}
+
+		// Finalize decoder
+		try {
+			bhttpDecoder.end();
+		} catch {
+			throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+		}
+
+		// Build Request
+		const url = `${scheme}://${authority}${path}`;
+		const bodyData = concat(...bodyChunks);
+		const innerRequest = new Request(url, {
+			method,
+			headers,
+			body: bodyData.length > 0 ? toArrayBuffer(bodyData) : null,
+		});
+
+		const maxChunkSize = this.maxChunkSize;
+
+		// Create context for encapsulating response
+		const context: ChunkedHttpServerContext = {
+			async encapsulateResponse(response: Response): Promise<Response> {
+				// Create response context
+				const responseCtx = await requestCtx.createResponseContext();
+
+				// Encode response using streaming BHTTP
+				const bhttpEncoder = new BHttpResponseStreamEncoder();
+				const preamble = bhttpEncoder.encodePreamble(response.status, response.headers);
+
+				const encryptedChunks: Uint8Array[] = [responseCtx.responseNonce];
+				let pendingBytes = preamble;
+				const body = response.body;
+
+				if (body === null) {
+					// No body - encode end and send as final chunk
+					const endBytes = bhttpEncoder.encodeEnd();
+					const finalData = concat(pendingBytes, endBytes);
+
+					let offset = 0;
+					while (offset < finalData.length) {
+						const remaining = finalData.length - offset;
+						const isLast = remaining <= maxChunkSize;
+						const chunkSize = Math.min(remaining, maxChunkSize);
+						const chunk = finalData.slice(offset, offset + chunkSize);
+						offset += chunkSize;
+
+						if (isLast) {
+							const sealed = await responseCtx.sealFinalChunk(chunk);
+							encryptedChunks.push(frameChunk(sealed, true));
+						} else {
+							const sealed = await responseCtx.sealChunk(chunk);
+							encryptedChunks.push(frameChunk(sealed, false));
+						}
+					}
+				} else {
+					// Stream body chunks
+					const reader = body.getReader();
+
+					while (true) {
+						const { done, value } = await reader.read();
+
+						if (done) {
+							// Encode end and send final chunk
+							const endBytes = bhttpEncoder.encodeEnd();
+							const finalData = concat(pendingBytes, endBytes);
+
+							let offset = 0;
+							while (offset < finalData.length) {
+								const remaining = finalData.length - offset;
+								const isLast = remaining <= maxChunkSize;
+								const chunkSize = Math.min(remaining, maxChunkSize);
+								const chunk = finalData.slice(offset, offset + chunkSize);
+								offset += chunkSize;
+
+								if (isLast) {
+									const sealed = await responseCtx.sealFinalChunk(chunk);
+									encryptedChunks.push(frameChunk(sealed, true));
+								} else {
+									const sealed = await responseCtx.sealChunk(chunk);
+									encryptedChunks.push(frameChunk(sealed, false));
+								}
+							}
+							break;
+						}
+
+						// Encode body chunk
+						const bodyChunk = bhttpEncoder.encodeContentChunk(value);
+						const combined = concat(pendingBytes, bodyChunk);
+						pendingBytes = new Uint8Array(0);
+
+						// Encrypt and frame
+						let offset = 0;
+						while (offset + maxChunkSize <= combined.length) {
+							const chunk = combined.slice(offset, offset + maxChunkSize);
+							const sealed = await responseCtx.sealChunk(chunk);
+							encryptedChunks.push(frameChunk(sealed, false));
+							offset += maxChunkSize;
+						}
+
+						// Keep remainder for next iteration
+						if (offset < combined.length) {
+							pendingBytes = combined.slice(offset);
+						}
+					}
+				}
+
+				const encapsulatedBody = concat(...encryptedChunks);
+
+				return new Response(toArrayBuffer(encapsulatedBody), {
+					status: 200,
+					headers: {
+						"Content-Type": MediaType.CHUNKED_RESPONSE,
+					},
+				});
+			},
+		};
+
+		return { request: innerRequest, context };
 	}
 }

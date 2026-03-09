@@ -1,4 +1,17 @@
 import { BHttpDecoder, BHttpEncoder } from "@dajiaji/bhttp";
+// Streaming BHTTP from fork
+export {
+	BHttpRequestStreamEncoder,
+	BHttpResponseStreamEncoder,
+	BHttpStreamDecoder,
+	type BHttpEvent,
+	type BHttpRequestPreambleEvent,
+	type BHttpResponsePreambleEvent,
+	type BHttpContentEvent,
+	type BHttpInformationalEvent,
+	type BHttpTrailersEvent,
+	type BHttpEndEvent,
+} from "bhttp-js";
 
 /**
  * OHTTP media types for Content-Type headers
