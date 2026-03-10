@@ -794,14 +794,14 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 		// Read body incrementally
 		const reader = innerRequest.body?.getReader();
-		expect(reader).toBeDefined();
+		if (!reader) throw new Error("expected reader");
 
 		let totalReceived = 0;
 		const chunks: Uint8Array[] = [];
 
 		// eslint-disable-next-line no-constant-condition
 		while (true) {
-			const { done, value } = await reader!.read();
+			const { done, value } = await reader.read();
 			if (done) break;
 			chunks.push(value);
 			totalReceived += value.length;
@@ -825,14 +825,14 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 		// Read response body
 		const responseReader = finalResponse.body?.getReader();
-		expect(responseReader).toBeDefined();
+		if (!responseReader) throw new Error("expected responseReader");
 
 		let responseTotalReceived = 0;
 		const responseChunks: Uint8Array[] = [];
 
 		// eslint-disable-next-line no-constant-condition
 		while (true) {
-			const { done, value } = await responseReader!.read();
+			const { done, value } = await responseReader.read();
 			if (done) break;
 			responseChunks.push(value);
 			responseTotalReceived += value.length;
