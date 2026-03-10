@@ -9,4 +9,6 @@ export default defineConfig({
 	target: "es2022",
 	minify: false,
 	splitting: false,
+	// Bundle bhttp-js since it's vendored and file: deps don't work when published
+	noExternal: ["bhttp-js"],
 });

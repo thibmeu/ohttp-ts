@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      bhttp-js:
-        specifier: file:vendor/bhttp-js-0.4.0.tgz
-        version: file:vendor/bhttp-js-0.4.0.tgz
       hpke:
         specifier: ^1.0.6
         version: 1.0.6
@@ -27,6 +24,9 @@ importers:
       '@panva/hpke-noble':
         specifier: ^1.0.6
         version: 1.0.6(hpke@1.0.6)
+      bhttp-js:
+        specifier: file:vendor/bhttp-js-0.4.0.tgz
+        version: file:vendor/bhttp-js-0.4.0.tgz
       esbuild:
         specifier: ^0.27.3
         version: 0.27.3
