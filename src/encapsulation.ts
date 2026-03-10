@@ -422,13 +422,16 @@ export async function decapsulateResponse(
  * WebCrypto requires ArrayBuffer, not SharedArrayBuffer.
  */
 function asArrayBuffer(data: Uint8Array): ArrayBuffer {
-	if (data.buffer instanceof SharedArrayBuffer) {
+	// Check for SharedArrayBuffer (may not exist in browsers without COOP/COEP headers)
+	if (typeof SharedArrayBuffer !== "undefined" && data.buffer instanceof SharedArrayBuffer) {
 		const copy = new ArrayBuffer(data.byteLength);
 		new Uint8Array(copy).set(data);
 		return copy;
 	}
 	// Return a view of the underlying buffer at the correct offset
-	return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+	// Use slice which always returns ArrayBuffer when source is ArrayBuffer
+	const sliced = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+	return sliced as ArrayBuffer;
 }
 
 async function extractPrk(
