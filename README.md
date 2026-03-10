@@ -98,6 +98,25 @@ See [`examples/bhttp.example.ts`](examples/bhttp.example.ts) for a complete exam
 
 ### Chunked OHTTP (Streaming)
 
+Use chunked OHTTP when:
+- **Large payloads** (>1MB) that would exceed memory limits
+- **Incremental sources** - data arrives over time (file uploads, network streams)
+- **Early processing** - need to start processing before full body arrives
+- **Memory-constrained** - Workers (128MB), mobile, edge
+
+Use normal OHTTP when:
+- **Small payloads** (<100KB)
+- **Need full body** - JSON.parse(), image processing, etc.
+- **Latency-sensitive** - streaming has async overhead
+
+```typescript
+// Normal: ~3x payload memory, faster for in-memory data
+const client = new OHTTPClient(suite, keyConfig);
+
+// Chunked: ~64KB constant memory, better for large/streaming data
+const client = new ChunkedOHTTPClient(suite, keyConfig);
+```
+
 For streaming large requests/responses, use `ChunkedOHTTPClient`/`ChunkedOHTTPServer`:
 
 ```typescript
