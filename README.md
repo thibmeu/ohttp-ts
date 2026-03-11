@@ -17,6 +17,13 @@ TypeScript implementation of [Oblivious HTTP (RFC 9458)](https://www.rfc-editor.
 npm install ohttp-ts hpke
 ```
 
+Or via CDN (no install):
+
+```javascript
+import { KeyConfig, OHTTPClient, OHTTPServer } from "https://esm.sh/ohttp-ts";
+import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM } from "https://esm.sh/hpke";
+```
+
 ## Quick Start
 
 ```typescript
