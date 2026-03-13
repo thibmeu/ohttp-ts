@@ -69,10 +69,17 @@ export interface EncapsulatedRequest {
 
 /**
  * Result of encapsulating a request (Request/Response API)
+ *
+ * The `init` object is a valid `RequestInit` containing:
+ * - method: "POST"
+ * - headers: { "Content-Type": "message/ohttp-req" }
+ * - body: ArrayBuffer (encapsulated request)
+ *
+ * Usage: `fetch(relayUrl, init)` or `new Request(relayUrl, init)`
  */
-export interface EncapsulatedHttpRequest {
-	/** The encapsulated request as a Request object (POST, Content-Type: message/ohttp-req) */
-	readonly request: Request;
+export interface EncapsulatedRequestInit {
+	/** RequestInit for fetch() - POST with Content-Type: message/ohttp-req */
+	readonly init: RequestInit;
 	/** Context needed to decrypt the response */
 	readonly context: HttpClientContext;
 }
@@ -123,10 +130,18 @@ export interface ChunkedResponseContext {
 
 /**
  * Result of encapsulating a chunked HTTP request (Request/Response API)
+ *
+ * The `init` object is a valid `RequestInit` containing:
+ * - method: "POST"
+ * - headers: { "Content-Type": "message/ohttp-chunked-req" }
+ * - body: ReadableStream (streaming encapsulated request)
+ * - duplex: "half" (required for streaming bodies in Node.js/Workers)
+ *
+ * Usage: `fetch(relayUrl, init)` or `new Request(relayUrl, init)`
  */
-export interface EncapsulatedChunkedHttpRequest {
-	/** The encapsulated request as a Request object (POST, Content-Type: message/ohttp-chunked-req) */
-	readonly request: Request;
+export interface EncapsulatedChunkedRequestInit {
+	/** RequestInit for fetch() - POST with streaming body and Content-Type: message/ohttp-chunked-req */
+	readonly init: RequestInit & { duplex: "half" };
 	/** Context needed to decrypt the chunked response */
 	readonly context: ChunkedHttpClientContext;
 }
@@ -223,13 +238,19 @@ export class OHTTPClient {
 	 * Encapsulate an HTTP Request (high-level API)
 	 *
 	 * Encodes the request using Binary HTTP (RFC 9292), then encapsulates with OHTTP.
-	 * Returns a Request object ready to send to the relay.
+	 * Returns a RequestInit ready to use with fetch() or new Request().
 	 *
 	 * @param request - The HTTP Request to encapsulate
-	 * @param relayUrl - The URL of the OHTTP relay
-	 * @returns A Request for the relay and context for decapsulating the response
+	 * @returns A RequestInit for the relay and context for decapsulating the response
+	 *
+	 * @example
+	 * ```typescript
+	 * const { init, context } = await client.encapsulateRequest(request);
+	 * const response = await fetch(relayUrl, init);
+	 * const innerResponse = await context.decapsulateResponse(response);
+	 * ```
 	 */
-	async encapsulateRequest(request: Request, relayUrl: string): Promise<EncapsulatedHttpRequest> {
+	async encapsulateRequest(request: Request): Promise<EncapsulatedRequestInit> {
 		// Encode request to Binary HTTP
 		let binaryRequest: Uint8Array;
 		try {
@@ -269,16 +290,16 @@ export class OHTTPClient {
 			},
 		};
 
-		// Build relay request
-		const relayRequest = new Request(relayUrl, {
+		// Build RequestInit for relay
+		const init: RequestInit = {
 			method: "POST",
 			headers: {
 				"Content-Type": MediaType.REQUEST,
 			},
 			body: toArrayBuffer(encapsulatedRequest),
-		});
+		};
 
-		return { request: relayRequest, context };
+		return { init, context };
 	}
 }
 
@@ -522,13 +543,16 @@ export class ChunkedOHTTPClient {
 	 * full buffering.
 	 *
 	 * @param request - The HTTP Request to encapsulate
-	 * @param relayUrl - The URL of the OHTTP relay
-	 * @returns A Request for the relay (with streaming body) and context for decapsulating the response
+	 * @returns A RequestInit for the relay (with streaming body) and context for decapsulating the response
+	 *
+	 * @example
+	 * ```typescript
+	 * const { init, context } = await client.encapsulateRequest(request);
+	 * const response = await fetch(relayUrl, init);
+	 * const innerResponse = await context.decapsulateResponse(response);
+	 * ```
 	 */
-	async encapsulateRequest(
-		request: Request,
-		relayUrl: string,
-	): Promise<EncapsulatedChunkedHttpRequest> {
+	async encapsulateRequest(request: Request): Promise<EncapsulatedChunkedRequestInit> {
 		const requestCtx = await this.createRequestContext();
 		const suite = this.suite;
 		const maxChunkSize = this.maxChunkSize;
@@ -650,17 +674,16 @@ export class ChunkedOHTTPClient {
 			},
 		};
 
-		// Build relay request with streaming body
-		const relayRequest = new Request(relayUrl, {
+		// Build RequestInit for relay with streaming body
+		const init: RequestInit & { duplex: "half" } = {
 			method: "POST",
 			headers: {
 				"Content-Type": MediaType.CHUNKED_REQUEST,
 			},
 			body: finalStream,
-			// @ts-expect-error - duplex required for streaming request bodies in Node.js
 			duplex: "half",
-		});
+		};
 
-		return { request: relayRequest, context };
+		return { init, context };
 	}
 }

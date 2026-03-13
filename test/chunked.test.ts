@@ -619,15 +619,15 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		});
 
 		// Client encapsulates
-		const { request: relayRequest, context } = await client.encapsulateRequest(
-			originalRequest,
-			"https://relay.example.com/ohttp",
+		const { init, context } = await client.encapsulateRequest(originalRequest);
+
+		expect(init.method).toBe("POST");
+		expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+			"message/ohttp-chunked-req",
 		);
 
-		expect(relayRequest.method).toBe("POST");
-		expect(relayRequest.headers.get("Content-Type")).toBe("message/ohttp-chunked-req");
-
 		// Simulate relay forwarding to gateway (server decapsulates)
+		const relayRequest = new Request("https://relay.example.com/ohttp", init);
 		const { request: innerRequest, context: serverContext } =
 			await server.decapsulateRequest(relayRequest);
 
@@ -678,12 +678,10 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		});
 
 		// Client encapsulates
-		const { request: relayRequest, context } = await client.encapsulateRequest(
-			originalRequest,
-			"https://relay.example.com/ohttp",
-		);
+		const { init, context } = await client.encapsulateRequest(originalRequest);
 
 		// Server decapsulates
+		const relayRequest = new Request("https://relay.example.com/ohttp", init);
 		const { request: innerRequest, context: serverContext } =
 			await server.decapsulateRequest(relayRequest);
 
@@ -732,11 +730,9 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		});
 
 		// Roundtrip
-		const { request: relayRequest, context } = await client.encapsulateRequest(
-			originalRequest,
-			"https://relay.example.com/ohttp",
-		);
+		const { init, context } = await client.encapsulateRequest(originalRequest);
 
+		const relayRequest = new Request("https://relay.example.com/ohttp", init);
 		const { request: innerRequest, context: serverContext } =
 			await server.decapsulateRequest(relayRequest);
 
@@ -784,11 +780,9 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		});
 
 		// Encapsulate and decapsulate
-		const { request: relayRequest, context } = await client.encapsulateRequest(
-			originalRequest,
-			"https://relay.example.com/ohttp",
-		);
+		const { init, context } = await client.encapsulateRequest(originalRequest);
 
+		const relayRequest = new Request("https://relay.example.com/ohttp", init);
 		const { request: innerRequest, context: serverContext } =
 			await server.decapsulateRequest(relayRequest);
 
@@ -875,11 +869,9 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 			body: fullBody,
 		});
 
-		const { request: relayRequest, context } = await client.encapsulateRequest(
-			originalRequest,
-			"https://relay.example.com/ohttp",
-		);
+		const { init, context } = await client.encapsulateRequest(originalRequest);
 
+		const relayRequest = new Request("https://relay.example.com/ohttp", init);
 		const { request: innerRequest, context: serverContext } =
 			await server.decapsulateRequest(relayRequest);
 

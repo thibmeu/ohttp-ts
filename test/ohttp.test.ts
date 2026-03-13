@@ -334,16 +334,14 @@ describe("OHTTP Request/Response API", () => {
 			body: JSON.stringify({ query: "test" }),
 		});
 
-		const { request: relayRequest, context: clientContext } = await client.encapsulateRequest(
-			httpRequest,
-			"https://relay.example.com/ohttp",
-		);
+		const { init, context: clientContext } = await client.encapsulateRequest(httpRequest);
 
-		// Verify relay request format
-		expect(relayRequest.method).toBe("POST");
-		expect(relayRequest.headers.get("content-type")).toBe(MediaType.REQUEST);
+		// Verify init format
+		expect(init.method).toBe("POST");
+		expect((init.headers as Record<string, string>)["Content-Type"]).toBe(MediaType.REQUEST);
 
 		// Server decapsulates
+		const relayRequest = new Request("https://relay.example.com/ohttp", init);
 		const { request: innerRequest, context: serverContext } =
 			await server.decapsulateRequest(relayRequest);
 
@@ -410,7 +408,7 @@ describe("OHTTP Request/Response API", () => {
 		});
 
 		const httpRequest = new Request("https://target.example.com/", { method: "GET" });
-		const { context } = await client.encapsulateRequest(httpRequest, "https://relay.example.com/");
+		const { context } = await client.encapsulateRequest(httpRequest);
 
 		// Response with wrong content-type
 		const badResponse = new Response("data", {
@@ -446,7 +444,7 @@ describe("OHTTP Request/Response API", () => {
 			const ohttpRequest = new Request("https://relay.example.com/", {
 				method: "POST",
 				headers: { "Content-Type": MediaType.REQUEST },
-				body: encapsulatedRequest,
+				body: new Uint8Array(encapsulatedRequest).buffer as ArrayBuffer,
 			});
 			await server.decapsulateRequest(ohttpRequest);
 			expect.fail("Should have thrown");

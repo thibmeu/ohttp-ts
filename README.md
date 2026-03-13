@@ -47,15 +47,14 @@ const httpRequest = new Request("https://target.example/api", {
   method: "POST",
   body: JSON.stringify({ data: "sensitive" }),
 });
-const { request: relayRequest, context } = await client.encapsulateRequest(
-  httpRequest,
-  "https://relay.example/ohttp",
-);
+const { init, context } = await client.encapsulateRequest(httpRequest);
 
-// Send to relay: fetch(relayRequest)
+// Send to relay
+const relayResponse = await fetch("https://relay.example/ohttp", init);
 
-// Gateway: decapsulate request
+// Gateway: decapsulate request (received from relay)
 const { request: innerRequest, context: serverContext } = await gateway.decapsulateRequest(relayRequest);
+// relayRequest is what the relay receives and forwards to the gateway
 // innerRequest is the original Request object
 
 // Gateway: encapsulate response
@@ -63,7 +62,7 @@ const httpResponse = new Response(JSON.stringify({ result: "ok" }), { status: 20
 const encapsulatedResponse = await serverContext.encapsulateResponse(httpResponse);
 
 // Client: decapsulate response
-const innerResponse = await context.decapsulateResponse(encapsulatedResponse);
+const innerResponse = await context.decapsulateResponse(relayResponse);
 // innerResponse is the original Response object
 ```
 
@@ -140,12 +139,13 @@ const streamingRequest = new Request("https://target.example/upload", {
   // @ts-expect-error - required for streaming bodies in Node.js
   duplex: "half",
 });
-const { request: relayRequest, context } = await client.encapsulateRequest(
-  streamingRequest,
-  "https://relay.example/ohttp",
-);
+const { init, context } = await client.encapsulateRequest(streamingRequest);
+
+// Send to relay (init includes duplex: "half" for streaming)
+const relayResponse = await fetch("https://relay.example/ohttp", init);
 
 // Gateway: decapsulate (body streams through)
+// relayRequest is what the relay receives and forwards to the gateway
 const { request: innerRequest, context: serverContext } =
   await gateway.decapsulateRequest(relayRequest);
 
@@ -159,7 +159,7 @@ const streamingResponse = new Response(responseStream, { status: 200 });
 const encapsulatedResponse = await serverContext.encapsulateResponse(streamingResponse);
 
 // Client: decapsulate and consume streaming response
-const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
+const finalResponse = await context.decapsulateResponse(relayResponse);
 for await (const chunk of finalResponse.body!) {
   // Process chunk as it arrives
 }

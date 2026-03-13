@@ -43,13 +43,11 @@ export async function chunkedHttpApi(): Promise<boolean> {
 	// This automatically:
 	// 1. Encodes the Request to streaming Binary HTTP
 	// 2. Encrypts using chunked OHTTP
-	const { request: relayRequest, context } = await client.encapsulateRequest(
-		originalRequest,
-		"https://relay.example.com/ohttp",
-	);
+	const { init, context } = await client.encapsulateRequest(originalRequest);
 
-	// In production: send relayRequest to relay, relay forwards to gateway
-	// Here we simulate direct delivery to gateway
+	// init is a RequestInit ready to use with fetch() or new Request()
+	// In production: const relayResponse = await fetch("https://relay.example.com/ohttp", init);
+	const relayRequest = new Request("https://relay.example.com/ohttp", init);
 
 	// Gateway decapsulates the request
 	// This automatically:
@@ -146,10 +144,10 @@ export async function chunkedHttpLargeBody(): Promise<boolean> {
 	});
 
 	// Encapsulate - body streams through chunked OHTTP encryption
-	const { request: relayRequest, context } = await client.encapsulateRequest(
-		originalRequest,
-		"https://relay.example.com/ohttp",
-	);
+	const { init, context } = await client.encapsulateRequest(originalRequest);
+
+	// In production: const relayResponse = await fetch("https://relay.example.com/ohttp", init);
+	const relayRequest = new Request("https://relay.example.com/ohttp", init);
 
 	// Decapsulate - body streams through decryption
 	const { request: innerRequest, context: serverContext } =
