@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { OHTTPError } from "../src/errors.js";
 import {
 	AeadId,
-	KdfId,
-	KemId,
 	deriveKeyConfig,
 	generateKeyConfig,
+	KdfId,
+	KemId,
 	parseKeyConfig,
 	parseKeyConfigs,
 	serializeKeyConfig,

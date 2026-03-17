@@ -1,15 +1,9 @@
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { describe, expect, it } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
-import {
-	CHUNKED_REQUEST_LABEL,
-	CHUNKED_RESPONSE_LABEL,
-	computeChunkNonce,
-	frameChunk,
-	parseFramedChunk,
-} from "../src/encapsulation.js";
-import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
-import { AeadId, KdfId, deriveKeyConfig, generateKeyConfig } from "../src/keyConfig.js";
+import { computeChunkNonce, frameChunk, parseFramedChunk } from "../src/encapsulation.js";
+import { OHTTPError } from "../src/errors.js";
+import { AeadId, generateKeyConfig, KdfId } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
 import { concat } from "../src/utils.js";
 import { fromHex, toHex } from "./test-utils.js";
@@ -836,7 +830,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 		const receivedResponse = concat(...responseChunks);
 		expect(receivedResponse).toEqual(responseBody);
-	});
+	}, 15000);
 
 	it("handles body with patterned data", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);

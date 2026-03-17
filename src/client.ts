@@ -1,18 +1,17 @@
 import type { CipherSuite, SenderContext } from "hpke";
-import { MediaType, bhttp } from "./constants.js";
+import { bhttp, MediaType } from "./constants.js";
 import {
+	buildRequestHeader,
+	buildRequestInfo,
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
-	type ClientEncapsulationContext,
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
-	FINAL_CHUNK_AAD,
-	buildRequestHeader,
-	buildRequestInfo,
 	decapsulateResponse,
 	deriveChunkedResponseKeys,
 	encapsulateRequest,
+	FINAL_CHUNK_AAD,
 	frameChunk,
 	getResponseNonceLength,
 	openResponseChunk,
@@ -21,10 +20,10 @@ import {
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 import {
 	type AeadId,
-	type KdfId,
-	type KeyConfig,
 	isValidAeadId,
 	isValidKdfId,
+	type KdfId,
+	type KeyConfig,
 } from "./keyConfig.js";
 import {
 	createChunkerTransform,

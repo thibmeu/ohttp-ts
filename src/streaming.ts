@@ -8,8 +8,6 @@
 import type { CipherSuite, RecipientContext, SenderContext } from "hpke";
 import { encode as encodeVarint } from "quicvarint";
 import {
-	type BHttpContentEvent,
-	type BHttpEvent,
 	type BHttpRequestPreambleEvent,
 	BHttpRequestStreamEncoder,
 	type BHttpResponsePreambleEvent,
@@ -18,8 +16,8 @@ import {
 } from "./constants.js";
 import {
 	FINAL_CHUNK_AAD,
-	type ParsedChunk,
 	openResponseChunk,
+	type ParsedChunk,
 	parseFramedChunk,
 	sealResponseChunk,
 } from "./encapsulation.js";

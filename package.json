@@ -18,7 +18,9 @@
 			}
 		}
 	},
-	"files": ["dist"],
+	"files": [
+		"dist"
+	],
 	"scripts": {
 		"build": "tsup",
 		"test": "vitest run",
@@ -48,21 +50,25 @@
 	},
 	"homepage": "https://github.com/thibmeu/ohttp-ts#readme",
 	"dependencies": {
-		"hpke": "^1.0.6",
-		"quicvarint": "^0.1.4"
+		"hpke": "1.0.6",
+		"quicvarint": "0.1.6"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^1.9.0",
-		"@hpke/chacha20poly1305": "^1.7.1",
-		"@panva/hpke-noble": "^1.0.6",
+		"@biomejs/biome": "2.4.7",
+		"@hpke/chacha20poly1305": "1.8.0",
+		"@panva/hpke-noble": "1.0.6",
 		"bhttp-js": "file:vendor/bhttp-js-0.4.0.tgz",
-		"esbuild": "^0.27.3",
-		"esbuild-visualizer": "^0.7.0",
-		"tsup": "^8.3.0",
-		"typescript": "^5.7.0",
-		"vitest": "^2.1.0"
+		"esbuild": "0.27.4",
+		"esbuild-visualizer": "0.7.0",
+		"tsup": "8.5.1",
+		"typescript": "5.9.3",
+		"vite": "8.0.0",
+		"vitest": "4.1.0"
 	},
 	"engines": {
-		"node": ">=22"
+		"node": ">=24"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": ["esbuild"]
 	}
 }

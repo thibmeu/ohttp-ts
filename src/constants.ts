@@ -1,16 +1,16 @@
 import { BHttpDecoder, BHttpEncoder } from "bhttp-js";
 
 export {
+	type BHttpContentEvent,
+	type BHttpEndEvent,
+	type BHttpEvent,
+	type BHttpInformationalEvent,
+	type BHttpRequestPreambleEvent,
 	BHttpRequestStreamEncoder,
+	type BHttpResponsePreambleEvent,
 	BHttpResponseStreamEncoder,
 	BHttpStreamDecoder,
-	type BHttpEvent,
-	type BHttpRequestPreambleEvent,
-	type BHttpResponsePreambleEvent,
-	type BHttpContentEvent,
-	type BHttpInformationalEvent,
 	type BHttpTrailersEvent,
-	type BHttpEndEvent,
 } from "bhttp-js";
 
 /**

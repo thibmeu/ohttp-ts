@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-	INCREMENTAL_HEADER,
 	createIncrementalHeaders,
 	getIncremental,
+	INCREMENTAL_HEADER,
 	parseIncremental,
 	serializeIncremental,
 	setIncremental,

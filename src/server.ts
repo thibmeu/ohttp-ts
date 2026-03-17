@@ -1,17 +1,16 @@
 import type { RecipientContext } from "hpke";
-import { MediaType, bhttp } from "./constants.js";
+import { bhttp, MediaType } from "./constants.js";
 import {
+	buildRequestInfo,
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
-	FINAL_CHUNK_AAD,
-	type ServerEncapsulationContext,
-	buildRequestInfo,
 	decapsulateRequest,
 	deriveChunkedResponseKeys,
 	encapsulateResponse,
+	FINAL_CHUNK_AAD,
 	frameChunk,
 	getEncLength,
 	getResponseNonceLength,

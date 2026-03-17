@@ -11,9 +11,9 @@ import { MediaType } from "../src/constants.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
 	AeadId,
-	KdfId,
 	deriveKeyConfig,
 	generateKeyConfig,
+	KdfId,
 	parseKeyConfig,
 } from "../src/keyConfig.js";
 import { OHTTPServer } from "../src/server.js";

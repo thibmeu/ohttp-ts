@@ -1,6 +1,5 @@
-import type { CipherSuite, Key, KeyPair } from "hpke";
+import type { CipherSuite, KeyPair } from "hpke";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { concat } from "./utils.js";
 
 /**
  * HPKE KEM identifiers (RFC 9458 Section 3.1)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OHTTPError, OHTTPErrorCode, isOHTTPError } from "../src/errors.js";
+import { isOHTTPError, OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 
 describe("OHTTPError", () => {
 	it("creates error with code", () => {

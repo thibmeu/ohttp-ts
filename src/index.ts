@@ -7,31 +7,30 @@
 // Errors
 // ============================================================================
 
-export { OHTTPError, OHTTPErrorCode, isOHTTPError } from "./errors.js";
+export { isOHTTPError, OHTTPError, OHTTPErrorCode } from "./errors.js";
 
 // ============================================================================
 // Client & Server classes
 // ============================================================================
 
 export {
-	ChunkedOHTTPClient,
-	OHTTPClient,
 	type ChunkedHttpClientContext,
+	ChunkedOHTTPClient,
 	type ChunkedOHTTPClientOptions,
 	type ChunkedRequestContext,
 	type ChunkedResponseContext,
 	type ClientContext,
 	type EncapsulatedChunkedRequestInit,
-	type EncapsulatedRequestInit,
 	type EncapsulatedRequest,
+	type EncapsulatedRequestInit,
 	type HttpClientContext,
+	OHTTPClient,
 	type OHTTPClientOptions,
 } from "./client.js";
 
 export {
-	ChunkedOHTTPServer,
-	OHTTPServer,
 	type ChunkedHttpServerContext,
+	ChunkedOHTTPServer,
 	type ChunkedOHTTPServerOptions,
 	type ChunkedServerRequestContext,
 	type ChunkedServerResponseContext,
@@ -39,6 +38,7 @@ export {
 	type DecapsulatedHttpRequest,
 	type DecapsulatedRequest,
 	type HttpServerContext,
+	OHTTPServer,
 	type OHTTPServerOptions,
 	type ServerContext,
 } from "./server.js";
@@ -49,11 +49,11 @@ export {
 
 export {
 	AeadId,
-	KdfId,
-	KemId,
 	isValidAeadId,
 	isValidKdfId,
 	isValidKemId,
+	KdfId,
+	KemId,
 } from "./keyConfig.js";
 
 // ============================================================================
@@ -61,15 +61,15 @@ export {
 // ============================================================================
 
 import {
-	type KeyConfig as KeyConfigType,
-	type KeyConfigWithPrivate as KeyConfigWithPrivateType,
-	type SymmetricAlgorithm as SymmetricAlgorithmType,
 	deriveKeyConfig,
 	generateKeyConfig,
 	getPublicKeyLength,
 	importKeyConfig,
+	type KeyConfig as KeyConfigType,
+	type KeyConfigWithPrivate as KeyConfigWithPrivateType,
 	parseKeyConfig,
 	parseKeyConfigs,
+	type SymmetricAlgorithm as SymmetricAlgorithmType,
 	serializeKeyConfig,
 	serializeKeyConfigs,
 } from "./keyConfig.js";
@@ -139,9 +139,9 @@ export const Labels = {
 // ============================================================================
 
 import {
-	INCREMENTAL_HEADER,
 	createIncrementalHeaders,
 	getIncremental,
+	INCREMENTAL_HEADER,
 	parseIncremental,
 	serializeIncremental,
 	setIncremental,
@@ -168,10 +168,10 @@ export const Incremental = {
 // ============================================================================
 
 export {
-	frameChunk,
-	parseFramedChunk,
 	type ClientEncapsulationContext,
 	type EncapsulatedRequestHeader,
+	frameChunk,
 	type ParsedChunk,
+	parseFramedChunk,
 	type ServerEncapsulationContext,
 } from "./encapsulation.js";
