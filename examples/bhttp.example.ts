@@ -6,7 +6,8 @@
 // This example shows the high-level API that handles Binary HTTP encoding
 // automatically. The library encodes Request/Response objects internally.
 
-import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
+import { CipherSuite } from "hpke";
+import { AEAD_AES_128_GCM, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "@panva/hpke-noble";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 // Follows RFC 9458 Oblivious HTTP + RFC 9292 Binary HTTP

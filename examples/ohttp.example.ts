@@ -1,12 +1,8 @@
 // Copyright (c) 2024
 // Licensed under the MIT license
 
-import {
-	AEAD_AES_128_GCM,
-	CipherSuite,
-	KDF_HKDF_SHA256,
-	KEM_DHKEM_X25519_HKDF_SHA256,
-} from "hpke";
+import { CipherSuite } from "hpke";
+import { AEAD_AES_128_GCM, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "@panva/hpke-noble";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 // Follows RFC 9458 Oblivious HTTP

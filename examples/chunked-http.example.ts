@@ -8,7 +8,8 @@
  * automatically, providing a clean Request/Response interface.
  */
 
-import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
+import { CipherSuite } from "hpke";
+import { AEAD_AES_128_GCM, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "@panva/hpke-noble";
 import { AeadId, ChunkedOHTTPClient, ChunkedOHTTPServer, KdfId, KeyConfig } from "../src/index.js";
 
 async function setup() {
