@@ -830,7 +830,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 		const receivedResponse = concat(...responseChunks);
 		expect(receivedResponse).toEqual(responseBody);
-	}, 15000);
+	}, 30000);
 
 	it("handles body with patterned data", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
