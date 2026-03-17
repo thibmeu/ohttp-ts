@@ -81,5 +81,5 @@ src/
 
 - Browser (WebCrypto)
 - Cloudflare Workers
-- Node.js 18+
+- Node.js 24+
 - Deno, Bun (untested)

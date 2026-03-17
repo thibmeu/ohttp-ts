@@ -9,7 +9,7 @@ TypeScript implementation of [Oblivious HTTP (RFC 9458)](https://www.rfc-editor.
 
 - **RFC 9458** - Oblivious HTTP
 - **Chunked OHTTP** - Streaming extension ([draft-ietf-ohai-chunked-ohttp-08](https://www.ietf.org/archive/id/draft-ietf-ohai-chunked-ohttp-08.txt))
-- **WebCrypto** - Works in browsers, Cloudflare Workers, Node.js 22+
+- **WebCrypto** - Works in browsers, Cloudflare Workers, Node.js 24+
 
 ## Installation
 

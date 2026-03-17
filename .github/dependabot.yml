@@ -7,7 +7,7 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
-      dependencies:
+      production-dependencies:
         dependency-type: production
 
   - package-ecosystem: github-actions
