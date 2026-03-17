@@ -54,6 +54,7 @@ if (!supported) {
 							publicKey: makeKey("public", extractable, [], publicKey),
 						};
 					}
+					// biome-ignore lint/complexity/noBannedTypes: delegates to native SubtleCrypto
 					return (target.generateKey as Function)(algorithm, extractable, keyUsages);
 				};
 			}
@@ -71,6 +72,7 @@ if (!supported) {
 						const type = keyUsages.includes("deriveBits") ? "private" : "public";
 						return makeKey(type, extractable, keyUsages, raw);
 					}
+					// biome-ignore lint/complexity/noBannedTypes: delegates to native SubtleCrypto
 					return (target.importKey as Function)(format, keyData, algorithm, extractable, keyUsages);
 				};
 			}
@@ -81,16 +83,25 @@ if (!supported) {
 						if (format === "raw") return key[X25519_RAW].slice().buffer;
 						throw new DOMException(`Unsupported export format: ${format}`, "NotSupportedError");
 					}
+					// biome-ignore lint/complexity/noBannedTypes: delegates to native SubtleCrypto
 					return (target.exportKey as Function)(format, key);
 				};
 			}
 
 			if (prop === "deriveBits") {
 				return async (algorithm: EcdhKeyDeriveParams, baseKey: CryptoKey, length: number) => {
-					if (algorithm.name === "X25519" && isX25519Key(baseKey) && isX25519Key(algorithm.public)) {
-						const shared = x25519.getSharedSecret(baseKey[X25519_RAW], algorithm.public[X25519_RAW]);
+					if (
+						algorithm.name === "X25519" &&
+						isX25519Key(baseKey) &&
+						isX25519Key(algorithm.public)
+					) {
+						const shared = x25519.getSharedSecret(
+							baseKey[X25519_RAW],
+							algorithm.public[X25519_RAW],
+						);
 						return shared.slice(0, length >> 3).buffer;
 					}
+					// biome-ignore lint/complexity/noBannedTypes: delegates to native SubtleCrypto
 					return (target.deriveBits as Function)(algorithm, baseKey, length);
 				};
 			}

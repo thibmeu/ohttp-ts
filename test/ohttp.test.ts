@@ -435,7 +435,7 @@ describe("OHTTP Request/Response API", () => {
 
 		// Create valid OHTTP encapsulation but with invalid binary HTTP inside
 		const invalidBinaryHttp = new Uint8Array([0xff, 0xff, 0xff]); // Invalid binary HTTP
-		const { encapsulatedRequest, context } = await client.encapsulate(invalidBinaryHttp);
+		const { encapsulatedRequest } = await client.encapsulate(invalidBinaryHttp);
 
 		// Server decrypts successfully but bhttp decode fails
 		// Error should be opaque DecryptionFailed
