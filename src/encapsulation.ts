@@ -30,6 +30,37 @@ export const DEFAULT_RESPONSE_LABEL = "message/bhttp response";
 export const CHUNKED_REQUEST_LABEL = "message/bhttp chunked request";
 export const CHUNKED_RESPONSE_LABEL = "message/bhttp chunked response";
 
+export interface ResponseCryptoBackend {
+	extractPrk(kdf: CipherSuite["KDF"], salt: Uint8Array, ikm: Uint8Array): Promise<Uint8Array>;
+	expandPrk(
+		kdf: CipherSuite["KDF"],
+		prk: Uint8Array,
+		info: Uint8Array,
+		length: number,
+	): Promise<Uint8Array>;
+	sealWithRawAead(
+		aead: CipherSuite["AEAD"],
+		key: Uint8Array,
+		nonce: Uint8Array,
+		aad: Uint8Array,
+		plaintext: Uint8Array,
+	): Promise<Uint8Array>;
+	openWithRawAead(
+		aead: CipherSuite["AEAD"],
+		key: Uint8Array,
+		nonce: Uint8Array,
+		aad: Uint8Array,
+		ciphertext: Uint8Array,
+	): Promise<Uint8Array>;
+}
+
+export const webCryptoResponseCryptoBackend: ResponseCryptoBackend = {
+	extractPrk,
+	expandPrk,
+	sealWithRawAead,
+	openWithRawAead,
+};
+
 /**
  * Encapsulated request header structure (raw wire values)
  *
@@ -332,6 +363,7 @@ export async function encapsulateResponse(
 	response: Uint8Array,
 	responseNonce: Uint8Array,
 	label: string = DEFAULT_RESPONSE_LABEL,
+	cryptoBackend: ResponseCryptoBackend = webCryptoResponseCryptoBackend,
 ): Promise<Uint8Array> {
 	const { recipientContext, enc, suite } = serverContext;
 
@@ -363,15 +395,21 @@ export async function encapsulateResponse(
 
 	// Extract PRK
 	const labeledSecret = secret;
-	const prk = await extractPrk(kdf, salt, labeledSecret);
+	const prk = await cryptoBackend.extractPrk(kdf, salt, labeledSecret);
 
 	// Expand to get key and nonce
-	const aeadKey = await expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
-	const aeadNonce = await expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
+	const aeadKey = await cryptoBackend.expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
+	const aeadNonce = await cryptoBackend.expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
 
 	// Encrypt response using raw AEAD
 	const aead = suite.AEAD;
-	const ct = await sealWithRawAead(aead, aeadKey, aeadNonce, new Uint8Array(0), response);
+	const ct = await cryptoBackend.sealWithRawAead(
+		aead,
+		aeadKey,
+		aeadNonce,
+		new Uint8Array(0),
+		response,
+	);
 
 	// Return nonce + ciphertext
 	return concat(responseNonce, ct);
@@ -384,6 +422,7 @@ export async function decapsulateResponse(
 	clientContext: ClientEncapsulationContext,
 	encapsulatedResponse: Uint8Array,
 	label: string = DEFAULT_RESPONSE_LABEL,
+	cryptoBackend: ResponseCryptoBackend = webCryptoResponseCryptoBackend,
 ): Promise<Uint8Array> {
 	const { senderContext, enc, suite } = clientContext;
 
@@ -402,14 +441,20 @@ export async function decapsulateResponse(
 	// Derive AEAD key and nonce
 	const salt = concat(enc, responseNonce);
 	const kdf = suite.KDF;
-	const prk = await extractPrk(kdf, salt, secret);
-	const aeadKey = await expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
-	const aeadNonce = await expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
+	const prk = await cryptoBackend.extractPrk(kdf, salt, secret);
+	const aeadKey = await cryptoBackend.expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
+	const aeadNonce = await cryptoBackend.expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
 
 	// Decrypt response
 	const aead = suite.AEAD;
 	try {
-		return await openWithRawAead(aead, aeadKey, aeadNonce, new Uint8Array(0), ciphertext);
+		return await cryptoBackend.openWithRawAead(
+			aead,
+			aeadKey,
+			aeadNonce,
+			new Uint8Array(0),
+			ciphertext,
+		);
 	} catch {
 		throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 	}
@@ -642,6 +687,7 @@ export async function deriveChunkedResponseKeys(
 	enc: Uint8Array,
 	responseNonce: Uint8Array,
 	label: string = CHUNKED_RESPONSE_LABEL,
+	cryptoBackend: ResponseCryptoBackend = webCryptoResponseCryptoBackend,
 ): Promise<{ aeadKey: Uint8Array; aeadNonce: Uint8Array }> {
 	const nonceLength = getResponseNonceLength(suite);
 
@@ -653,9 +699,9 @@ export async function deriveChunkedResponseKeys(
 
 	// Derive PRK and expand to key/nonce
 	const kdf = suite.KDF;
-	const prk = await extractPrk(kdf, salt, secret);
-	const aeadKey = await expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
-	const aeadNonce = await expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
+	const prk = await cryptoBackend.extractPrk(kdf, salt, secret);
+	const aeadKey = await cryptoBackend.expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
+	const aeadNonce = await cryptoBackend.expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
 
 	return { aeadKey, aeadNonce };
 }
@@ -689,10 +735,11 @@ export async function sealResponseChunk(
 	counter: number,
 	chunk: Uint8Array,
 	isFinal: boolean,
+	cryptoBackend: ResponseCryptoBackend = webCryptoResponseCryptoBackend,
 ): Promise<Uint8Array> {
 	const chunkNonce = computeChunkNonce(baseNonce, counter);
 	const aad = isFinal ? FINAL_CHUNK_AAD : new Uint8Array(0);
-	return sealWithRawAead(suite.AEAD, aeadKey, chunkNonce, aad, chunk);
+	return cryptoBackend.sealWithRawAead(suite.AEAD, aeadKey, chunkNonce, aad, chunk);
 }
 
 /**
@@ -705,11 +752,12 @@ export async function openResponseChunk(
 	counter: number,
 	ciphertext: Uint8Array,
 	isFinal: boolean,
+	cryptoBackend: ResponseCryptoBackend = webCryptoResponseCryptoBackend,
 ): Promise<Uint8Array> {
 	const chunkNonce = computeChunkNonce(baseNonce, counter);
 	const aad = isFinal ? FINAL_CHUNK_AAD : new Uint8Array(0);
 	try {
-		return await openWithRawAead(suite.AEAD, aeadKey, chunkNonce, aad, ciphertext);
+		return await cryptoBackend.openWithRawAead(suite.AEAD, aeadKey, chunkNonce, aad, ciphertext);
 	} catch {
 		throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 	}

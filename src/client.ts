@@ -16,6 +16,7 @@ import {
 	getResponseNonceLength,
 	openResponseChunk,
 	parseFramedChunk,
+	type ResponseCryptoBackend,
 } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 import {
@@ -42,6 +43,8 @@ export interface OHTTPClientOptions {
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp response") */
 	readonly responseLabel?: string;
+	/** Crypto backend for response HKDF and AEAD operations (default: WebCrypto) */
+	readonly responseCryptoBackend?: ResponseCryptoBackend;
 }
 
 /**
@@ -52,6 +55,8 @@ export interface ChunkedOHTTPClientOptions {
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp chunked response") */
 	readonly responseLabel?: string;
+	/** Crypto backend for response HKDF and AEAD operations (default: WebCrypto) */
+	readonly responseCryptoBackend?: ResponseCryptoBackend;
 	/** Maximum chunk size in bytes (default: 16384) */
 	readonly maxChunkSize?: number;
 }
@@ -163,6 +168,7 @@ export class OHTTPClient {
 	private readonly aeadId: AeadId;
 	private readonly requestLabel: string;
 	private readonly responseLabel: string;
+	private readonly responseCryptoBackend: ResponseCryptoBackend | undefined;
 
 	/**
 	 * Create an OHTTP client
@@ -176,6 +182,7 @@ export class OHTTPClient {
 		this.keyConfig = keyConfig;
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
+		this.responseCryptoBackend = options.responseCryptoBackend;
 
 		// Validate and extract cipher suite IDs
 		const rawKdfId = suite.KDF.id;
@@ -221,9 +228,10 @@ export class OHTTPClient {
 
 		// Create client context
 		const responseLabel = this.responseLabel;
+		const responseCryptoBackend = this.responseCryptoBackend;
 		const context: ClientContext = {
 			async decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array> {
-				return decapsulateResponse(ctx, encapsulatedResponse, responseLabel);
+				return decapsulateResponse(ctx, encapsulatedResponse, responseLabel, responseCryptoBackend);
 			},
 		};
 
@@ -312,6 +320,7 @@ export class ChunkedOHTTPClient {
 	private readonly aeadId: AeadId;
 	private readonly requestLabel: string;
 	private readonly responseLabel: string;
+	private readonly responseCryptoBackend: ResponseCryptoBackend | undefined;
 	readonly maxChunkSize: number;
 
 	/**
@@ -326,6 +335,7 @@ export class ChunkedOHTTPClient {
 		this.keyConfig = keyConfig;
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
+		this.responseCryptoBackend = options.responseCryptoBackend;
 		this.maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
 
 		// Validate and extract cipher suite IDs
@@ -389,6 +399,7 @@ export class ChunkedOHTTPClient {
 
 		const suite = this.suite;
 		const responseLabel = this.responseLabel;
+		const responseCryptoBackend = this.responseCryptoBackend;
 
 		return {
 			header,
@@ -412,6 +423,7 @@ export class ChunkedOHTTPClient {
 					enc,
 					responseNonce,
 					responseLabel,
+					responseCryptoBackend,
 				);
 
 				let counter = 0;
@@ -430,6 +442,7 @@ export class ChunkedOHTTPClient {
 							counter,
 							ciphertext,
 							false,
+							responseCryptoBackend,
 						);
 						counter++;
 						return pt;
@@ -439,7 +452,15 @@ export class ChunkedOHTTPClient {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						return openResponseChunk(suite, aeadKey, aeadNonce, counter, ciphertext, true);
+						return openResponseChunk(
+							suite,
+							aeadKey,
+							aeadNonce,
+							counter,
+							ciphertext,
+							true,
+							responseCryptoBackend,
+						);
 					},
 				};
 			},
@@ -556,6 +577,7 @@ export class ChunkedOHTTPClient {
 		const suite = this.suite;
 		const maxChunkSize = this.maxChunkSize;
 		const responseLabel = this.responseLabel;
+		const responseCryptoBackend = this.responseCryptoBackend;
 
 		// Get the HPKE sender context for creating the encrypt transform
 		// We need to access it through the request context internals
@@ -630,6 +652,7 @@ export class ChunkedOHTTPClient {
 					requestCtx._enc,
 					responseNonce,
 					responseLabel,
+					responseCryptoBackend,
 				);
 
 				// Create decrypt transform

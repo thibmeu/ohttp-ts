@@ -16,6 +16,7 @@ import {
 	getResponseNonceLength,
 	parseFramedChunk,
 	parseRequestHeader,
+	type ResponseCryptoBackend,
 	sealResponseChunk,
 } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
@@ -37,6 +38,8 @@ export interface OHTTPServerOptions {
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp response") */
 	readonly responseLabel?: string;
+	/** Crypto backend for response HKDF and AEAD operations (default: WebCrypto) */
+	readonly responseCryptoBackend?: ResponseCryptoBackend;
 }
 
 /**
@@ -47,6 +50,8 @@ export interface ChunkedOHTTPServerOptions {
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp chunked response") */
 	readonly responseLabel?: string;
+	/** Crypto backend for response HKDF and AEAD operations (default: WebCrypto) */
+	readonly responseCryptoBackend?: ResponseCryptoBackend;
 	/** Maximum chunk size in bytes (default: 16384) */
 	readonly maxChunkSize?: number;
 }
@@ -142,6 +147,7 @@ export class OHTTPServer {
 	private readonly keyConfigs: readonly KeyConfigWithPrivate[];
 	private readonly requestLabel: string;
 	private readonly responseLabel: string;
+	private readonly responseCryptoBackend: ResponseCryptoBackend | undefined;
 
 	/**
 	 * Create an OHTTP server
@@ -153,6 +159,7 @@ export class OHTTPServer {
 		this.keyConfigs = keyConfigs;
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
+		this.responseCryptoBackend = options.responseCryptoBackend;
 	}
 
 	/**
@@ -165,12 +172,19 @@ export class OHTTPServer {
 		const ctx = await decapsulateRequest(encapsulatedRequest, this.keyConfigs, this.requestLabel);
 
 		const responseLabel = this.responseLabel;
+		const responseCryptoBackend = this.responseCryptoBackend;
 		const context: ServerContext = {
 			async encryptResponse(response: Uint8Array): Promise<Uint8Array> {
 				// Generate random response nonce
 				const nonceLength = getResponseNonceLength(ctx.suite);
 				const responseNonce = crypto.getRandomValues(new Uint8Array(nonceLength));
-				return encapsulateResponse(ctx, response, responseNonce, responseLabel);
+				return encapsulateResponse(
+					ctx,
+					response,
+					responseNonce,
+					responseLabel,
+					responseCryptoBackend,
+				);
 			},
 		};
 
@@ -244,6 +258,7 @@ export class ChunkedOHTTPServer {
 	private readonly keyConfigs: readonly KeyConfigWithPrivate[];
 	private readonly requestLabel: string;
 	private readonly responseLabel: string;
+	private readonly responseCryptoBackend: ResponseCryptoBackend | undefined;
 	readonly maxChunkSize: number;
 
 	/**
@@ -259,6 +274,7 @@ export class ChunkedOHTTPServer {
 		this.keyConfigs = keyConfigs;
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
+		this.responseCryptoBackend = options.responseCryptoBackend;
 		this.maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
 	}
 
@@ -319,6 +335,7 @@ export class ChunkedOHTTPServer {
 		const suite = keyConfig.suite;
 		const enc = header.enc;
 		const responseLabel = this.responseLabel;
+		const responseCryptoBackend = this.responseCryptoBackend;
 
 		return {
 			keyConfig,
@@ -353,6 +370,7 @@ export class ChunkedOHTTPServer {
 					enc,
 					responseNonce,
 					responseLabel,
+					responseCryptoBackend,
 				);
 
 				let counter = 0;
@@ -366,7 +384,15 @@ export class ChunkedOHTTPServer {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						const ct = await sealResponseChunk(suite, aeadKey, aeadNonce, counter, chunk, false);
+						const ct = await sealResponseChunk(
+							suite,
+							aeadKey,
+							aeadNonce,
+							counter,
+							chunk,
+							false,
+							responseCryptoBackend,
+						);
 						counter++;
 						return ct;
 					},
@@ -375,7 +401,15 @@ export class ChunkedOHTTPServer {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						return sealResponseChunk(suite, aeadKey, aeadNonce, counter, chunk, true);
+						return sealResponseChunk(
+							suite,
+							aeadKey,
+							aeadNonce,
+							counter,
+							chunk,
+							true,
+							responseCryptoBackend,
+						);
 					},
 				};
 			},
@@ -565,6 +599,7 @@ export class ChunkedOHTTPServer {
 		const suite = requestCtx.keyConfig.suite;
 		const maxChunkSize = this.maxChunkSize;
 		const responseLabel = this.responseLabel;
+		const responseCryptoBackend = this.responseCryptoBackend;
 
 		// Create context for encapsulating response (streaming)
 		const context: ChunkedHttpServerContext = {
@@ -580,6 +615,7 @@ export class ChunkedOHTTPServer {
 					requestCtx._enc,
 					responseNonce,
 					responseLabel,
+					responseCryptoBackend,
 				);
 
 				// Encode response to BHTTP stream

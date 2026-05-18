@@ -1,3 +1,6 @@
+import { gcm } from "@noble/ciphers/aes.js";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
 	AEAD_AES_128_GCM,
 	AEAD_ChaCha20Poly1305,
@@ -8,6 +11,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { OHTTPClient } from "../src/client.js";
 import { MediaType } from "../src/constants.js";
+import type { ResponseCryptoBackend } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
 	AeadId,
@@ -20,6 +24,48 @@ import { OHTTPServer } from "../src/server.js";
 import { fromHex, toHex } from "./test-utils.js";
 import ohttpJsVectors from "./vectors/ohttp-js.json";
 import rfc9458Vectors from "./vectors/rfc9458.json";
+
+const nobleResponseCryptoBackend: ResponseCryptoBackend = {
+	extractPrk(kdf, salt, ikm) {
+		return Promise.resolve(hmac(getHash(kdf.name), salt, ikm));
+	},
+	expandPrk(kdf, prk, info, length) {
+		const hash = getHash(kdf.name);
+		const hashLength = kdf.Nh;
+		const blockCount = Math.ceil(length / hashLength);
+		const okm = new Uint8Array(blockCount * hashLength);
+		let previous = new Uint8Array(0);
+		for (let i = 1; i <= blockCount; i++) {
+			previous = hmac(hash, prk, concatBytes(previous, info, new Uint8Array([i])));
+			okm.set(previous, (i - 1) * hashLength);
+		}
+		return Promise.resolve(okm.slice(0, length));
+	},
+	sealWithRawAead(aead, key, nonce, aad, plaintext) {
+		if (!aead.name.includes("AES")) throw new Error("unsupported AEAD");
+		return Promise.resolve(gcm(key, nonce, aad).encrypt(plaintext));
+	},
+	openWithRawAead(aead, key, nonce, aad, ciphertext) {
+		if (!aead.name.includes("AES")) throw new Error("unsupported AEAD");
+		return Promise.resolve(gcm(key, nonce, aad).decrypt(ciphertext));
+	},
+};
+
+function getHash(kdfName: string) {
+	if (!kdfName.includes("256")) throw new Error(`unsupported KDF: ${kdfName}`);
+	return sha256;
+}
+
+function concatBytes(...arrays: Uint8Array[]): Uint8Array {
+	const length = arrays.reduce((sum, array) => sum + array.length, 0);
+	const result = new Uint8Array(length);
+	let offset = 0;
+	for (const array of arrays) {
+		result.set(array, offset);
+		offset += array.length;
+	}
+	return result;
+}
 
 describe("OHTTP round-trip", () => {
 	it("encrypts and decrypts a request/response", async () => {
@@ -61,6 +107,36 @@ describe("OHTTP round-trip", () => {
 		const decryptedResponse = await context.decryptResponse(encapsulatedResponse);
 
 		expect(decryptedResponse).toEqual(response);
+	});
+	it("encrypts and decrypts a request/response with a custom response crypto backend", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+
+		const client = new OHTTPClient(
+			suite,
+			{
+				keyId: serverKeyConfig.keyId,
+				kemId: serverKeyConfig.kemId,
+				publicKey: serverKeyConfig.publicKey,
+				symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+			},
+			{ responseCryptoBackend: nobleResponseCryptoBackend },
+		);
+		const server = new OHTTPServer([serverKeyConfig], {
+			responseCryptoBackend: nobleResponseCryptoBackend,
+		});
+
+		const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
+		const { encapsulatedRequest, context } = await client.encapsulate(request);
+		const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
+
+		const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello");
+		const encapsulatedResponse = await serverContext.encryptResponse(response);
+
+		await expect(context.decryptResponse(encapsulatedResponse)).resolves.toEqual(response);
 	});
 
 	it("supports multiple key configs for key rotation", async () => {
