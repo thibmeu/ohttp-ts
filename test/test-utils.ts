@@ -2,6 +2,26 @@
  * Test utilities - not exported from main package
  */
 
+import { AEAD_ChaCha20Poly1305 } from "hpke";
+
+/**
+ * Whether the current runtime's WebCrypto implements ChaCha20-Poly1305.
+ *
+ * Node 24+ supports it (experimental); browser SubtleCrypto does not. Tests
+ * that exercise the WebCrypto ChaCha20 request leg are skipped where it is
+ * unavailable. We probe via hpke's own AEAD so the check matches exactly what
+ * the library does at runtime.
+ */
+export const supportsChaCha20Poly1305: boolean = await (async () => {
+	try {
+		const aead = AEAD_ChaCha20Poly1305();
+		await aead.Seal(new Uint8Array(32), new Uint8Array(12), new Uint8Array(0), new Uint8Array(1));
+		return true;
+	} catch {
+		return false;
+	}
+})();
+
 /**
  * Encode bytes to hex string
  */
