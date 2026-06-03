@@ -173,5 +173,6 @@ export {
 	frameChunk,
 	type ParsedChunk,
 	parseFramedChunk,
+	type ResponseCrypto,
 	type ServerEncapsulationContext,
 } from "./encapsulation.js";

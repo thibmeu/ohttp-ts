@@ -1,4 +1,14 @@
-import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
+import {
+	AEAD_ChaCha20Poly1305 as NobleAEAD_ChaCha20Poly1305,
+	KDF_HKDF_SHA256 as NobleKDF_HKDF_SHA256,
+} from "@panva/hpke-noble";
+import {
+	AEAD_AES_128_GCM,
+	AEAD_ChaCha20Poly1305,
+	CipherSuite,
+	KDF_HKDF_SHA256,
+	KEM_DHKEM_X25519_HKDF_SHA256,
+} from "hpke";
 import { describe, expect, it } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
 import { computeChunkNonce, frameChunk, parseFramedChunk } from "../src/encapsulation.js";
@@ -649,6 +659,56 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		expect(finalResponse.headers.get("Content-Type")).toBe("application/json");
 		const responseBody = await finalResponse.text();
 		expect(JSON.parse(responseBody)).toEqual({ status: "ok" });
+	});
+
+	it("streams a response through a responseCrypto override (ChaCha20 via noble)", async () => {
+		// Exercises createResponseEncryptTransform/createResponseDecryptTransform
+		// with an override, so the streaming path keeps honoring responseCrypto.
+		const suite = new CipherSuite(
+			KEM_DHKEM_X25519_HKDF_SHA256,
+			KDF_HKDF_SHA256,
+			AEAD_ChaCha20Poly1305,
+		);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+		]);
+
+		const responseCrypto = { kdf: NobleKDF_HKDF_SHA256, aead: NobleAEAD_ChaCha20Poly1305 };
+		const client = new ChunkedOHTTPClient(
+			suite,
+			{
+				keyId: serverKeyConfig.keyId,
+				kemId: serverKeyConfig.kemId,
+				publicKey: serverKeyConfig.publicKey,
+				symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+			},
+			{ responseCrypto, maxChunkSize: 64 },
+		);
+		const server = new ChunkedOHTTPServer([serverKeyConfig], { responseCrypto, maxChunkSize: 64 });
+
+		const originalRequest = new Request("https://example.com/api/test", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "hello world" }),
+		});
+
+		const { init, context } = await client.encapsulateRequest(originalRequest);
+		const relayRequest = new Request("https://relay.example.com/ohttp", init);
+		const { request: innerRequest, context: serverContext } =
+			await server.decapsulateRequest(relayRequest);
+		expect(JSON.parse(await innerRequest.text())).toEqual({ message: "hello world" });
+
+		// Large body forces multiple streamed chunks through the transforms.
+		const big = "x".repeat(500);
+		const serverResponse = new Response(JSON.stringify({ status: "ok", big }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+		const encapsulatedResponse = await serverContext.encapsulateResponse(serverResponse);
+		const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
+
+		expect(finalResponse.status).toBe(200);
+		expect(JSON.parse(await finalResponse.text())).toEqual({ status: "ok", big });
 	});
 
 	it("encapsulates and decapsulates HTTP Request without body", async () => {

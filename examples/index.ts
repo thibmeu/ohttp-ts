@@ -6,6 +6,7 @@ import { chunkedHttpApi, chunkedHttpLargeBody } from "./chunked-http.example.js"
 import { chunkedOHTTP } from "./chunked.example.js";
 import { postQuantumOHTTP } from "./mlkem.example.js";
 import { obliviousHTTP } from "./ohttp.example.js";
+import { chachaResponseOHTTP } from "./response-chacha.example.js";
 
 async function main() {
 	const results = await Promise.all([
@@ -15,6 +16,7 @@ async function main() {
 		postQuantumOHTTP().then((ok) => ({ name: "Post-Quantum OHTTP (ML-KEM-768)", ok })),
 		chunkedHttpApi().then((ok) => ({ name: "Chunked OHTTP HTTP API", ok })),
 		chunkedHttpLargeBody().then((ok) => ({ name: "Chunked OHTTP Large Body", ok })),
+		chachaResponseOHTTP().then((ok) => ({ name: "OHTTP ChaCha20 Response", ok })),
 	]);
 
 	console.log("\nExamples:");

@@ -10,6 +10,7 @@ TypeScript implementation of [Oblivious HTTP (RFC 9458)](https://www.rfc-editor.
 - **RFC 9458** - Oblivious HTTP
 - **Chunked OHTTP** - Streaming extension ([draft-ietf-ohai-chunked-ohttp-08](https://www.ietf.org/archive/id/draft-ietf-ohai-chunked-ohttp-08.txt))
 - **WebCrypto** - Works in browsers, Cloudflare Workers, Node.js 24+
+- **Pluggable crypto** - Supply your own response KDF/AEAD factories for any other environment or cryptographic constraint (see [Response Encryption](#response-encryption))
 
 ## Installation
 
@@ -178,6 +179,7 @@ For the low-level bytes API, see [`examples/chunked.example.ts`](examples/chunke
 | [`chunked.example.ts`](examples/chunked.example.ts) | Low-level bytes API |
 | [`bhttp.example.ts`](examples/bhttp.example.ts) | Request/Response API (non-streaming) |
 | [`mlkem.example.ts`](examples/mlkem.example.ts) | Post-quantum with ML-KEM-768 |
+| [`response-chacha.example.ts`](examples/response-chacha.example.ts) | ChaCha20-Poly1305 response via a custom crypto factory |
 
 ## Post-Quantum Support
 
@@ -195,11 +197,36 @@ const suite = new CipherSuite(KEM_ML_KEM_768, KDF_HKDF_SHA256, AEAD_AES_128_GCM)
 // Use with KeyConfig.generate(), OHTTPClient, OHTTPServer as usual
 ```
 
+## Response Encryption
+
+OHTTP responses are not HPKE: the response key is derived with HKDF over an
+HPKE-exported secret and then used with a raw AEAD ([RFC 9458 Section 4.4](https://www.rfc-editor.org/rfc/rfc9458.html#name-encapsulation-of-responses)). By
+default these primitives are resolved from the suite using hpke's built-in
+(WebCrypto-backed) factories.
+
+Pass non-WebCrypto factories via the `responseCrypto` option (the same pattern
+as swapping the KEM above) when the default doesn't fit.
+Bellow is an example to set ChaCha20-Poly1305 implementation:
+
+```typescript
+import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
+import { AEAD_ChaCha20Poly1305, KDF_HKDF_SHA256 } from "@panva/hpke-noble";
+
+const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_ChaCha20Poly1305);
+const responseCrypto = { aead: AEAD_ChaCha20Poly1305 };
+
+const gateway = new OHTTPServer([keyConfig], { responseCrypto });
+const client = new OHTTPClient(suite, clientKeyConfig, { responseCrypto });
+```
+
+The override is byte-compatible with the default factory, so a client and
+gateway may use a different implementation for the same algorithm.
+
 ## Security Considerations
 
 **Not audited.** Use at your own risk.
 
-- **Replay protection** is out of scope (RFC 9458 Section 6.5)
+- **Replay protection** is out of scope ([RFC 9458 Section 6.5](https://www.rfc-editor.org/rfc/rfc9458.html#name-replay-attacks))
 - **Decryption errors are opaque** to prevent oracle attacks
 
 ## License
