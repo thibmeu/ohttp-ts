@@ -5,7 +5,7 @@
  * of chunked OHTTP requests and responses.
  */
 
-import type { CipherSuite, RecipientContext, SenderContext } from "hpke";
+import type { AEAD as AeadImpl, RecipientContext, SenderContext } from "hpke";
 import { encode as encodeVarint } from "quicvarint";
 import {
 	type BHttpRequestPreambleEvent,
@@ -154,7 +154,7 @@ export function createRequestDecryptTransform(
  * Uses AEAD with counter-based nonces per draft-08 Section 6.2.
  */
 export function createResponseEncryptTransform(
-	suite: CipherSuite,
+	aead: AeadImpl,
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
 ): TransformStream<Uint8Array, Uint8Array> {
@@ -172,7 +172,7 @@ export function createResponseEncryptTransform(
 			if (pendingChunk !== undefined) {
 				try {
 					const sealed = await sealResponseChunk(
-						suite,
+						aead,
 						aeadKey,
 						baseNonce,
 						counter,
@@ -198,14 +198,7 @@ export function createResponseEncryptTransform(
 
 			const finalChunk = pendingChunk ?? new Uint8Array(0);
 			try {
-				const sealed = await sealResponseChunk(
-					suite,
-					aeadKey,
-					baseNonce,
-					counter,
-					finalChunk,
-					true,
-				);
+				const sealed = await sealResponseChunk(aead, aeadKey, baseNonce, counter, finalChunk, true);
 				// Final chunk has length prefix 0
 				const lengthBytes = encodeVarint(0);
 				controller.enqueue(concat(lengthBytes, sealed));
@@ -225,7 +218,7 @@ export function createResponseEncryptTransform(
  * Uses AEAD with counter-based nonces per draft-08 Section 6.2.
  */
 export function createResponseDecryptTransform(
-	suite: CipherSuite,
+	aead: AeadImpl,
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
 ): TransformStream<Uint8Array, Uint8Array> {
@@ -265,7 +258,7 @@ export function createResponseDecryptTransform(
 
 				try {
 					const plaintext = await openResponseChunk(
-						suite,
+						aead,
 						aeadKey,
 						baseNonce,
 						counter,

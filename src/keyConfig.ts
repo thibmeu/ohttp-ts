@@ -39,14 +39,14 @@ export type KdfId = (typeof KdfId)[keyof typeof KdfId];
 /**
  * HPKE AEAD identifiers (RFC 9458 Section 3.1)
  *
- * Note: ChaCha20Poly1305 is defined for KeyConfig parsing but not implemented
- * for encryption. WebCrypto doesn't support ChaCha20-Poly1305 natively.
- * Use AES_128_GCM or AES_256_GCM for actual operations.
+ * Note: ChaCha20Poly1305 response encryption requires a runtime with
+ * ChaCha20-Poly1305 support (e.g. Node.js 24+). In browsers and Cloudflare
+ * Workers, where WebCrypto lacks it, pass a non-WebCrypto AEAD factory via the
+ * `responseCrypto` option (e.g. `@panva/hpke-noble`'s `AEAD_ChaCha20Poly1305`).
  */
 export const AeadId = {
 	AES_128_GCM: 0x0001,
 	AES_256_GCM: 0x0002,
-	/** Defined for parsing; not implemented for encryption (use AES-GCM) */
 	ChaCha20Poly1305: 0x0003,
 } as const;
 

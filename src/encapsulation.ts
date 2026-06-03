@@ -1,13 +1,22 @@
-import type { CipherSuite, Key, RecipientContext, SenderContext } from "hpke";
+import {
+	AEAD_AES_128_GCM,
+	AEAD_AES_256_GCM,
+	AEAD_ChaCha20Poly1305,
+	type AEADFactory,
+	type AEAD as AeadImpl,
+	type CipherSuite,
+	KDF_HKDF_SHA256,
+	KDF_HKDF_SHA384,
+	KDF_HKDF_SHA512,
+	type KDFFactory,
+	type KDF as KdfImpl,
+	type Key,
+	type RecipientContext,
+	type SenderContext,
+} from "hpke";
 import { decode as decodeVarint, encode as encodeVarint } from "quicvarint";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import {
-	type AeadId,
-	type KdfId,
-	KemId,
-	type KeyConfig,
-	type KeyConfigWithPrivate,
-} from "./keyConfig.js";
+import { AeadId, KdfId, KemId, type KeyConfig, type KeyConfigWithPrivate } from "./keyConfig.js";
 import { concat } from "./utils.js";
 
 /** Shared TextEncoder instance */
@@ -29,6 +38,69 @@ export const DEFAULT_RESPONSE_LABEL = "message/bhttp response";
  */
 export const CHUNKED_REQUEST_LABEL = "message/bhttp chunked request";
 export const CHUNKED_RESPONSE_LABEL = "message/bhttp chunked response";
+
+/**
+ * Optional crypto factories for OHTTP response encryption (RFC 9458 Section 4.4).
+ *
+ * OHTTP responses are not HPKE: the response key is derived with HKDF over an
+ * HPKE-exported secret and then used with a raw AEAD. The constructed
+ * {@link CipherSuite} only exposes metadata for its KDF/AEAD, so the response
+ * primitives are obtained by instantiating hpke factories instead.
+ *
+ * By default the factories are resolved from the suite's KDF/AEAD ids using
+ * hpke's built-in (WebCrypto-backed) implementations. Override either field to
+ * supply a non-WebCrypto implementation — for example
+ * `@panva/hpke-noble`'s `AEAD_ChaCha20Poly1305` for ChaCha20 responses in
+ * browsers and Cloudflare Workers, where WebCrypto lacks ChaCha20-Poly1305.
+ *
+ * An override may swap the implementation but not the algorithm: the factory
+ * must produce the same KDF/AEAD the suite negotiated, otherwise resolution
+ * throws {@link OHTTPErrorCode.UnsupportedCipherSuite}.
+ */
+export interface ResponseCrypto {
+	/** KDF factory override (must match the suite's KDF; default: resolved from it) */
+	readonly kdf?: KDFFactory;
+	/** AEAD factory override (must match the suite's AEAD; default: resolved from it) */
+	readonly aead?: AEADFactory;
+}
+
+const KDF_FACTORIES: Record<number, KDFFactory> = {
+	[KdfId.HKDF_SHA256]: KDF_HKDF_SHA256,
+	[KdfId.HKDF_SHA384]: KDF_HKDF_SHA384,
+	[KdfId.HKDF_SHA512]: KDF_HKDF_SHA512,
+};
+
+const AEAD_FACTORIES: Record<number, AEADFactory> = {
+	[AeadId.AES_128_GCM]: AEAD_AES_128_GCM,
+	[AeadId.AES_256_GCM]: AEAD_AES_256_GCM,
+	[AeadId.ChaCha20Poly1305]: AEAD_ChaCha20Poly1305,
+};
+
+/**
+ * Resolve the KDF and AEAD implementations used for response encryption.
+ *
+ * Falls back to hpke's built-in factory for the suite's KDF/AEAD id when no
+ * override is supplied. Throws {@link OHTTPErrorCode.UnsupportedCipherSuite}
+ * when the suite uses an algorithm with no known factory, or when an override
+ * resolves to a different algorithm than the suite negotiated (an override may
+ * swap the implementation, not the algorithm).
+ */
+function resolveResponseCrypto(
+	suite: CipherSuite,
+	responseCrypto?: ResponseCrypto,
+): { kdf: KdfImpl; aead: AeadImpl } {
+	const kdfFactory = responseCrypto?.kdf ?? KDF_FACTORIES[suite.KDF.id];
+	const aeadFactory = responseCrypto?.aead ?? AEAD_FACTORIES[suite.AEAD.id];
+	if (!kdfFactory || !aeadFactory) {
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+	}
+	const kdf = kdfFactory();
+	const aead = aeadFactory();
+	if (kdf.id !== suite.KDF.id || aead.id !== suite.AEAD.id) {
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+	}
+	return { kdf, aead };
+}
 
 /**
  * Encapsulated request header structure (raw wire values)
@@ -332,6 +404,7 @@ export async function encapsulateResponse(
 	response: Uint8Array,
 	responseNonce: Uint8Array,
 	label: string = DEFAULT_RESPONSE_LABEL,
+	responseCrypto?: ResponseCrypto,
 ): Promise<Uint8Array> {
 	const { recipientContext, enc, suite } = serverContext;
 
@@ -343,35 +416,17 @@ export async function encapsulateResponse(
 	// Export secret from HPKE context
 	const secret = await recipientContext.Export(encodeString(label), nonceLength);
 
-	// Derive AEAD key and nonce using HKDF
+	// Derive AEAD key and nonce using HKDF over the exported secret.
 	// salt = concat(enc, response_nonce)
+	// prk = Extract(salt, secret); aead_key = Expand(prk, "key", Nk); ...
 	const salt = concat(enc, responseNonce);
-
-	// Use the KDF from the suite to derive key and nonce
-	// prk = Extract(salt, secret)
-	// aead_key = Expand(prk, "key", Nk)
-	// aead_nonce = Expand(prk, "nonce", Nn)
-
-	// We need to manually do HKDF here since we need raw AEAD operations
-	// For now, we'll use the suite's internal KDF if available
-
-	// Actually, we need to use raw AEAD. Let's compute the key material directly.
-	// This requires access to the underlying KDF, which the hpke library exposes.
-
-	// Get the HKDF functions from the suite
-	const kdf = suite.KDF;
-
-	// Extract PRK
-	const labeledSecret = secret;
-	const prk = await extractPrk(kdf, salt, labeledSecret);
-
-	// Expand to get key and nonce
-	const aeadKey = await expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
-	const aeadNonce = await expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
+	const { kdf, aead } = resolveResponseCrypto(suite, responseCrypto);
+	const prk = await kdf.Extract(salt, secret);
+	const aeadKey = await kdf.Expand(prk, encodeString("key"), suite.AEAD.Nk);
+	const aeadNonce = await kdf.Expand(prk, encodeString("nonce"), suite.AEAD.Nn);
 
 	// Encrypt response using raw AEAD
-	const aead = suite.AEAD;
-	const ct = await sealWithRawAead(aead, aeadKey, aeadNonce, new Uint8Array(0), response);
+	const ct = await aead.Seal(aeadKey, aeadNonce, new Uint8Array(0), response);
 
 	// Return nonce + ciphertext
 	return concat(responseNonce, ct);
@@ -384,6 +439,7 @@ export async function decapsulateResponse(
 	clientContext: ClientEncapsulationContext,
 	encapsulatedResponse: Uint8Array,
 	label: string = DEFAULT_RESPONSE_LABEL,
+	responseCrypto?: ResponseCrypto,
 ): Promise<Uint8Array> {
 	const { senderContext, enc, suite } = clientContext;
 
@@ -401,156 +457,17 @@ export async function decapsulateResponse(
 
 	// Derive AEAD key and nonce
 	const salt = concat(enc, responseNonce);
-	const kdf = suite.KDF;
-	const prk = await extractPrk(kdf, salt, secret);
-	const aeadKey = await expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
-	const aeadNonce = await expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
+	const { kdf, aead } = resolveResponseCrypto(suite, responseCrypto);
+	const prk = await kdf.Extract(salt, secret);
+	const aeadKey = await kdf.Expand(prk, encodeString("key"), suite.AEAD.Nk);
+	const aeadNonce = await kdf.Expand(prk, encodeString("nonce"), suite.AEAD.Nn);
 
 	// Decrypt response
-	const aead = suite.AEAD;
 	try {
-		return await openWithRawAead(aead, aeadKey, aeadNonce, new Uint8Array(0), ciphertext);
+		return await aead.Open(aeadKey, aeadNonce, new Uint8Array(0), ciphertext);
 	} catch {
 		throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 	}
-}
-
-// Helper functions for HKDF operations using the suite's KDF
-
-/**
- * Get ArrayBuffer from Uint8Array, copying if backed by SharedArrayBuffer.
- * WebCrypto requires ArrayBuffer, not SharedArrayBuffer.
- */
-function asArrayBuffer(data: Uint8Array): ArrayBuffer {
-	// Check for SharedArrayBuffer (may not exist in browsers without COOP/COEP headers)
-	if (typeof SharedArrayBuffer !== "undefined" && data.buffer instanceof SharedArrayBuffer) {
-		const copy = new ArrayBuffer(data.byteLength);
-		new Uint8Array(copy).set(data);
-		return copy;
-	}
-	// Return a view of the underlying buffer at the correct offset
-	// Use slice which always returns ArrayBuffer when source is ArrayBuffer
-	const sliced = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-	return sliced as ArrayBuffer;
-}
-
-async function extractPrk(
-	kdf: CipherSuite["KDF"],
-	salt: Uint8Array,
-	ikm: Uint8Array,
-): Promise<Uint8Array> {
-	// HKDF-Extract using HMAC
-	// We need to use SubtleCrypto directly since the hpke library's KDF interface
-	// doesn't expose raw Extract/Expand directly in the way we need
-
-	// For HKDF-SHA256, we use the Web Crypto API
-	const algorithm = kdf.name.includes("256")
-		? "SHA-256"
-		: kdf.name.includes("384")
-			? "SHA-384"
-			: "SHA-512";
-
-	const key = await crypto.subtle.importKey(
-		"raw",
-		asArrayBuffer(salt),
-		{ name: "HMAC", hash: algorithm },
-		false,
-		["sign"],
-	);
-
-	const prk = await crypto.subtle.sign("HMAC", key, asArrayBuffer(ikm));
-	return new Uint8Array(prk);
-}
-
-async function expandPrk(
-	kdf: CipherSuite["KDF"],
-	prk: Uint8Array,
-	info: Uint8Array,
-	length: number,
-): Promise<Uint8Array> {
-	const algorithm = kdf.name.includes("256")
-		? "SHA-256"
-		: kdf.name.includes("384")
-			? "SHA-384"
-			: "SHA-512";
-
-	const hashLen = kdf.Nh;
-	const n = Math.ceil(length / hashLen);
-	const okm = new Uint8Array(n * hashLen);
-
-	const key = await crypto.subtle.importKey(
-		"raw",
-		asArrayBuffer(prk),
-		{ name: "HMAC", hash: algorithm },
-		false,
-		["sign"],
-	);
-
-	let t = new Uint8Array(0);
-	for (let i = 1; i <= n; i++) {
-		const input = concat(t, info, new Uint8Array([i]));
-		const block = await crypto.subtle.sign("HMAC", key, asArrayBuffer(input));
-		t = new Uint8Array(block);
-		okm.set(t, (i - 1) * hashLen);
-	}
-
-	return okm.slice(0, length);
-}
-
-async function sealWithRawAead(
-	aead: CipherSuite["AEAD"],
-	key: Uint8Array,
-	nonce: Uint8Array,
-	aad: Uint8Array,
-	plaintext: Uint8Array,
-): Promise<Uint8Array> {
-	const algorithm = aead.name.includes("AES") ? "AES-GCM" : "ChaCha20-Poly1305";
-
-	if (algorithm === "AES-GCM") {
-		const cryptoKey = await crypto.subtle.importKey(
-			"raw",
-			asArrayBuffer(key),
-			{ name: "AES-GCM" },
-			false,
-			["encrypt"],
-		);
-		const ct = await crypto.subtle.encrypt(
-			{ name: "AES-GCM", iv: asArrayBuffer(nonce), additionalData: asArrayBuffer(aad) },
-			cryptoKey,
-			asArrayBuffer(plaintext),
-		);
-		return new Uint8Array(ct);
-	}
-	// ChaCha20-Poly1305 not supported: WebCrypto lacks native support
-	throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-}
-
-async function openWithRawAead(
-	aead: CipherSuite["AEAD"],
-	key: Uint8Array,
-	nonce: Uint8Array,
-	aad: Uint8Array,
-	ciphertext: Uint8Array,
-): Promise<Uint8Array> {
-	const algorithm = aead.name.includes("AES") ? "AES-GCM" : "ChaCha20-Poly1305";
-
-	if (algorithm === "AES-GCM") {
-		const cryptoKey = await crypto.subtle.importKey(
-			"raw",
-			asArrayBuffer(key),
-			{ name: "AES-GCM" },
-			false,
-			["decrypt"],
-		);
-		const pt = await crypto.subtle.decrypt(
-			{ name: "AES-GCM", iv: asArrayBuffer(nonce), additionalData: asArrayBuffer(aad) },
-			cryptoKey,
-			asArrayBuffer(ciphertext),
-		);
-		return new Uint8Array(pt);
-	}
-	// ChaCha20-Poly1305 not supported: WebCrypto lacks native support
-	throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 }
 
 // ============================================================================
@@ -642,7 +559,8 @@ export async function deriveChunkedResponseKeys(
 	enc: Uint8Array,
 	responseNonce: Uint8Array,
 	label: string = CHUNKED_RESPONSE_LABEL,
-): Promise<{ aeadKey: Uint8Array; aeadNonce: Uint8Array }> {
+	responseCrypto?: ResponseCrypto,
+): Promise<{ aeadKey: Uint8Array; aeadNonce: Uint8Array; aead: AeadImpl }> {
 	const nonceLength = getResponseNonceLength(suite);
 
 	// Export secret from HPKE context
@@ -652,12 +570,12 @@ export async function deriveChunkedResponseKeys(
 	const salt = concat(enc, responseNonce);
 
 	// Derive PRK and expand to key/nonce
-	const kdf = suite.KDF;
-	const prk = await extractPrk(kdf, salt, secret);
-	const aeadKey = await expandPrk(kdf, prk, encodeString("key"), suite.AEAD.Nk);
-	const aeadNonce = await expandPrk(kdf, prk, encodeString("nonce"), suite.AEAD.Nn);
+	const { kdf, aead } = resolveResponseCrypto(suite, responseCrypto);
+	const prk = await kdf.Extract(salt, secret);
+	const aeadKey = await kdf.Expand(prk, encodeString("key"), suite.AEAD.Nk);
+	const aeadNonce = await kdf.Expand(prk, encodeString("nonce"), suite.AEAD.Nn);
 
-	return { aeadKey, aeadNonce };
+	return { aeadKey, aeadNonce, aead };
 }
 
 /**
@@ -683,7 +601,7 @@ export function computeChunkNonce(baseNonce: Uint8Array, counter: number): Uint8
  * Seal a chunk for response (server-side, draft-08 Section 6.2)
  */
 export async function sealResponseChunk(
-	suite: CipherSuite,
+	aead: AeadImpl,
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
 	counter: number,
@@ -692,14 +610,14 @@ export async function sealResponseChunk(
 ): Promise<Uint8Array> {
 	const chunkNonce = computeChunkNonce(baseNonce, counter);
 	const aad = isFinal ? FINAL_CHUNK_AAD : new Uint8Array(0);
-	return sealWithRawAead(suite.AEAD, aeadKey, chunkNonce, aad, chunk);
+	return aead.Seal(aeadKey, chunkNonce, aad, chunk);
 }
 
 /**
  * Open a chunk from response (client-side, draft-08 Section 6.2)
  */
 export async function openResponseChunk(
-	suite: CipherSuite,
+	aead: AeadImpl,
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
 	counter: number,
@@ -709,7 +627,7 @@ export async function openResponseChunk(
 	const chunkNonce = computeChunkNonce(baseNonce, counter);
 	const aad = isFinal ? FINAL_CHUNK_AAD : new Uint8Array(0);
 	try {
-		return await openWithRawAead(suite.AEAD, aeadKey, chunkNonce, aad, ciphertext);
+		return await aead.Open(aeadKey, chunkNonce, aad, ciphertext);
 	} catch {
 		throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 	}
