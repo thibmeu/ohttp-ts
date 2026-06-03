@@ -4,13 +4,13 @@
 	"description": "Oblivious HTTP (RFC 9458) implementation with chunked extension support",
 	"type": "module",
 	"main": "./dist/index.cjs",
-	"module": "./dist/index.js",
-	"types": "./dist/index.d.ts",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.mts",
 	"exports": {
 		".": {
 			"import": {
-				"types": "./dist/index.d.ts",
-				"default": "./dist/index.js"
+				"types": "./dist/index.d.mts",
+				"default": "./dist/index.mjs"
 			},
 			"require": {
 				"types": "./dist/index.d.cts",
@@ -22,7 +22,7 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "tsup",
+		"build": "tsdown --format esm,cjs --sourcemap --target es2022",
 		"examples": "tsx examples/index.ts",
 		"test": "vitest run",
 		"test:browser": "vitest run --config vitest.browser.config.ts",
@@ -65,7 +65,7 @@
 		"bhttp-js": "file:vendor/bhttp-js-0.4.0.tgz",
 		"esbuild": "0.28.0",
 		"esbuild-visualizer": "0.7.0",
-		"tsup": "8.5.1",
+		"tsdown": "^0.22.1",
 		"tsx": "4.22.3",
 		"typescript": "6.0.3",
 		"vite": "8.0.13",
