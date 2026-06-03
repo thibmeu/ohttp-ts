@@ -23,7 +23,7 @@ import {
 	parseKeyConfig,
 } from "../src/keyConfig.js";
 import { OHTTPServer } from "../src/server.js";
-import { fromHex, toHex } from "./test-utils.js";
+import { fromHex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import ohttpJsVectors from "./vectors/ohttp-js.json";
 import rfc9458Vectors from "./vectors/rfc9458.json";
 
@@ -69,73 +69,79 @@ describe("OHTTP round-trip", () => {
 		expect(decryptedResponse).toEqual(response);
 	});
 
-	it("encrypts and decrypts a ChaCha20-Poly1305 response (default factory)", async () => {
-		// Response crypto is resolved from the suite's AEAD id, so ChaCha20 works
-		// without any override on runtimes with ChaCha20-Poly1305 (e.g. Node 24+).
-		const suite = new CipherSuite(
-			KEM_DHKEM_X25519_HKDF_SHA256,
-			KDF_HKDF_SHA256,
-			AEAD_ChaCha20Poly1305,
-		);
+	it.skipIf(!supportsChaCha20Poly1305)(
+		"encrypts and decrypts a ChaCha20-Poly1305 response (default factory)",
+		async () => {
+			// Response crypto is resolved from the suite's AEAD id, so ChaCha20 works
+			// without any override on runtimes with ChaCha20-Poly1305 (e.g. Node 24+).
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_ChaCha20Poly1305,
+			);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-		]);
+			const serverKeyConfig = await generateKeyConfig(suite, 1, [
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+			]);
 
-		const client = new OHTTPClient(suite, {
-			keyId: serverKeyConfig.keyId,
-			kemId: serverKeyConfig.kemId,
-			publicKey: serverKeyConfig.publicKey,
-			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
-		});
-		const server = new OHTTPServer([serverKeyConfig]);
-
-		const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
-		const { encapsulatedRequest, context } = await client.encapsulate(request);
-		const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
-
-		const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello over ChaCha20");
-		const encapsulatedResponse = await serverContext.encryptResponse(response);
-
-		await expect(context.decryptResponse(encapsulatedResponse)).resolves.toEqual(response);
-	});
-
-	it("uses a responseCrypto override for response encryption", async () => {
-		// Supplying a non-WebCrypto AEAD factory is how browsers / Workers obtain
-		// ChaCha20-Poly1305 responses. Here we verify the override is honored by
-		// routing response crypto through @panva/hpke-noble.
-		const suite = new CipherSuite(
-			KEM_DHKEM_X25519_HKDF_SHA256,
-			KDF_HKDF_SHA256,
-			AEAD_ChaCha20Poly1305,
-		);
-
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-		]);
-
-		const responseCrypto = { kdf: NobleKDF_HKDF_SHA256, aead: NobleAEAD_ChaCha20Poly1305 };
-		const client = new OHTTPClient(
-			suite,
-			{
+			const client = new OHTTPClient(suite, {
 				keyId: serverKeyConfig.keyId,
 				kemId: serverKeyConfig.kemId,
 				publicKey: serverKeyConfig.publicKey,
 				symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
-			},
-			{ responseCrypto },
-		);
-		const server = new OHTTPServer([serverKeyConfig], { responseCrypto });
+			});
+			const server = new OHTTPServer([serverKeyConfig]);
 
-		const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
-		const { encapsulatedRequest, context } = await client.encapsulate(request);
-		const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
+			const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
+			const { encapsulatedRequest, context } = await client.encapsulate(request);
+			const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
 
-		const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello from noble");
-		const encapsulatedResponse = await serverContext.encryptResponse(response);
+			const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello over ChaCha20");
+			const encapsulatedResponse = await serverContext.encryptResponse(response);
 
-		await expect(context.decryptResponse(encapsulatedResponse)).resolves.toEqual(response);
-	});
+			await expect(context.decryptResponse(encapsulatedResponse)).resolves.toEqual(response);
+		},
+	);
+
+	it.skipIf(!supportsChaCha20Poly1305)(
+		"uses a responseCrypto override for response encryption",
+		async () => {
+			// Supplying a non-WebCrypto AEAD factory is how browsers / Workers obtain
+			// ChaCha20-Poly1305 responses. Here we verify the override is honored by
+			// routing response crypto through @panva/hpke-noble.
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_ChaCha20Poly1305,
+			);
+
+			const serverKeyConfig = await generateKeyConfig(suite, 1, [
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+			]);
+
+			const responseCrypto = { kdf: NobleKDF_HKDF_SHA256, aead: NobleAEAD_ChaCha20Poly1305 };
+			const client = new OHTTPClient(
+				suite,
+				{
+					keyId: serverKeyConfig.keyId,
+					kemId: serverKeyConfig.kemId,
+					publicKey: serverKeyConfig.publicKey,
+					symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+				},
+				{ responseCrypto },
+			);
+			const server = new OHTTPServer([serverKeyConfig], { responseCrypto });
+
+			const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
+			const { encapsulatedRequest, context } = await client.encapsulate(request);
+			const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
+
+			const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello from noble");
+			const encapsulatedResponse = await serverContext.encryptResponse(response);
+
+			await expect(context.decryptResponse(encapsulatedResponse)).resolves.toEqual(response);
+		},
+	);
 
 	it("interops: WebCrypto-default server with a noble-override client", async () => {
 		// The override must produce byte-identical output to the default factory,
