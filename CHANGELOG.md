@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped `bhttp-ts` 0.4.2 → 0.4.3, making the streaming decoder O(n) instead of O(n²) on many small pushes (the chunked OHTTP decode path)
+
 ## [0.3.2] - 2026-06-06
 
 ### Added
