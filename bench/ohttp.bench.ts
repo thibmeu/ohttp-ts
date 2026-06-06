@@ -25,6 +25,7 @@
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { bench, describe } from "vitest";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
+import { BENCH_OPTS } from "./options.js";
 
 const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
@@ -74,7 +75,7 @@ describe("encapsulateRequest (client)", () => {
 	for (const [label] of SIZES) {
 		bench(label, async () => {
 			await client.encapsulate(payloads.get(label)!);
-		});
+		}, BENCH_OPTS);
 	}
 });
 
@@ -82,7 +83,7 @@ describe("decapsulateRequest (server)", () => {
 	for (const [label] of SIZES) {
 		bench(label, async () => {
 			await server.decapsulate(fixtures.get(label)!.encapsulatedRequest);
-		});
+		}, BENCH_OPTS);
 	}
 });
 
@@ -90,7 +91,7 @@ describe("encryptResponse (server)", () => {
 	for (const [label] of SIZES) {
 		bench(label, async () => {
 			await fixtures.get(label)!.serverCtx.encryptResponse(payloads.get(label)!);
-		});
+		}, BENCH_OPTS);
 	}
 });
 
@@ -98,7 +99,7 @@ describe("decryptResponse (client)", () => {
 	for (const [label] of SIZES) {
 		bench(label, async () => {
 			await fixtures.get(label)!.clientCtx.decryptResponse(fixtures.get(label)!.encryptedResponse);
-		});
+		}, BENCH_OPTS);
 	}
 });
 
@@ -110,6 +111,6 @@ describe("full round-trip", () => {
 			const { context: sctx } = await server.decapsulate(encapsulatedRequest);
 			const encRes = await sctx.encryptResponse(payload);
 			await context.decryptResponse(encRes);
-		});
+		}, BENCH_OPTS);
 	}
 });

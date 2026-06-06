@@ -25,6 +25,7 @@ import {
 	createResponseDecryptTransform,
 	createResponseEncryptTransform,
 } from "../src/streaming.js";
+import { BENCH_OPTS } from "./options.js";
 
 const aead = AEAD_AES_128_GCM();
 const key = crypto.getRandomValues(new Uint8Array(16));
@@ -88,9 +89,13 @@ const scenarios: Array<[string, number, number]> = [
 
 describe("streaming encrypt (chunker + response-encrypt)", () => {
 	for (const [label, chunkSize] of scenarios) {
-		bench(label, async () => {
-			await encrypt(payload, chunkSize);
-		});
+		bench(
+			label,
+			async () => {
+				await encrypt(payload, chunkSize);
+			},
+			BENCH_OPTS,
+		);
 	}
 });
 
@@ -103,10 +108,14 @@ for (const [label, chunkSize] of scenarios) {
 describe("streaming decrypt (response-decrypt)", () => {
 	for (const [label, , readSize] of scenarios) {
 		const framed = framedByLabel.get(label)!;
-		bench(label, async () => {
-			await drain(
-				streamFrom(framed, readSize).pipeThrough(createResponseDecryptTransform(aead, key, nonce)),
-			);
-		});
+		bench(
+			label,
+			async () => {
+				await drain(
+					streamFrom(framed, readSize).pipeThrough(createResponseDecryptTransform(aead, key, nonce)),
+				);
+			},
+			BENCH_OPTS,
+		);
 	}
 });
