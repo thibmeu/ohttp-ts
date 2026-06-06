@@ -18,11 +18,7 @@
 import { Session } from "node:inspector/promises";
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
-import {
-	createChunkerTransform,
-	createResponseDecryptTransform,
-	createResponseEncryptTransform,
-} from "../src/streaming.js";
+import { randomBytes, streamDecrypt, streamEncrypt } from "./util.js";
 
 const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 const keyConfig = await KeyConfig.generate(suite, 0x01, [
@@ -30,14 +26,6 @@ const keyConfig = await KeyConfig.generate(suite, 0x01, [
 ]);
 const client = new OHTTPClient(suite, keyConfig);
 const server = new OHTTPServer([keyConfig]);
-
-function randomBytes(size: number): Uint8Array {
-	const buf = new Uint8Array(size);
-	for (let off = 0; off < size; off += 65_536) {
-		crypto.getRandomValues(buf.subarray(off, Math.min(off + 65_536, size)));
-	}
-	return buf;
-}
 
 interface CallFrame {
 	functionName: string;
@@ -97,50 +85,10 @@ async function profile(
 	return [...byFn.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-// streaming helpers
+// streaming fixtures: a raw AEAD with fixed key/nonce, fed to the shared helpers
 const aead = AEAD_AES_128_GCM();
 const skey = crypto.getRandomValues(new Uint8Array(16));
 const snonce = crypto.getRandomValues(new Uint8Array(12));
-
-function streamFrom(bytes: Uint8Array, readSize: number): ReadableStream<Uint8Array> {
-	let off = 0;
-	return new ReadableStream<Uint8Array>({
-		pull(c) {
-			if (off >= bytes.length) return c.close();
-			const end = Math.min(off + readSize, bytes.length);
-			c.enqueue(bytes.subarray(off, end));
-			off = end;
-		},
-	});
-}
-async function streamEncrypt(plaintext: Uint8Array, chunkSize: number): Promise<Uint8Array> {
-	const out = streamFrom(plaintext, plaintext.length)
-		.pipeThrough(createChunkerTransform(chunkSize))
-		.pipeThrough(createResponseEncryptTransform(aead, skey, snonce));
-	const parts: Uint8Array[] = [];
-	const reader = out.getReader();
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		parts.push(value);
-	}
-	const buf = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
-	let o = 0;
-	for (const p of parts) {
-		buf.set(p, o);
-		o += p.length;
-	}
-	return buf;
-}
-async function streamDecrypt(framed: Uint8Array, readSize: number): Promise<void> {
-	const reader = streamFrom(framed, readSize)
-		.pipeThrough(createResponseDecryptTransform(aead, skey, snonce))
-		.getReader();
-	for (;;) {
-		const { done } = await reader.read();
-		if (done) break;
-	}
-}
 
 async function main(): Promise<void> {
 	const _1KB = randomBytes(1_024);
@@ -148,8 +96,8 @@ async function main(): Promise<void> {
 	const _512KB = randomBytes(512 * 1024);
 
 	const enc1MB = await client.encapsulate(_1MB);
-	const framed16 = await streamEncrypt(_512KB, 16_384);
-	const framed256 = await streamEncrypt(_512KB, 256);
+	const framed16 = await streamEncrypt(aead, skey, snonce, _512KB, 16_384);
+	const framed256 = await streamEncrypt(aead, skey, snonce, _512KB, 256);
 
 	// High-level API fixtures: exercises bhttp-ts encode/decode + Headers + URL.
 	const makeRequest = (n: number): Request =>
@@ -202,10 +150,18 @@ async function main(): Promise<void> {
 		["round-trip 1KB (setup-dominated)", 4000, () => roundTrip(_1KB)],
 		["encapsulateRequest 1MB", 1500, () => client.encapsulate(_1MB)],
 		["decapsulateRequest 1MB", 1500, () => server.decapsulate(enc1MB.encapsulatedRequest)],
-		["stream encrypt 512KB / 16KB chunks", 400, () => streamEncrypt(_512KB, 16_384)],
-		["stream decrypt 512KB / 16KB / 1500B reads", 400, () => streamDecrypt(framed16, 1_500)],
-		["stream encrypt 512KB / 256B chunks (slow)", 60, () => streamEncrypt(_512KB, 256)],
-		["stream decrypt 512KB / 256B / 64KB reads (slow)", 60, () => streamDecrypt(framed256, 65_536)],
+		["stream encrypt 512KB / 16KB chunks", 400, () => streamEncrypt(aead, skey, snonce, _512KB, 16_384)],
+		[
+			"stream decrypt 512KB / 16KB / 1500B reads",
+			400,
+			() => streamDecrypt(aead, skey, snonce, framed16, 1_500),
+		],
+		["stream encrypt 512KB / 256B chunks (slow)", 60, () => streamEncrypt(aead, skey, snonce, _512KB, 256)],
+		[
+			"stream decrypt 512KB / 256B / 64KB reads (slow)",
+			60,
+			() => streamDecrypt(aead, skey, snonce, framed256, 65_536),
+		],
 	];
 
 	const session = new Session();

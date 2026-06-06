@@ -20,64 +20,14 @@
  */
 import { AEAD_AES_128_GCM } from "hpke";
 import { bench, describe } from "vitest";
-import {
-	createChunkerTransform,
-	createResponseDecryptTransform,
-	createResponseEncryptTransform,
-} from "../src/streaming.js";
 import { BENCH_OPTS } from "./options.js";
+import { randomBytes, streamDecrypt, streamEncrypt } from "./util.js";
 
 const aead = AEAD_AES_128_GCM();
 const key = crypto.getRandomValues(new Uint8Array(16));
 const nonce = crypto.getRandomValues(new Uint8Array(12));
 
-const TOTAL = 512 * 1024;
-const payload = new Uint8Array(TOTAL);
-crypto.getRandomValues(payload.subarray(0, Math.min(TOTAL, 65_536)));
-
-function streamFrom(bytes: Uint8Array, readSize: number): ReadableStream<Uint8Array> {
-	let off = 0;
-	return new ReadableStream<Uint8Array>({
-		pull(controller) {
-			if (off >= bytes.length) return controller.close();
-			const end = Math.min(off + readSize, bytes.length);
-			controller.enqueue(bytes.subarray(off, end));
-			off = end;
-		},
-	});
-}
-
-async function drain(stream: ReadableStream<Uint8Array>): Promise<number> {
-	const reader = stream.getReader();
-	let n = 0;
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		n += value.length;
-	}
-	return n;
-}
-
-async function encrypt(plaintext: Uint8Array, chunkSize: number): Promise<Uint8Array> {
-	const out = streamFrom(plaintext, plaintext.length)
-		.pipeThrough(createChunkerTransform(chunkSize))
-		.pipeThrough(createResponseEncryptTransform(aead, key, nonce));
-	const parts: Uint8Array[] = [];
-	const reader = out.getReader();
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		parts.push(value);
-	}
-	const total = parts.reduce((s, p) => s + p.length, 0);
-	const buf = new Uint8Array(total);
-	let o = 0;
-	for (const p of parts) {
-		buf.set(p, o);
-		o += p.length;
-	}
-	return buf;
-}
+const payload = randomBytes(512 * 1024);
 
 // scenario: [label, chunkSize, readSize-for-decrypt]
 const scenarios: Array<[string, number, number]> = [
@@ -92,7 +42,7 @@ describe("streaming encrypt (chunker + response-encrypt)", () => {
 		bench(
 			label,
 			async () => {
-				await encrypt(payload, chunkSize);
+				await streamEncrypt(aead, key, nonce, payload, chunkSize);
 			},
 			BENCH_OPTS,
 		);
@@ -102,7 +52,7 @@ describe("streaming encrypt (chunker + response-encrypt)", () => {
 // Pre-frame each scenario once so the decrypt bench measures only decryption.
 const framedByLabel = new Map<string, Uint8Array>();
 for (const [label, chunkSize] of scenarios) {
-	framedByLabel.set(label, await encrypt(payload, chunkSize));
+	framedByLabel.set(label, await streamEncrypt(aead, key, nonce, payload, chunkSize));
 }
 
 describe("streaming decrypt (response-decrypt)", () => {
@@ -111,9 +61,7 @@ describe("streaming decrypt (response-decrypt)", () => {
 		bench(
 			label,
 			async () => {
-				await drain(
-					streamFrom(framed, readSize).pipeThrough(createResponseDecryptTransform(aead, key, nonce)),
-				);
+				await streamDecrypt(aead, key, nonce, framed, readSize);
 			},
 			BENCH_OPTS,
 		);

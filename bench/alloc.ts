@@ -24,11 +24,7 @@
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
-import {
-	createChunkerTransform,
-	createResponseDecryptTransform,
-	createResponseEncryptTransform,
-} from "../src/streaming.js";
+import { randomBytes, streamDecrypt, streamEncrypt } from "./util.js";
 
 const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 const keyConfig = await KeyConfig.generate(suite, 0x01, [
@@ -36,15 +32,6 @@ const keyConfig = await KeyConfig.generate(suite, 0x01, [
 ]);
 const client = new OHTTPClient(suite, keyConfig);
 const server = new OHTTPServer([keyConfig]);
-
-function randomBytes(size: number): Uint8Array {
-	const buf = new Uint8Array(size);
-	const chunkSize = 65_536;
-	for (let offset = 0; offset < size; offset += chunkSize) {
-		crypto.getRandomValues(buf.subarray(offset, Math.min(offset + chunkSize, size)));
-	}
-	return buf;
-}
 
 declare const gc: (() => void) | undefined;
 
@@ -101,51 +88,6 @@ const aead = AEAD_AES_128_GCM();
 const skey = crypto.getRandomValues(new Uint8Array(16));
 const snonce = crypto.getRandomValues(new Uint8Array(12));
 
-async function streamEncrypt(plaintext: Uint8Array, chunkSize: number): Promise<Uint8Array> {
-	let off = 0;
-	const src = new ReadableStream<Uint8Array>({
-		pull(c) {
-			if (off >= plaintext.length) return c.close();
-			c.enqueue(plaintext.subarray(off, plaintext.length));
-			off = plaintext.length;
-		},
-	});
-	const out = src
-		.pipeThrough(createChunkerTransform(chunkSize))
-		.pipeThrough(createResponseEncryptTransform(aead, skey, snonce));
-	const parts: Uint8Array[] = [];
-	const reader = out.getReader();
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		parts.push(value);
-	}
-	const buf = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
-	let o = 0;
-	for (const p of parts) {
-		buf.set(p, o);
-		o += p.length;
-	}
-	return buf;
-}
-
-async function drainDecrypt(framed: Uint8Array, readSize: number): Promise<void> {
-	let off = 0;
-	const src = new ReadableStream<Uint8Array>({
-		pull(c) {
-			if (off >= framed.length) return c.close();
-			const end = Math.min(off + readSize, framed.length);
-			c.enqueue(framed.subarray(off, end));
-			off = end;
-		},
-	});
-	const reader = src.pipeThrough(createResponseDecryptTransform(aead, skey, snonce)).getReader();
-	for (;;) {
-		const { done } = await reader.read();
-		if (done) break;
-	}
-}
-
 async function main(): Promise<void> {
 	const _1KB = randomBytes(1_024);
 	const _1MB = randomBytes(1_048_576);
@@ -159,7 +101,7 @@ async function main(): Promise<void> {
 	const dec1MB = await server.decapsulate(enc1MB.encapsulatedRequest);
 	const resp1MB = await dec1MB.context.encryptResponse(_1MB);
 
-	const framed16 = await streamEncrypt(_512KB, 16_384);
+	const framed16 = await streamEncrypt(aead, skey, snonce, _512KB, 16_384);
 
 	// Few iters for large payloads so a mid-loop GC stays unlikely (see header).
 	const cases: Array<[string, number, () => Promise<unknown>]> = [
@@ -171,8 +113,8 @@ async function main(): Promise<void> {
 		["decryptResponse 1MB", 5, () => enc1MB.context.decryptResponse(resp1MB)],
 		["round-trip 1KB", 100, () => roundTrip(_1KB)],
 		["round-trip 1MB", 5, () => roundTrip(_1MB)],
-		["stream encrypt 512KB / 16KB chunks", 5, () => streamEncrypt(_512KB, 16_384)],
-		["stream decrypt 512KB / 64KB reads", 5, () => drainDecrypt(framed16, 65_536)],
+		["stream encrypt 512KB / 16KB chunks", 5, () => streamEncrypt(aead, skey, snonce, _512KB, 16_384)],
+		["stream decrypt 512KB / 64KB reads", 5, () => streamDecrypt(aead, skey, snonce, framed16, 65_536)],
 	];
 
 	// keep fixtures referenced

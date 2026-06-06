@@ -21,21 +21,11 @@ import {
 	OHTTPClient,
 	OHTTPServer,
 } from "../src/index.js";
+import { randomBytes } from "./util.js";
 
 function formatMs(ms: number): string {
 	if (ms < 1) return `${(ms * 1000).toFixed(0)}µs`;
 	return `${ms.toFixed(2)}ms`;
-}
-
-// Random payload generator
-function randomBytes(size: number): Uint8Array {
-	const buf = new Uint8Array(size);
-	const chunkSize = 65_536;
-	for (let offset = 0; offset < size; offset += chunkSize) {
-		const len = Math.min(chunkSize, size - offset);
-		crypto.getRandomValues(buf.subarray(offset, offset + len));
-	}
-	return buf;
 }
 
 interface TTFBResult {

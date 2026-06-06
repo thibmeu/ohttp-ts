@@ -26,6 +26,7 @@ import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_S
 import { bench, describe } from "vitest";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 import { BENCH_OPTS } from "./options.js";
+import { randomBytes } from "./util.js";
 
 const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
@@ -35,16 +36,6 @@ const keyConfig = await KeyConfig.generate(suite, 0x01, [
 
 const client = new OHTTPClient(suite, keyConfig);
 const server = new OHTTPServer([keyConfig]);
-
-function randomBytes(size: number): Uint8Array {
-	const buf = new Uint8Array(size);
-	const chunkSize = 65_536;
-	for (let offset = 0; offset < size; offset += chunkSize) {
-		const len = Math.min(chunkSize, size - offset);
-		crypto.getRandomValues(buf.subarray(offset, offset + len));
-	}
-	return buf;
-}
 
 // Two regimes: setup-dominated (1KB) and AEAD-dominated (1MB).
 const SIZES = [
