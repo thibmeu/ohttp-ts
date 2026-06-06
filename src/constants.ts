@@ -1,4 +1,4 @@
-import { BHttpDecoder, BHttpEncoder } from "bhttp-js";
+import { BHttpDecoder, BHttpEncoder } from "bhttp-ts";
 
 export {
 	type BHttpContentEvent,
@@ -11,7 +11,7 @@ export {
 	BHttpResponseStreamEncoder,
 	BHttpStreamDecoder,
 	type BHttpTrailersEvent,
-} from "bhttp-js";
+} from "bhttp-ts";
 
 /**
  * OHTTP media types for Content-Type headers

@@ -52,8 +52,9 @@
 	},
 	"homepage": "https://github.com/thibmeu/ohttp-ts#readme",
 	"dependencies": {
-		"hpke": "1.1.0",
-		"quicvarint": "0.1.6"
+		"bhttp-ts": "0.4.1",
+		"hpke": "1.1.1",
+		"quicvarint": "0.1.7"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.16",
@@ -62,10 +63,9 @@
 		"@playwright/test": "1.60.0",
 		"@vitest/browser": "4.1.8",
 		"@vitest/browser-playwright": "4.1.8",
-		"bhttp-js": "file:vendor/bhttp-js-0.4.0.tgz",
 		"esbuild": "0.28.0",
 		"esbuild-visualizer": "0.7.0",
-		"tsdown": "^0.22.1",
+		"tsdown": "0.22.2",
 		"tsx": "4.22.4",
 		"typescript": "6.0.3",
 		"vite": "8.0.16",
