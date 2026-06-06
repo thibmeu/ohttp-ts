@@ -151,6 +151,38 @@ async function main(): Promise<void> {
 	const framed16 = await streamEncrypt(_512KB, 16_384);
 	const framed256 = await streamEncrypt(_512KB, 256);
 
+	// High-level API fixtures: exercises bhttp-ts encode/decode + Headers + URL.
+	const makeRequest = (n: number): Request =>
+		new Request("https://example.com/api/v1/resource?q=1&lang=en", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				accept: "application/json",
+				"user-agent": "ohttp-bench/1.0",
+				"x-request-id": "0123456789abcdef",
+			},
+			body: randomBytes(n),
+		});
+	const makeResponse = (n: number): Response =>
+		new Response(randomBytes(n), {
+			status: 200,
+			headers: { "content-type": "application/json", "cache-control": "no-store" },
+		});
+
+	const relayInit = (await client.encapsulateRequest(makeRequest(1_024))).init;
+	const relayUrl = "https://relay.example.com/";
+
+	const hlRoundTrip = async (): Promise<void> => {
+		const { init, context } = await client.encapsulateRequest(makeRequest(1_024));
+		const { request: inner, context: sctx } = await server.decapsulateRequest(
+			new Request(relayUrl, init),
+		);
+		await inner.arrayBuffer(); // force bhttp decode of the body
+		const encRes = await sctx.encapsulateResponse(makeResponse(1_024));
+		const finalRes = await context.decapsulateResponse(encRes);
+		await finalRes.arrayBuffer();
+	};
+
 	const roundTrip = async (p: Uint8Array): Promise<void> => {
 		const { encapsulatedRequest, context } = await client.encapsulate(p);
 		const { context: sctx } = await server.decapsulate(encapsulatedRequest);
@@ -159,6 +191,14 @@ async function main(): Promise<void> {
 	};
 
 	const scenarios: Array<[string, number, () => Promise<unknown>]> = [
+		// high-level API: bhttp encode/decode + Headers/URL on top of the crypto core
+		["HL encapsulateRequest 1KB+headers", 3000, () => client.encapsulateRequest(makeRequest(1_024))],
+		[
+			"HL decapsulateRequest 1KB+headers",
+			3000,
+			() => server.decapsulateRequest(new Request(relayUrl, relayInit)),
+		],
+		["HL round-trip 1KB+headers", 2000, hlRoundTrip],
 		["round-trip 1KB (setup-dominated)", 4000, () => roundTrip(_1KB)],
 		["encapsulateRequest 1MB", 1500, () => client.encapsulate(_1MB)],
 		["decapsulateRequest 1MB", 1500, () => server.decapsulate(enc1MB.encapsulatedRequest)],
