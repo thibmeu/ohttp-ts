@@ -47,14 +47,9 @@ class StreamBuffer {
 		this.total += chunk.length;
 	}
 
-	/** Byte at offset `i` (must be < length), without consuming. */
-	byteAt(i: number): number {
-		let idx = i + this.headOff;
-		for (const c of this.chunks) {
-			if (idx < c.length) return c[idx] as number;
-			idx -= c.length;
-		}
-		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+	/** First available byte without consuming (length must be >= 1). */
+	firstByte(): number {
+		return (this.chunks[0] as Uint8Array)[this.headOff] as number;
 	}
 
 	/** First `n` bytes as a contiguous array (must be <= length), without consuming. */
@@ -62,18 +57,13 @@ class StreamBuffer {
 		if (n === 0) return EMPTY;
 		const first = this.chunks[0] as Uint8Array;
 		return first.length - this.headOff >= n
-			? first.subarray(this.headOff, this.headOff + n)
+			? first.subarray(this.headOff, this.headOff + n) // zero copy: within one chunk
 			: this.collect(n);
 	}
 
 	/** First `n` bytes as a contiguous array (must be <= length), consuming them. */
 	read(n: number): Uint8Array {
-		if (n === 0) return EMPTY;
-		const first = this.chunks[0] as Uint8Array;
-		const out =
-			first.length - this.headOff >= n
-				? first.subarray(this.headOff, this.headOff + n) // zero copy: within one chunk
-				: this.collect(n);
+		const out = this.peek(n);
 		this.skip(n);
 		return out;
 	}
@@ -202,7 +192,7 @@ function createFramedDecryptTransform(
 
 			for (;;) {
 				if (buffer.length < 1) break;
-				const vlen = varintLength(buffer.byteAt(0));
+				const vlen = varintLength(buffer.firstByte());
 				if (buffer.length < vlen) break; // varint itself incomplete
 
 				let length: number;
