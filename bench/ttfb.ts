@@ -5,7 +5,10 @@
  * This showcases streaming's key advantage: you can start processing
  * before the entire body is encrypted/decrypted.
  *
- * Run with: npx tsx bench/ttfb.bench.ts
+ * This is a latency demonstration (setTimeout-driven), not a throughput bench,
+ * so it lives outside the vitest `*.bench.ts` glob.
+ *
+ * Run with: npm run bench:ttfb
  */
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";

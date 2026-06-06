@@ -29,6 +29,10 @@
 		"test:browser": "vitest run --config vitest.browser.config.ts",
 		"test:watch": "vitest",
 		"bench": "vitest bench",
+		"bench:browser": "vitest bench --config vitest.browser.config.ts",
+		"bench:ttfb": "tsx bench/ttfb.ts",
+		"bench:alloc": "node --expose-gc --import tsx bench/alloc.ts",
+		"bench:profile": "node --import tsx bench/profile.ts",
 		"lint": "biome check src test",
 		"format": "biome format --write src test",
 		"typecheck": "tsc --noEmit"

@@ -6,16 +6,20 @@
  * This measures the JS plumbing — buffering, framing, copies — that dominates
  * per-chunk cost, independent of public-key crypto.
  *
- * Run: npx tsx bench/streaming.bench.ts
+ * Scenarios pick out the regimes that stress different code:
+ *  - 16KB chunks, 1500B reads : realistic TLS/TCP fragmentation
+ *  - 16KB chunks, 64KB reads  : bulk delivery
+ *  - 256B chunks, 64KB reads  : many small frames per read
+ *  - 256B chunks, 256B reads  : worst-case fragmentation (StreamBuffer accumulation)
  *
- * Scenarios:
- *  - encrypt: chunker + response-encrypt throughput (sensitive to per-frame
- *    framing copies).
- *  - decrypt: response-decrypt throughput when the framed input is re-fragmented
- *    at `readSize` boundaries (sensitive to buffer accumulation / per-frame
- *    slicing — the O(n^2) regime when readSize >> chunkSize).
+ * decrypt re-fragments the framed input at `readSize` boundaries to exercise the
+ * buffer-accumulation path (the previous concat/slice pattern was O(n²) here).
+ *
+ * Run: npm run bench            (Node)
+ *      npm run bench:browser    (Chromium, same file)
  */
 import { AEAD_AES_128_GCM } from "hpke";
+import { bench, describe } from "vitest";
 import {
 	createChunkerTransform,
 	createResponseDecryptTransform,
@@ -26,9 +30,9 @@ const aead = AEAD_AES_128_GCM();
 const key = crypto.getRandomValues(new Uint8Array(16));
 const nonce = crypto.getRandomValues(new Uint8Array(12));
 
-const ITERS = Number(process.env.ITERS ?? 15);
-const WARMUP = Number(process.env.WARMUP ?? 5);
-const TOTAL = Number(process.env.TOTAL ?? 512 * 1024);
+const TOTAL = 512 * 1024;
+const payload = new Uint8Array(TOTAL);
+crypto.getRandomValues(payload.subarray(0, Math.min(TOTAL, 65_536)));
 
 function streamFrom(bytes: Uint8Array, readSize: number): ReadableStream<Uint8Array> {
 	let off = 0;
@@ -53,8 +57,8 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<number> {
 	return n;
 }
 
-async function encrypt(payload: Uint8Array, chunkSize: number): Promise<Uint8Array> {
-	const out = streamFrom(payload, payload.length)
+async function encrypt(plaintext: Uint8Array, chunkSize: number): Promise<Uint8Array> {
+	const out = streamFrom(plaintext, plaintext.length)
 		.pipeThrough(createChunkerTransform(chunkSize))
 		.pipeThrough(createResponseEncryptTransform(aead, key, nonce));
 	const parts: Uint8Array[] = [];
@@ -74,63 +78,35 @@ async function encrypt(payload: Uint8Array, chunkSize: number): Promise<Uint8Arr
 	return buf;
 }
 
-function median(xs: number[]): number {
-	const s = [...xs].sort((a, b) => a - b);
-	const m = Math.floor(s.length / 2);
-	return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
-
-async function time(fn: () => Promise<void>): Promise<number> {
-	for (let i = 0; i < WARMUP; i++) await fn();
-	const ts: number[] = [];
-	for (let i = 0; i < ITERS; i++) {
-		const t0 = performance.now();
-		await fn();
-		ts.push(performance.now() - t0);
-	}
-	return median(ts);
-}
-
-const payload = new Uint8Array(TOTAL);
-crypto.getRandomValues(payload.subarray(0, Math.min(TOTAL, 65536)));
-
 // scenario: [label, chunkSize, readSize-for-decrypt]
 const scenarios: Array<[string, number, number]> = [
-	["16KB chunks, 1500B reads (realistic TLS/TCP)", 16384, 1500],
-	["16KB chunks, 64KB reads (bulk)", 16384, 65536],
-	["256B chunks, 64KB reads (small chunks, bulk read)", 256, 65536],
-	["256B chunks, 256B reads (small chunks, fragmented)", 256, 256],
+	["16KB chunks / 1500B reads (TLS-like)", 16_384, 1_500],
+	["16KB chunks / 64KB reads (bulk)", 16_384, 65_536],
+	["256B chunks / 64KB reads (small frames)", 256, 65_536],
+	["256B chunks / 256B reads (fragmented)", 256, 256],
 ];
 
-console.log(`payload=${(TOTAL / 1024).toFixed(0)}KB  iters=${ITERS}  warmup=${WARMUP}\n`);
-console.log("scenario                                              enc ms   enc MB/s   dec ms   dec MB/s");
-
-async function decryptOnce(framed: Uint8Array, readSize: number): Promise<number> {
-	return drain(
-		streamFrom(framed, readSize).pipeThrough(createResponseDecryptTransform(aead, key, nonce)),
-	);
-}
-
-for (const [label, chunkSize, readSize] of scenarios) {
-	const encMs = await time(async () => {
-		await encrypt(payload, chunkSize);
-	});
-	const framed = await encrypt(payload, chunkSize);
-	const encMbps = TOTAL / 1024 / 1024 / (encMs / 1000);
-
-	let decCol: string;
-	try {
-		const decN = await decryptOnce(framed, readSize);
-		if (decN !== TOTAL) throw new Error(`mismatch ${decN}`);
-		const decMs = await time(async () => {
-			await decryptOnce(framed, readSize);
+describe("streaming encrypt (chunker + response-encrypt)", () => {
+	for (const [label, chunkSize] of scenarios) {
+		bench(label, async () => {
+			await encrypt(payload, chunkSize);
 		});
-		const decMbps = TOTAL / 1024 / 1024 / (decMs / 1000);
-		decCol = `${decMs.toFixed(2).padStart(6)}  ${decMbps.toFixed(1).padStart(8)}`;
-	} catch (e) {
-		decCol = `  FAIL (${(e as Error).message ?? e})`;
 	}
-	console.log(
-		`${label.padEnd(52)}  ${encMs.toFixed(2).padStart(6)}  ${encMbps.toFixed(1).padStart(8)}   ${decCol}`,
-	);
+});
+
+// Pre-frame each scenario once so the decrypt bench measures only decryption.
+const framedByLabel = new Map<string, Uint8Array>();
+for (const [label, chunkSize] of scenarios) {
+	framedByLabel.set(label, await encrypt(payload, chunkSize));
 }
+
+describe("streaming decrypt (response-decrypt)", () => {
+	for (const [label, , readSize] of scenarios) {
+		const framed = framedByLabel.get(label)!;
+		bench(label, async () => {
+			await drain(
+				streamFrom(framed, readSize).pipeThrough(createResponseDecryptTransform(aead, key, nonce)),
+			);
+		});
+	}
+});
