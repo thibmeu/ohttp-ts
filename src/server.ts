@@ -570,9 +570,8 @@ export class ChunkedOHTTPServer {
 			method: decoded.method,
 			headers: decoded.headers,
 			body: bodylessMethod ? null : decoded.body,
-			// @ts-expect-error - duplex required for streaming request bodies in Node.js
 			duplex: "half",
-		});
+		} as RequestInit & { duplex: "half" });
 
 		const suite = requestCtx.keyConfig.suite;
 		const maxChunkSize = this.maxChunkSize;

@@ -54,10 +54,8 @@ async function benchNormalOHTTP(
 	const startTime = performance.now();
 
 	// Client encapsulates
-	const { request: relayReq, context } = await client.encapsulateRequest(
-		req,
-		"https://relay.example.com",
-	);
+	const { init, context } = await client.encapsulateRequest(req);
+	const relayReq = new Request("https://relay.example.com", init);
 
 	// Server decapsulates - TTFB is when we can access the first byte
 	const { request: innerReq, context: sctx } = await server.decapsulateRequest(relayReq);
@@ -103,10 +101,8 @@ async function benchChunkedBuffered(
 	const startTime = performance.now();
 
 	// Client encapsulates
-	const { request: relayReq, context } = await client.encapsulateRequest(
-		req,
-		"https://relay.example.com",
-	);
+	const { init, context } = await client.encapsulateRequest(req);
+	const relayReq = new Request("https://relay.example.com", init);
 
 	// Server decapsulates
 	const { request: innerReq, context: sctx } = await server.decapsulateRequest(relayReq);
@@ -151,10 +147,8 @@ async function benchChunkedStreaming(
 	const startTime = performance.now();
 
 	// Client encapsulates
-	const { request: relayReq, context } = await client.encapsulateRequest(
-		req,
-		"https://relay.example.com",
-	);
+	const { init, context } = await client.encapsulateRequest(req);
+	const relayReq = new Request("https://relay.example.com", init);
 
 	// Server decapsulates
 	const { request: innerReq, context: sctx } = await server.decapsulateRequest(relayReq);
@@ -235,17 +229,14 @@ async function benchSlowSourceStreaming(
 	const req = new Request("https://example.com/api", {
 		method: "POST",
 		body: slowStream,
-		// @ts-expect-error Node.js requires duplex for streaming bodies
 		duplex: "half",
-	});
+	} as RequestInit & { duplex: "half" });
 
 	const startTime = performance.now();
 
 	// Client encapsulates - starts immediately, encrypts as chunks arrive
-	const { request: relayReq, context } = await client.encapsulateRequest(
-		req,
-		"https://relay.example.com",
-	);
+	const { init, context } = await client.encapsulateRequest(req);
+	const relayReq = new Request("https://relay.example.com", init);
 
 	// Server decapsulates - can start decrypting before all chunks arrive
 	const { request: innerReq, context: sctx } = await server.decapsulateRequest(relayReq);
@@ -325,10 +316,8 @@ async function benchSlowSourceBuffered(
 	});
 
 	// Client encapsulates
-	const { request: relayReq, context } = await client.encapsulateRequest(
-		req,
-		"https://relay.example.com",
-	);
+	const { init, context } = await client.encapsulateRequest(req);
+	const relayReq = new Request("https://relay.example.com", init);
 
 	// Server decapsulates
 	const { request: innerReq, context: sctx } = await server.decapsulateRequest(relayReq);
