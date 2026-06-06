@@ -14,6 +14,7 @@
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
     "exactOptionalPropertyTypes": true,
+    "types": [],
     "outDir": "./dist"
   },
   "include": ["src"]
