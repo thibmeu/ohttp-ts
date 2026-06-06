@@ -6,9 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Chunked OHTTP decryption no longer fails when a frame — in particular the final chunk — arrives split across multiple stream reads (e.g. TCP/TLS-sized `fetch()` body chunks). The final chunk, which is delimited by end-of-stream, is now buffered until end-of-stream before being decrypted instead of decrypted eagerly on a possibly-truncated buffer.
+
 ### Changed
 
 - Bumped `bhttp-ts` 0.4.2 → 0.4.3, making the streaming decoder O(n) instead of O(n²) on many small pushes (the chunked OHTTP decode path)
+- Streaming encrypt/decrypt and chunker transforms now use an offset-cursor buffer (O(n) instead of O(n²) on fragmented input or when many frames are buffered at once), emit the frame length prefix and ciphertext without copying the ciphertext, and pass decoder views directly to AEAD open — reducing allocations on the chunked OHTTP hot path
+
+### Added
+
+- `bench/streaming.bench.ts` — isolates the streaming transform layer (chunker + encrypt/decrypt) from the KEM to measure per-chunk plumbing cost across realistic and fragmented read patterns
 
 ## [0.3.2] - 2026-06-06
 

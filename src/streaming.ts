@@ -6,7 +6,7 @@
  */
 
 import type { AEAD as AeadImpl, RecipientContext, SenderContext } from "hpke";
-import { encode as encodeVarint } from "quicvarint";
+import { decode as decodeVarint, encode as encodeVarint } from "quicvarint";
 import {
 	type BHttpRequestPreambleEvent,
 	BHttpRequestStreamEncoder,
@@ -14,20 +14,57 @@ import {
 	BHttpResponseStreamEncoder,
 	BHttpStreamDecoder,
 } from "./constants.js";
-import {
-	FINAL_CHUNK_AAD,
-	openResponseChunk,
-	type ParsedChunk,
-	parseFramedChunk,
-	sealResponseChunk,
-} from "./encapsulation.js";
+import { FINAL_CHUNK_AAD, openResponseChunk, sealResponseChunk } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { concat } from "./utils.js";
 
 /**
  * Maximum chunks allowed per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
  */
 const MAX_CHUNKS = 2 ** 32;
+
+const EMPTY = new Uint8Array(0);
+
+/**
+ * Append-and-consume byte buffer: tracks a read cursor instead of re-slicing, so
+ * appends copy only the unconsumed remainder and decode stays O(n) on fragmented
+ * input (the previous `concat`/`slice` pattern was O(n²)).
+ */
+class StreamBuffer {
+	private buf: Uint8Array = EMPTY;
+	private off = 0;
+
+	get length(): number {
+		return this.buf.length - this.off;
+	}
+
+	append(chunk: Uint8Array): void {
+		if (chunk.length === 0) return;
+		if (this.off >= this.buf.length) {
+			this.buf = chunk; // fully drained: adopt without copying
+		} else {
+			// copy only the unconsumed remainder, dropping the consumed prefix
+			const remaining = this.buf.length - this.off;
+			const next = new Uint8Array(remaining + chunk.length);
+			next.set(this.buf.subarray(this.off), 0);
+			next.set(chunk, remaining);
+			this.buf = next;
+		}
+		this.off = 0;
+	}
+
+	view(): Uint8Array {
+		return this.off === 0 ? this.buf : this.buf.subarray(this.off);
+	}
+
+	consume(n: number): void {
+		this.off += n;
+	}
+}
+
+// QUIC varint byte length from its first byte (1, 2, 4, or 8); mirrors quicvarint's read().
+function varintLength(firstByte: number): number {
+	return 1 << (firstByte >> 6);
+}
 
 /**
  * Create a TransformStream that encrypts plaintext chunks using HPKE sender context.
@@ -52,8 +89,9 @@ export function createRequestEncryptTransform(
 			if (pendingChunk !== undefined) {
 				try {
 					const sealed = await senderContext.Seal(pendingChunk);
-					const lengthBytes = encodeVarint(sealed.length);
-					controller.enqueue(concat(lengthBytes, sealed));
+					// length prefix + ciphertext as two enqueues (avoids a copy)
+					controller.enqueue(encodeVarint(sealed.length));
+					controller.enqueue(sealed);
 				} catch {
 					controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
 					return;
@@ -65,12 +103,12 @@ export function createRequestEncryptTransform(
 
 		async flush(controller) {
 			// Seal the last chunk as final
-			const finalChunk = pendingChunk ?? new Uint8Array(0);
+			const finalChunk = pendingChunk ?? EMPTY;
 			try {
 				const sealed = await senderContext.Seal(finalChunk, FINAL_CHUNK_AAD);
 				// Final chunk has length prefix 0
-				const lengthBytes = encodeVarint(0);
-				controller.enqueue(concat(lengthBytes, sealed));
+				controller.enqueue(encodeVarint(0));
+				controller.enqueue(sealed);
 			} catch {
 				controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
 			}
@@ -79,70 +117,90 @@ export function createRequestEncryptTransform(
 }
 
 /**
- * Create a TransformStream that decrypts framed ciphertext chunks using HPKE recipient context.
+ * Decrypt length-prefixed ciphertext frames (draft-08), one per `openFrame`.
  *
- * Input: framed ciphertext (may be partial/streaming)
- * Output: decrypted plaintext Uint8Array chunks
- *
- * Handles buffering of partial frames and detects final chunk.
+ * The final chunk (length-0 marker) is delimited by end-of-stream, so it is
+ * buffered and decrypted in flush() — decrypting earlier truncates it when it
+ * arrives split across reads. `openFrame` owns any per-chunk state (e.g. a
+ * counter) and may throw an {@link OHTTPError} to surface a specific code.
+ */
+function createFramedDecryptTransform(
+	openFrame: (ciphertext: Uint8Array, isFinal: boolean) => Promise<Uint8Array>,
+): TransformStream<Uint8Array, Uint8Array> {
+	const buffer = new StreamBuffer();
+	let inFinal = false;
+
+	const open = async (
+		controller: TransformStreamDefaultController<Uint8Array>,
+		ciphertext: Uint8Array,
+		isFinal: boolean,
+	): Promise<boolean> => {
+		try {
+			controller.enqueue(await openFrame(ciphertext, isFinal));
+			return true;
+		} catch (e) {
+			controller.error(
+				e instanceof OHTTPError ? e : new OHTTPError(OHTTPErrorCode.DecryptionFailed),
+			);
+			return false;
+		}
+	};
+
+	return new TransformStream<Uint8Array, Uint8Array>({
+		async transform(chunk, controller) {
+			buffer.append(chunk);
+			if (inFinal) return; // accumulate the final ciphertext until flush
+
+			for (;;) {
+				const view = buffer.view();
+				if (view.length < 1) break;
+				const vlen = varintLength(view[0] as number);
+				if (view.length < vlen) break; // varint itself incomplete
+
+				let length: number;
+				try {
+					length = decodeVarint(view).value;
+				} catch {
+					controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
+					return;
+				}
+
+				if (length === 0) {
+					buffer.consume(vlen); // final marker; remaining bytes are the final chunk
+					inFinal = true;
+					break;
+				}
+
+				const frameLen = vlen + length;
+				if (view.length < frameLen) break; // frame incomplete, need more data
+
+				if (!(await open(controller, view.subarray(vlen, frameLen), false))) return;
+				buffer.consume(frameLen);
+			}
+		},
+
+		async flush(controller) {
+			if (!inFinal) {
+				if (buffer.length > 0) {
+					controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
+				}
+				return;
+			}
+			await open(controller, buffer.view(), true);
+		},
+	});
+}
+
+/**
+ * Create a TransformStream that decrypts framed request chunks using an HPKE
+ * recipient context (the context owns its own sequence numbering).
  */
 export function createRequestDecryptTransform(
 	recipientContext: RecipientContext,
 ): TransformStream<Uint8Array, Uint8Array> {
-	let buffer = new Uint8Array(0);
-	let finished = false;
-
-	return new TransformStream<Uint8Array, Uint8Array>({
-		async transform(chunk, controller) {
-			if (finished) {
-				controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
-				return;
-			}
-
-			// Append to buffer
-			buffer = concat(buffer, chunk);
-
-			// Parse and decrypt complete frames
-			while (buffer.length > 0) {
-				let parsed: ParsedChunk | undefined;
-				try {
-					parsed = parseFramedChunk(buffer);
-				} catch (e) {
-					controller.error(e);
-					return;
-				}
-
-				if (parsed === undefined) {
-					// Need more data
-					break;
-				}
-
-				try {
-					const aad = parsed.isFinal ? FINAL_CHUNK_AAD : undefined;
-					const plaintext = await recipientContext.Open(parsed.ciphertext, aad);
-					controller.enqueue(plaintext);
-				} catch {
-					controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
-					return;
-				}
-
-				if (parsed.isFinal) {
-					finished = true;
-					buffer = new Uint8Array(0);
-					break;
-				}
-
-				buffer = buffer.slice(parsed.bytesConsumed);
-			}
-		},
-
-		flush(controller) {
-			if (!finished && buffer.length > 0) {
-				// Incomplete message
-				controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
-			}
-		},
-	});
+	return createFramedDecryptTransform((ciphertext, isFinal) =>
+		recipientContext.Open(ciphertext, isFinal ? FINAL_CHUNK_AAD : undefined),
+	);
 }
 
 /**
@@ -179,8 +237,8 @@ export function createResponseEncryptTransform(
 						pendingChunk,
 						false,
 					);
-					const lengthBytes = encodeVarint(sealed.length);
-					controller.enqueue(concat(lengthBytes, sealed));
+					controller.enqueue(encodeVarint(sealed.length));
+					controller.enqueue(sealed);
 					counter++;
 				} catch {
 					controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
@@ -196,12 +254,12 @@ export function createResponseEncryptTransform(
 				return;
 			}
 
-			const finalChunk = pendingChunk ?? new Uint8Array(0);
+			const finalChunk = pendingChunk ?? EMPTY;
 			try {
 				const sealed = await sealResponseChunk(aead, aeadKey, baseNonce, counter, finalChunk, true);
 				// Final chunk has length prefix 0
-				const lengthBytes = encodeVarint(0);
-				controller.enqueue(concat(lengthBytes, sealed));
+				controller.enqueue(encodeVarint(0));
+				controller.enqueue(sealed);
 			} catch {
 				controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
 			}
@@ -222,72 +280,21 @@ export function createResponseDecryptTransform(
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
 ): TransformStream<Uint8Array, Uint8Array> {
-	let buffer = new Uint8Array(0);
 	let counter = 0;
-	let finished = false;
-
-	return new TransformStream<Uint8Array, Uint8Array>({
-		async transform(chunk, controller) {
-			if (finished) {
-				controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
-				return;
-			}
-
-			if (counter >= MAX_CHUNKS) {
-				controller.error(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
-				return;
-			}
-
-			// Append to buffer
-			buffer = concat(buffer, chunk);
-
-			// Parse and decrypt complete frames
-			while (buffer.length > 0) {
-				let parsed: ParsedChunk | undefined;
-				try {
-					parsed = parseFramedChunk(buffer);
-				} catch (e) {
-					controller.error(e);
-					return;
-				}
-
-				if (parsed === undefined) {
-					// Need more data
-					break;
-				}
-
-				try {
-					const plaintext = await openResponseChunk(
-						aead,
-						aeadKey,
-						baseNonce,
-						counter,
-						parsed.ciphertext,
-						parsed.isFinal,
-					);
-					controller.enqueue(plaintext);
-					counter++;
-				} catch {
-					controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
-					return;
-				}
-
-				if (parsed.isFinal) {
-					finished = true;
-					buffer = new Uint8Array(0);
-					break;
-				}
-
-				buffer = buffer.slice(parsed.bytesConsumed);
-			}
-		},
-
-		flush(controller) {
-			if (!finished && buffer.length > 0) {
-				// Incomplete message
-				controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
-			}
-		},
+	return createFramedDecryptTransform(async (ciphertext, isFinal) => {
+		if (counter >= MAX_CHUNKS) {
+			throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+		}
+		const plaintext = await openResponseChunk(
+			aead,
+			aeadKey,
+			baseNonce,
+			counter,
+			ciphertext,
+			isFinal,
+		);
+		counter++;
+		return plaintext;
 	});
 }
 
@@ -302,23 +309,24 @@ export function createResponseDecryptTransform(
 export function createChunkerTransform(
 	maxChunkSize: number,
 ): TransformStream<Uint8Array, Uint8Array> {
-	let buffer = new Uint8Array(0);
+	const buffer = new StreamBuffer();
 
 	return new TransformStream<Uint8Array, Uint8Array>({
 		transform(chunk, controller) {
-			buffer = concat(buffer, chunk);
+			buffer.append(chunk);
 
-			// Emit full chunks
+			// emit views; the backing buffer is never mutated in place, so a
+			// downstream consumer may safely hold one across its own async work
 			while (buffer.length >= maxChunkSize) {
-				controller.enqueue(buffer.slice(0, maxChunkSize));
-				buffer = buffer.slice(maxChunkSize);
+				controller.enqueue(buffer.view().subarray(0, maxChunkSize));
+				buffer.consume(maxChunkSize);
 			}
 		},
 
 		flush(controller) {
 			// Emit remaining data (may be empty, which is valid for final chunk)
 			if (buffer.length > 0) {
-				controller.enqueue(buffer);
+				controller.enqueue(buffer.view());
 			}
 		},
 	});

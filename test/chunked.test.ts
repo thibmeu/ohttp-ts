@@ -970,3 +970,87 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		}
 	});
 });
+
+describe("chunked OHTTP tolerates fragmented reads (regression)", () => {
+	// Re-chunk a byte stream into fixed-size reads, simulating arbitrary network
+	// delivery boundaries (TCP segments, fetch() body chunks) that do not align
+	// to OHTTP frame boundaries. The final chunk (length-0 marker) is delimited
+	// by end-of-stream, so a decoder that decrypts it eagerly truncates it when
+	// it arrives split across reads — this guards against that regression.
+	function refragment(
+		stream: ReadableStream<Uint8Array>,
+		size: number,
+	): ReadableStream<Uint8Array> {
+		const reader = stream.getReader();
+		let pending = new Uint8Array(0);
+		let upstreamDone = false;
+		return new ReadableStream<Uint8Array>({
+			async pull(controller) {
+				while (pending.length < size && !upstreamDone) {
+					const { done, value } = await reader.read();
+					if (done) {
+						upstreamDone = true;
+						break;
+					}
+					pending = concat(pending, value);
+				}
+				if (pending.length === 0) {
+					controller.close();
+					return;
+				}
+				const n = Math.min(size, pending.length);
+				controller.enqueue(pending.slice(0, n));
+				pending = pending.slice(n);
+			},
+		});
+	}
+
+	it.each([
+		1, 7, 64, 1500,
+	])("decrypts request and response split into %i-byte reads", async (readSize) => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 0x01, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		// Small maxChunkSize so the bodies span many frames, including a
+		// final frame likely to straddle a read boundary.
+		const client = new ChunkedOHTTPClient(
+			suite,
+			{
+				keyId: keyConfig.keyId,
+				kemId: keyConfig.kemId,
+				publicKey: keyConfig.publicKey,
+				symmetricAlgorithms: keyConfig.symmetricAlgorithms,
+			},
+			{ maxChunkSize: 64 },
+		);
+		const server = new ChunkedOHTTPServer([keyConfig], { maxChunkSize: 64 });
+
+		const reqBody = `request-${"a".repeat(500)}`;
+		const { init, context } = await client.encapsulateRequest(
+			new Request("https://example.com/api", {
+				method: "POST",
+				headers: { "Content-Type": "text/plain" },
+				body: reqBody,
+			}),
+		);
+		const relayRequest = new Request("https://relay.example.com/ohttp", {
+			...init,
+			body: refragment(init.body as ReadableStream<Uint8Array>, readSize),
+		});
+		const { request: innerRequest, context: serverContext } =
+			await server.decapsulateRequest(relayRequest);
+		expect(await innerRequest.text()).toBe(reqBody);
+
+		const resBody = `response-${"b".repeat(500)}`;
+		const encapsulatedResponse = await serverContext.encapsulateResponse(
+			new Response(resBody, { status: 200 }),
+		);
+		const fragmentedResponse = new Response(
+			refragment(encapsulatedResponse.body as ReadableStream<Uint8Array>, readSize),
+			{ status: encapsulatedResponse.status, headers: encapsulatedResponse.headers },
+		);
+		const finalResponse = await context.decapsulateResponse(fragmentedResponse);
+		expect(await finalResponse.text()).toBe(resBody);
+	});
+});
