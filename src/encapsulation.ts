@@ -367,7 +367,7 @@ export async function decapsulateRequest(
 	const info = buildRequestInfo(header.keyId, header.kemId, header.kdfId, header.aeadId, label);
 
 	// Extract ciphertext
-	const ciphertext = encapsulatedRequest.slice(offset);
+	const ciphertext = encapsulatedRequest.subarray(offset);
 
 	// Setup recipient context
 	let recipientContext: RecipientContext;
@@ -449,8 +449,8 @@ export async function decapsulateResponse(
 	}
 
 	// Extract nonce and ciphertext
-	const responseNonce = encapsulatedResponse.slice(0, nonceLength);
-	const ciphertext = encapsulatedResponse.slice(nonceLength);
+	const responseNonce = encapsulatedResponse.subarray(0, nonceLength);
+	const ciphertext = encapsulatedResponse.subarray(nonceLength);
 
 	// Export secret from HPKE context
 	const secret = await senderContext.Export(encodeString(label), nonceLength);

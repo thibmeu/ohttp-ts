@@ -406,13 +406,13 @@ export class ChunkedOHTTPServer {
 	}> {
 		// Parse header to get offset
 		const { offset: headerOffset } = parseRequestHeader(encapsulatedRequest);
-		const header = encapsulatedRequest.slice(0, headerOffset);
+		const header = encapsulatedRequest.subarray(0, headerOffset);
 
 		const ctx = await this.createRequestContext(header);
 
 		// Parse and decrypt all chunks
 		const requestChunks: Uint8Array[] = [];
-		let data = encapsulatedRequest.slice(headerOffset);
+		let data = encapsulatedRequest.subarray(headerOffset);
 
 		while (data.length > 0) {
 			const parsed = parseFramedChunk(data);
@@ -428,7 +428,7 @@ export class ChunkedOHTTPServer {
 
 			const chunk = await ctx.openChunk(parsed.ciphertext);
 			requestChunks.push(chunk);
-			data = data.slice(parsed.bytesConsumed);
+			data = data.subarray(parsed.bytesConsumed);
 		}
 
 		return {
@@ -455,7 +455,7 @@ export class ChunkedOHTTPServer {
 			const remaining = response.length - offset;
 			const isLast = remaining <= this.maxChunkSize;
 			const chunkSize = Math.min(remaining, this.maxChunkSize);
-			const chunk = response.slice(offset, offset + chunkSize);
+			const chunk = response.subarray(offset, offset + chunkSize);
 			offset += chunkSize;
 
 			if (isLast) {
@@ -524,8 +524,8 @@ export class ChunkedOHTTPServer {
 			buffer = concat(buffer, value);
 		}
 
-		const headerBytes = buffer.slice(0, headerSize);
-		const remainder = buffer.slice(headerSize);
+		const headerBytes = buffer.subarray(0, headerSize);
+		const remainder = buffer.subarray(headerSize);
 
 		// Create request context from header
 		const requestCtx = await this.createRequestContext(headerBytes);

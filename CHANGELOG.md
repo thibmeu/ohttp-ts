@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Bumped `bhttp-ts` 0.4.2 → 0.4.3, making the streaming decoder O(n) instead of O(n²) on many small pushes (the chunked OHTTP decode path)
 - Streaming encrypt/decrypt and chunker transforms now use an offset-cursor buffer (O(n) instead of O(n²) on fragmented input or when many frames are buffered at once), emit the frame length prefix and ciphertext without copying the ciphertext, and pass decoder views directly to AEAD open — reducing allocations on the chunked OHTTP hot path
+- Byte-level chunked `encapsulate`/`decapsulate` and request/response splitting now use zero-copy `subarray` views instead of `slice` copies, including the per-chunk buffer advance that was previously O(n²)
 
 ### Added
 

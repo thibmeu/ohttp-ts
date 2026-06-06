@@ -479,7 +479,7 @@ export class ChunkedOHTTPClient {
 			const remaining = request.length - offset;
 			const isLast = remaining <= this.maxChunkSize;
 			const chunkSize = Math.min(remaining, this.maxChunkSize);
-			const chunk = request.slice(offset, offset + chunkSize);
+			const chunk = request.subarray(offset, offset + chunkSize);
 			offset += chunkSize;
 
 			if (isLast) {
@@ -519,12 +519,12 @@ export class ChunkedOHTTPClient {
 		}
 
 		// Extract response nonce
-		const responseNonce = encapsulatedResponse.slice(0, nonceLength);
+		const responseNonce = encapsulatedResponse.subarray(0, nonceLength);
 		const ctx = await createResponseContext(responseNonce);
 
 		// Parse and decrypt chunks
 		const responseChunks: Uint8Array[] = [];
-		let data = encapsulatedResponse.slice(nonceLength);
+		let data = encapsulatedResponse.subarray(nonceLength);
 
 		while (data.length > 0) {
 			const parsed = parseFramedChunk(data);
@@ -540,7 +540,7 @@ export class ChunkedOHTTPClient {
 
 			const chunk = await ctx.openChunk(parsed.ciphertext);
 			responseChunks.push(chunk);
-			data = data.slice(parsed.bytesConsumed);
+			data = data.subarray(parsed.bytesConsumed);
 		}
 
 		return concat(...responseChunks);
@@ -633,8 +633,8 @@ export class ChunkedOHTTPClient {
 					buffer = concat(buffer, value);
 				}
 
-				const responseNonce = buffer.slice(0, nonceLength);
-				const remainder = buffer.slice(nonceLength);
+				const responseNonce = buffer.subarray(0, nonceLength);
+				const remainder = buffer.subarray(nonceLength);
 
 				// Derive response keys
 				const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
