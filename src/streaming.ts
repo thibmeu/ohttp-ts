@@ -25,39 +25,88 @@ const MAX_CHUNKS = 2 ** 32;
 const EMPTY = new Uint8Array(0);
 
 /**
- * Append-and-consume byte buffer: tracks a read cursor instead of re-slicing, so
- * appends copy only the unconsumed remainder and decode stays O(n) on fragmented
- * input (the previous `concat`/`slice` pattern was O(n²)).
+ * Append-and-consume byte queue. Incoming chunks are held by reference, so
+ * `append` is O(1) with no copy; bytes are copied only when a read spans a chunk
+ * boundary, and a read contained in a single chunk returns a zero-copy subarray.
+ * This keeps decoding O(n) even when the stream is delivered in many small reads
+ * (the realistic TLS/TCP case) — the previous copy-the-remainder-per-append
+ * approach was O(n·k) there.
  */
 class StreamBuffer {
-	private buf: Uint8Array = EMPTY;
-	private off = 0;
+	private chunks: Uint8Array[] = [];
+	private headOff = 0; // bytes already consumed from chunks[0]
+	private total = 0; // bytes currently available across all chunks
 
 	get length(): number {
-		return this.buf.length - this.off;
+		return this.total;
 	}
 
 	append(chunk: Uint8Array): void {
 		if (chunk.length === 0) return;
-		if (this.off >= this.buf.length) {
-			this.buf = chunk; // fully drained: adopt without copying
-		} else {
-			// copy only the unconsumed remainder, dropping the consumed prefix
-			const remaining = this.buf.length - this.off;
-			const next = new Uint8Array(remaining + chunk.length);
-			next.set(this.buf.subarray(this.off), 0);
-			next.set(chunk, remaining);
-			this.buf = next;
+		this.chunks.push(chunk);
+		this.total += chunk.length;
+	}
+
+	/** Byte at offset `i` (must be < length), without consuming. */
+	byteAt(i: number): number {
+		let idx = i + this.headOff;
+		for (const c of this.chunks) {
+			if (idx < c.length) return c[idx] as number;
+			idx -= c.length;
 		}
-		this.off = 0;
+		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
 
-	view(): Uint8Array {
-		return this.off === 0 ? this.buf : this.buf.subarray(this.off);
+	/** First `n` bytes as a contiguous array (must be <= length), without consuming. */
+	peek(n: number): Uint8Array {
+		if (n === 0) return EMPTY;
+		const first = this.chunks[0] as Uint8Array;
+		return first.length - this.headOff >= n
+			? first.subarray(this.headOff, this.headOff + n)
+			: this.collect(n);
 	}
 
-	consume(n: number): void {
-		this.off += n;
+	/** First `n` bytes as a contiguous array (must be <= length), consuming them. */
+	read(n: number): Uint8Array {
+		if (n === 0) return EMPTY;
+		const first = this.chunks[0] as Uint8Array;
+		const out =
+			first.length - this.headOff >= n
+				? first.subarray(this.headOff, this.headOff + n) // zero copy: within one chunk
+				: this.collect(n);
+		this.skip(n);
+		return out;
+	}
+
+	/** Drop the first `n` bytes (must be <= length). */
+	skip(n: number): void {
+		this.total -= n;
+		let rem = n;
+		while (rem > 0) {
+			const c = this.chunks[0] as Uint8Array;
+			const avail = c.length - this.headOff;
+			if (rem < avail) {
+				this.headOff += rem;
+				return;
+			}
+			rem -= avail;
+			this.chunks.shift();
+			this.headOff = 0;
+		}
+	}
+
+	private collect(n: number): Uint8Array {
+		const out = new Uint8Array(n);
+		let copied = 0;
+		let off = this.headOff;
+		for (const c of this.chunks) {
+			if (copied >= n) break;
+			const take = Math.min(c.length - off, n - copied);
+			out.set(c.subarray(off, off + take), copied);
+			copied += take;
+			off = 0;
+		}
+		return out;
 	}
 }
 
@@ -152,30 +201,30 @@ function createFramedDecryptTransform(
 			if (inFinal) return; // accumulate the final ciphertext until flush
 
 			for (;;) {
-				const view = buffer.view();
-				if (view.length < 1) break;
-				const vlen = varintLength(view[0] as number);
-				if (view.length < vlen) break; // varint itself incomplete
+				if (buffer.length < 1) break;
+				const vlen = varintLength(buffer.byteAt(0));
+				if (buffer.length < vlen) break; // varint itself incomplete
 
 				let length: number;
 				try {
-					length = decodeVarint(view).value;
+					length = decodeVarint(buffer.peek(vlen)).value;
 				} catch {
 					controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
 					return;
 				}
 
 				if (length === 0) {
-					buffer.consume(vlen); // final marker; remaining bytes are the final chunk
+					buffer.skip(vlen); // final marker; remaining bytes are the final chunk
 					inFinal = true;
 					break;
 				}
 
 				const frameLen = vlen + length;
-				if (view.length < frameLen) break; // frame incomplete, need more data
+				if (buffer.length < frameLen) break; // frame incomplete, need more data
 
-				if (!(await open(controller, view.subarray(vlen, frameLen), false))) return;
-				buffer.consume(frameLen);
+				// materialize exactly one frame (zero-copy when it sits in one read)
+				const frame = buffer.read(frameLen);
+				if (!(await open(controller, frame.subarray(vlen), false))) return;
 			}
 		},
 
@@ -186,7 +235,7 @@ function createFramedDecryptTransform(
 				}
 				return;
 			}
-			await open(controller, buffer.view(), true);
+			await open(controller, buffer.read(buffer.length), true);
 		},
 	});
 }
@@ -315,18 +364,17 @@ export function createChunkerTransform(
 		transform(chunk, controller) {
 			buffer.append(chunk);
 
-			// emit views; the backing buffer is never mutated in place, so a
-			// downstream consumer may safely hold one across its own async work
+			// emit views; input chunks are never mutated in place, so a downstream
+			// consumer may safely hold one across its own async work
 			while (buffer.length >= maxChunkSize) {
-				controller.enqueue(buffer.view().subarray(0, maxChunkSize));
-				buffer.consume(maxChunkSize);
+				controller.enqueue(buffer.read(maxChunkSize));
 			}
 		},
 
 		flush(controller) {
 			// Emit remaining data (may be empty, which is valid for final chunk)
 			if (buffer.length > 0) {
-				controller.enqueue(buffer.view());
+				controller.enqueue(buffer.read(buffer.length));
 			}
 		},
 	});
