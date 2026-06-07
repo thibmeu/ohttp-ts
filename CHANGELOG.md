@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-07
+
 ### Fixed
 
 - Chunked OHTTP decryption no longer fails when a frame — in particular the final chunk — arrives split across multiple stream reads (e.g. TCP/TLS-sized `fetch()` body chunks). The final chunk, which is delimited by end-of-stream, is now buffered until end-of-stream before being decrypted instead of decrypted eagerly on a possibly-truncated buffer.
