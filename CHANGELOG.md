@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped `bhttp-ts` 0.4.3 → 0.4.4, whose decoder now accepts the truncated messages allowed by RFC 9292 Section 3.8
+
 ### Fixed
 
 - Chunked OHTTP decryption now rejects two malformed inputs that draft-ietf-ohai-chunked-ohttp-08 requires erroring on: a stream that ends without a final (0-length prefix) chunk, and a non-final chunk that decrypts to zero-length plaintext. Both were previously accepted as valid.

@@ -57,7 +57,7 @@
 	},
 	"homepage": "https://github.com/thibmeu/ohttp-ts#readme",
 	"dependencies": {
-		"bhttp-ts": "0.4.3",
+		"bhttp-ts": "0.4.4",
 		"hpke": "1.1.1",
 		"quicvarint": "0.1.7"
 	},
