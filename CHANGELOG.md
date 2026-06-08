@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+# [0.3.4] - 2026-06-08
+
 ### Changed
 
 - Bumped `bhttp-ts` 0.4.3 → 0.4.4, whose decoder now accepts the truncated messages allowed by RFC 9292 Section 3.8
