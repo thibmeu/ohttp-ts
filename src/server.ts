@@ -413,6 +413,7 @@ export class ChunkedOHTTPServer {
 		// Parse and decrypt all chunks
 		const requestChunks: Uint8Array[] = [];
 		let data = encapsulatedRequest.subarray(headerOffset);
+		let sawFinal = false;
 
 		while (data.length > 0) {
 			const parsed = parseFramedChunk(data);
@@ -421,14 +422,23 @@ export class ChunkedOHTTPServer {
 			}
 
 			if (parsed.isFinal) {
-				const chunk = await ctx.openFinalChunk(parsed.ciphertext);
-				requestChunks.push(chunk);
+				requestChunks.push(await ctx.openFinalChunk(parsed.ciphertext));
+				sawFinal = true;
 				break;
 			}
 
 			const chunk = await ctx.openChunk(parsed.ciphertext);
+			// A non-final chunk MUST NOT decrypt to zero-length plaintext (draft-08 Section 7.3).
+			if (chunk.length === 0) {
+				throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+			}
 			requestChunks.push(chunk);
 			data = data.subarray(parsed.bytesConsumed);
+		}
+
+		// Without a final (0-length prefix) chunk the message is truncated.
+		if (!sawFinal) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
 		return {

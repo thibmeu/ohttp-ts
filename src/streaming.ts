@@ -175,7 +175,12 @@ function createFramedDecryptTransform(
 		isFinal: boolean,
 	): Promise<boolean> => {
 		try {
-			controller.enqueue(await openFrame(ciphertext, isFinal));
+			const plaintext = await openFrame(ciphertext, isFinal);
+			// A non-final chunk MUST NOT decrypt to zero-length plaintext (draft-08 Section 7.3).
+			if (!isFinal && plaintext.length === 0) {
+				throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+			}
+			controller.enqueue(plaintext);
 			return true;
 		} catch (e) {
 			controller.error(
@@ -219,10 +224,10 @@ function createFramedDecryptTransform(
 		},
 
 		async flush(controller) {
+			// The stream is only complete once a final (0-length prefix) chunk arrives;
+			// ending without one is a truncated message (draft-08 Section 7.3).
 			if (!inFinal) {
-				if (buffer.length > 0) {
-					controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
-				}
+				controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
 				return;
 			}
 			await open(controller, buffer.read(buffer.length), true);

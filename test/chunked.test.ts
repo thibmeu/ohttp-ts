@@ -570,33 +570,43 @@ describe("varint edge cases", () => {
 	});
 });
 
-describe("empty chunk handling", () => {
-	it("handles zero-length non-final chunk in streaming", async () => {
+describe("draft-08 chunk validation (regression)", () => {
+	const newPair = async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+		const keyConfig = await generateKeyConfig(suite, 1, [
 			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
 		]);
 		const client = new ChunkedOHTTPClient(suite, {
-			keyId: serverKeyConfig.keyId,
-			kemId: serverKeyConfig.kemId,
-			publicKey: serverKeyConfig.publicKey,
-			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+			keyId: keyConfig.keyId,
+			kemId: keyConfig.kemId,
+			publicKey: keyConfig.publicKey,
+			symmetricAlgorithms: keyConfig.symmetricAlgorithms,
 		});
-		const server = new ChunkedOHTTPServer([serverKeyConfig]);
-		const requestCtx = await client.createRequestContext();
+		const server = new ChunkedOHTTPServer([keyConfig]);
+		return { client, server };
+	};
 
-		// Seal and frame chunks - sealChunk returns raw ciphertext, need to frame it
-		const emptySealed = await requestCtx.sealChunk(new Uint8Array(0));
-		const emptyFramed = frameChunk(emptySealed, false);
+	// A message is complete only once a final (0-length prefix) chunk is decrypted.
+	it("rejects a stream that ends without a final chunk", async () => {
+		const { client, server } = await newPair();
+		const ctx = await client.createRequestContext();
+		const sealed = await ctx.sealChunk(new Uint8Array([1, 2, 3]));
+		const truncated = concat(ctx.header, frameChunk(sealed, false)); // no final marker
+		await expect(server.decapsulate(truncated)).rejects.toThrow(OHTTPError);
+	});
 
-		const finalSealed = await requestCtx.sealFinalChunk(new Uint8Array([1, 2, 3]));
-		const finalFramed = frameChunk(finalSealed, true);
-
-		const fullRequest = concat(requestCtx.header, emptyFramed, finalFramed);
-		const { request: decrypted } = await server.decapsulate(fullRequest);
-
-		// Empty chunk + [1,2,3] should give us [1,2,3]
-		expect(decrypted).toEqual(new Uint8Array([1, 2, 3]));
+	// A non-final chunk MUST NOT contain a zero-length plaintext.
+	it("rejects a non-final chunk with zero-length plaintext", async () => {
+		const { client, server } = await newPair();
+		const ctx = await client.createRequestContext();
+		const emptySealed = await ctx.sealChunk(new Uint8Array(0));
+		const finalSealed = await ctx.sealFinalChunk(new Uint8Array([1, 2, 3]));
+		const request = concat(
+			ctx.header,
+			frameChunk(emptySealed, false),
+			frameChunk(finalSealed, true),
+		);
+		await expect(server.decapsulate(request)).rejects.toThrow(OHTTPError);
 	});
 });
 

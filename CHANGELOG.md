@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Chunked OHTTP decryption now rejects two malformed inputs that draft-ietf-ohai-chunked-ohttp-08 requires erroring on: a stream that ends without a final (0-length prefix) chunk, and a non-final chunk that decrypts to zero-length plaintext. Both were previously accepted as valid.
+
 ## [0.3.3] - 2026-06-07
 
 ### Fixed
