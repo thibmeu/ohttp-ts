@@ -16,16 +16,9 @@
  */
 
 import { Session } from "node:inspector/promises";
-import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
+import { AEAD_AES_128_GCM } from "hpke";
+import { client, server } from "./fixtures.js";
 import { randomBytes, streamDecrypt, streamEncrypt } from "./util.js";
-
-const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-const keyConfig = await KeyConfig.generate(suite, 0x01, [
-	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-]);
-const client = new OHTTPClient(suite, keyConfig);
-const server = new OHTTPServer([keyConfig]);
 
 interface CallFrame {
 	functionName: string;
@@ -140,7 +133,11 @@ async function main(): Promise<void> {
 
 	const scenarios: Array<[string, number, () => Promise<unknown>]> = [
 		// high-level API: bhttp encode/decode + Headers/URL on top of the crypto core
-		["HL encapsulateRequest 1KB+headers", 3000, () => client.encapsulateRequest(makeRequest(1_024))],
+		[
+			"HL encapsulateRequest 1KB+headers",
+			3000,
+			() => client.encapsulateRequest(makeRequest(1_024)),
+		],
 		[
 			"HL decapsulateRequest 1KB+headers",
 			3000,
@@ -150,13 +147,21 @@ async function main(): Promise<void> {
 		["round-trip 1KB (setup-dominated)", 4000, () => roundTrip(_1KB)],
 		["encapsulateRequest 1MB", 1500, () => client.encapsulate(_1MB)],
 		["decapsulateRequest 1MB", 1500, () => server.decapsulate(enc1MB.encapsulatedRequest)],
-		["stream encrypt 512KB / 16KB chunks", 400, () => streamEncrypt(aead, skey, snonce, _512KB, 16_384)],
+		[
+			"stream encrypt 512KB / 16KB chunks",
+			400,
+			() => streamEncrypt(aead, skey, snonce, _512KB, 16_384),
+		],
 		[
 			"stream decrypt 512KB / 16KB / 1500B reads",
 			400,
 			() => streamDecrypt(aead, skey, snonce, framed16, 1_500),
 		],
-		["stream encrypt 512KB / 256B chunks (slow)", 60, () => streamEncrypt(aead, skey, snonce, _512KB, 256)],
+		[
+			"stream encrypt 512KB / 256B chunks (slow)",
+			60,
+			() => streamEncrypt(aead, skey, snonce, _512KB, 256),
+		],
 		[
 			"stream decrypt 512KB / 256B / 64KB reads (slow)",
 			60,

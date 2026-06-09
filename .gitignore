@@ -5,6 +5,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Benchmark trace artifacts
+bench/.trace/
+
 # IDE
 .vscode/
 .idea/

@@ -30,9 +30,11 @@
 		"test:watch": "vitest",
 		"bench": "vitest bench",
 		"bench:browser": "vitest bench --config vitest.browser.config.ts",
-		"bench:ttfb": "tsx bench/ttfb.ts",
+		"bench:concurrency": "vitest bench --run bench/concurrency.bench.ts",
+		"bench:overlap": "tsx bench/overlap.ts",
 		"bench:alloc": "node --expose-gc --import tsx bench/alloc.ts",
 		"bench:profile": "node --import tsx bench/profile.ts",
+		"bench:trace": "node --import tsx bench/trace.ts",
 		"lint": "biome check src test",
 		"format": "biome format --write src test",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.bench.json"

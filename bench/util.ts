@@ -81,5 +81,7 @@ export function streamDecrypt(
 	framed: Uint8Array,
 	readSize: number,
 ): Promise<number> {
-	return drain(streamFrom(framed, readSize).pipeThrough(createResponseDecryptTransform(aead, key, nonce)));
+	return drain(
+		streamFrom(framed, readSize).pipeThrough(createResponseDecryptTransform(aead, key, nonce)),
+	);
 }
