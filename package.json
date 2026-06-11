@@ -1,6 +1,6 @@
 {
 	"name": "ohttp-ts",
-	"version": "0.3.4",
+	"version": "0.3.5",
 	"description": "Oblivious HTTP (RFC 9458) implementation with chunked extension support",
 	"type": "module",
 	"sideEffects": false,
