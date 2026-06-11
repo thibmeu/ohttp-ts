@@ -25,6 +25,30 @@ const MAX_CHUNKS = 2 ** 32;
 const EMPTY = new Uint8Array(0);
 
 /**
+ * How many per-chunk AEAD calls a streaming transform keeps in flight.
+ *
+ * Chunk seals/opens are independent (counter-derived nonces, one fixed key, no
+ * chaining), so a small window of them can run concurrently while output order
+ * is preserved by draining a FIFO. On Node every `crypto.subtle` call runs on
+ * the libuv threadpool (default size 4) and Chromium similarly dispatches to a
+ * worker pool, so a window of 4 overlaps the per-call latency that otherwise
+ * serializes the stream; on runtimes with synchronous-under-the-hood crypto
+ * (workerd) it is harmless. Measured by bench:overlap (chunkedSeal c=1 vs c=4).
+ */
+const AEAD_PIPELINE_DEPTH = 4;
+
+/** Settled result of an in-flight AEAD call: rejections are captured at issue
+ * time so an abandoned window never surfaces an unhandled rejection. */
+type SettledChunk = { ok: true; value: Uint8Array } | { ok: false; error: unknown };
+
+function settle(p: Promise<Uint8Array>): Promise<SettledChunk> {
+	return p.then(
+		(value) => ({ ok: true, value }),
+		(error) => ({ ok: false, error }),
+	);
+}
+
+/**
  * Append-and-consume byte queue. Incoming chunks are held by reference, so
  * `append` is O(1) with no copy; bytes are copied only when a read spans a chunk
  * boundary, and a read contained in a single chunk returns a zero-copy subarray.
@@ -168,26 +192,24 @@ function createFramedDecryptTransform(
 ): TransformStream<Uint8Array, Uint8Array> {
 	const buffer = new StreamBuffer();
 	let inFinal = false;
+	// Opens issued but not yet emitted, oldest first (all non-final frames).
+	const inflight: Array<Promise<SettledChunk>> = [];
 
-	const open = async (
+	// Await the oldest in-flight open and enqueue its plaintext (order-preserving).
+	const emitOldest = async (
 		controller: TransformStreamDefaultController<Uint8Array>,
-		ciphertext: Uint8Array,
-		isFinal: boolean,
 	): Promise<boolean> => {
-		try {
-			const plaintext = await openFrame(ciphertext, isFinal);
-			// A non-final chunk MUST NOT decrypt to zero-length plaintext (draft-08 Section 7.3).
-			if (!isFinal && plaintext.length === 0) {
-				throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
-			}
-			controller.enqueue(plaintext);
-			return true;
-		} catch (e) {
+		const result = await (inflight.shift() as Promise<SettledChunk>);
+		// A non-final chunk MUST NOT decrypt to zero-length plaintext (draft-08 Section 7.3).
+		if (!result.ok || result.value.length === 0) {
+			const e = result.ok ? undefined : result.error;
 			controller.error(
 				e instanceof OHTTPError ? e : new OHTTPError(OHTTPErrorCode.DecryptionFailed),
 			);
 			return false;
 		}
+		controller.enqueue(result.value);
+		return true;
 	};
 
 	return new TransformStream<Uint8Array, Uint8Array>({
@@ -217,9 +239,11 @@ function createFramedDecryptTransform(
 				const frameLen = vlen + length;
 				if (buffer.length < frameLen) break; // frame incomplete, need more data
 
-				// materialize exactly one frame (zero-copy when it sits in one read)
+				// materialize exactly one frame (zero-copy when it sits in one read),
+				// start its open immediately, and emit only once the window is full
 				const frame = buffer.read(frameLen);
-				if (!(await open(controller, frame.subarray(vlen), false))) return;
+				inflight.push(settle(openFrame(frame.subarray(vlen), false)));
+				if (inflight.length >= AEAD_PIPELINE_DEPTH && !(await emitOldest(controller))) return;
 			}
 		},
 
@@ -230,7 +254,19 @@ function createFramedDecryptTransform(
 				controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
 				return;
 			}
-			await open(controller, buffer.read(buffer.length), true);
+			const final = settle(openFrame(buffer.read(buffer.length), true));
+			while (inflight.length > 0) {
+				if (!(await emitOldest(controller))) return;
+			}
+			const result = await final;
+			if (!result.ok) {
+				const e = result.error;
+				controller.error(
+					e instanceof OHTTPError ? e : new OHTTPError(OHTTPErrorCode.DecryptionFailed),
+				);
+				return;
+			}
+			controller.enqueue(result.value);
 		},
 	});
 }
@@ -262,32 +298,37 @@ export function createResponseEncryptTransform(
 ): TransformStream<Uint8Array, Uint8Array> {
 	let counter = 0;
 	let pendingChunk: Uint8Array | undefined;
+	// Seals issued but not yet emitted, oldest first (all non-final chunks).
+	const inflight: Array<Promise<SettledChunk>> = [];
+
+	// Await the oldest in-flight seal and enqueue its frame (order-preserving).
+	const emitOldest = async (
+		controller: TransformStreamDefaultController<Uint8Array>,
+	): Promise<boolean> => {
+		const result = await (inflight.shift() as Promise<SettledChunk>);
+		if (!result.ok) {
+			controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
+			return false;
+		}
+		// length prefix + ciphertext as two enqueues (avoids a copy)
+		controller.enqueue(encodeVarint(result.value.length));
+		controller.enqueue(result.value);
+		return true;
+	};
 
 	return new TransformStream<Uint8Array, Uint8Array>({
 		async transform(chunk, controller) {
-			if (counter >= MAX_CHUNKS) {
-				controller.error(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
-				return;
-			}
-
-			// If we have a pending chunk, seal it as non-final
+			// If we have a pending chunk, seal it as non-final; emit once the
+			// window is full so independent seals overlap
 			if (pendingChunk !== undefined) {
-				try {
-					const sealed = await sealResponseChunk(
-						aead,
-						aeadKey,
-						baseNonce,
-						counter,
-						pendingChunk,
-						false,
-					);
-					controller.enqueue(encodeVarint(sealed.length));
-					controller.enqueue(sealed);
-					counter++;
-				} catch {
-					controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
+				if (counter >= MAX_CHUNKS) {
+					controller.error(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
 					return;
 				}
+				inflight.push(
+					settle(sealResponseChunk(aead, aeadKey, baseNonce, counter++, pendingChunk, false)),
+				);
+				if (inflight.length >= AEAD_PIPELINE_DEPTH && !(await emitOldest(controller))) return;
 			}
 			pendingChunk = chunk;
 		},
@@ -298,15 +339,20 @@ export function createResponseEncryptTransform(
 				return;
 			}
 
-			const finalChunk = pendingChunk ?? EMPTY;
-			try {
-				const sealed = await sealResponseChunk(aead, aeadKey, baseNonce, counter, finalChunk, true);
-				// Final chunk has length prefix 0
-				controller.enqueue(encodeVarint(0));
-				controller.enqueue(sealed);
-			} catch {
-				controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
+			const final = settle(
+				sealResponseChunk(aead, aeadKey, baseNonce, counter, pendingChunk ?? EMPTY, true),
+			);
+			while (inflight.length > 0) {
+				if (!(await emitOldest(controller))) return;
 			}
+			const result = await final;
+			if (!result.ok) {
+				controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
+				return;
+			}
+			// Final chunk has length prefix 0
+			controller.enqueue(encodeVarint(0));
+			controller.enqueue(result.value);
 		},
 	});
 }
@@ -325,20 +371,13 @@ export function createResponseDecryptTransform(
 	baseNonce: Uint8Array,
 ): TransformStream<Uint8Array, Uint8Array> {
 	let counter = 0;
-	return createFramedDecryptTransform(async (ciphertext, isFinal) => {
+	// The counter is claimed synchronously at call time: opens are pipelined, so
+	// the next frame's open may start before this one's promise resolves.
+	return createFramedDecryptTransform((ciphertext, isFinal) => {
 		if (counter >= MAX_CHUNKS) {
-			throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+			return Promise.reject(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
 		}
-		const plaintext = await openResponseChunk(
-			aead,
-			aeadKey,
-			baseNonce,
-			counter,
-			ciphertext,
-			isFinal,
-		);
-		counter++;
-		return plaintext;
+		return openResponseChunk(aead, aeadKey, baseNonce, counter++, ciphertext, isFinal);
 	});
 }
 
@@ -632,7 +671,10 @@ export function encodeBHttpRequestStream(request: Request): ReadableStream<Uint8
 					const { done, value } = await reader.read();
 					if (done) break;
 					if (value.length > 0) {
-						controller.enqueue(encoder.encodeContentChunk(value));
+						// length prefix + data as two enqueues (avoids a full-body copy)
+						const [prefix, data] = encoder.encodeContentChunkParts(value);
+						controller.enqueue(prefix);
+						controller.enqueue(data);
 					}
 				}
 			}
@@ -669,7 +711,10 @@ export function encodeBHttpResponseStream(response: Response): ReadableStream<Ui
 					const { done, value } = await reader.read();
 					if (done) break;
 					if (value.length > 0) {
-						controller.enqueue(encoder.encodeContentChunk(value));
+						// length prefix + data as two enqueues (avoids a full-body copy)
+						const [prefix, data] = encoder.encodeContentChunkParts(value);
+						controller.enqueue(prefix);
+						controller.enqueue(data);
 					}
 				}
 			}
