@@ -16,6 +16,29 @@ import {
 } from "./constants.js";
 import { FINAL_CHUNK_AAD, openResponseChunk, sealResponseChunk } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
+import { concat } from "./utils.js";
+
+/** A ReadableStream that emits `bytes` as a single chunk (if non-empty) then closes. */
+export function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
+	return new ReadableStream<Uint8Array>({
+		start(controller) {
+			if (bytes.length > 0) controller.enqueue(bytes);
+			controller.close();
+		},
+	});
+}
+
+/** Collect a stream of byte chunks into one contiguous buffer. */
+export async function collectStream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+	const parts: Uint8Array[] = [];
+	const reader = stream.getReader();
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		parts.push(value);
+	}
+	return concat(...parts);
+}
 
 /**
  * Maximum chunks allowed per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
@@ -145,36 +168,52 @@ export function createRequestEncryptTransform(
 	senderContext: SenderContext,
 ): TransformStream<Uint8Array, Uint8Array> {
 	let pendingChunk: Uint8Array | undefined;
+	// Seals issued but not yet emitted, oldest first (all non-final chunks).
+	// hpke's SenderContext.Seal claims its sequence number synchronously, so a
+	// window of seals can run concurrently while output stays in order.
+	const inflight: Array<Promise<SettledChunk>> = [];
+
+	// Await the oldest in-flight seal and enqueue its frame (order-preserving).
+	const emitOldest = async (
+		controller: TransformStreamDefaultController<Uint8Array>,
+	): Promise<boolean> => {
+		const result = await (inflight.shift() as Promise<SettledChunk>);
+		if (!result.ok) {
+			controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
+			return false;
+		}
+		// length prefix + ciphertext as two enqueues (avoids a copy)
+		controller.enqueue(encodeVarint(result.value.length));
+		controller.enqueue(result.value);
+		return true;
+	};
 
 	return new TransformStream<Uint8Array, Uint8Array>({
 		async transform(chunk, controller) {
-			// If we have a pending chunk, seal it as non-final
+			// Seal the previous chunk as non-final; emit once the window is full so
+			// independent seals overlap.
 			if (pendingChunk !== undefined) {
-				try {
-					const sealed = await senderContext.Seal(pendingChunk);
-					// length prefix + ciphertext as two enqueues (avoids a copy)
-					controller.enqueue(encodeVarint(sealed.length));
-					controller.enqueue(sealed);
-				} catch {
-					controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
-					return;
-				}
+				inflight.push(settle(senderContext.Seal(pendingChunk)));
+				if (inflight.length >= AEAD_PIPELINE_DEPTH && !(await emitOldest(controller))) return;
 			}
 			// Store current chunk as pending (might be final)
 			pendingChunk = chunk;
 		},
 
 		async flush(controller) {
-			// Seal the last chunk as final
-			const finalChunk = pendingChunk ?? EMPTY;
-			try {
-				const sealed = await senderContext.Seal(finalChunk, FINAL_CHUNK_AAD);
-				// Final chunk has length prefix 0
-				controller.enqueue(encodeVarint(0));
-				controller.enqueue(sealed);
-			} catch {
-				controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
+			// Seal the last chunk as final, draining the window in order first.
+			const final = settle(senderContext.Seal(pendingChunk ?? EMPTY, FINAL_CHUNK_AAD));
+			while (inflight.length > 0) {
+				if (!(await emitOldest(controller))) return;
 			}
+			const result = await final;
+			if (!result.ok) {
+				controller.error(new OHTTPError(OHTTPErrorCode.EncryptionFailed));
+				return;
+			}
+			// Final chunk has length prefix 0
+			controller.enqueue(encodeVarint(0));
+			controller.enqueue(result.value);
 		},
 	});
 }

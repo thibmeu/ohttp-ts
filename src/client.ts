@@ -1,4 +1,4 @@
-import type { CipherSuite, SenderContext } from "hpke";
+import type { AEAD as AeadImpl, CipherSuite, SenderContext } from "hpke";
 import { bhttp, MediaType } from "./constants.js";
 import {
 	buildRequestHeader,
@@ -12,10 +12,8 @@ import {
 	deriveChunkedResponseKeys,
 	encapsulateRequest,
 	FINAL_CHUNK_AAD,
-	frameChunk,
 	getResponseNonceLength,
 	openResponseChunk,
-	parseFramedChunk,
 	type ResponseCrypto,
 } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
@@ -27,11 +25,13 @@ import {
 	type KeyConfig,
 } from "./keyConfig.js";
 import {
+	collectStream,
 	createChunkerTransform,
 	createRequestEncryptTransform,
 	createResponseDecryptTransform,
 	decodeBHttpResponseStream,
 	encodeBHttpRequestStream,
+	streamOfBytes,
 } from "./streaming.js";
 import { concat, toArrayBuffer } from "./utils.js";
 
@@ -130,6 +130,12 @@ export interface ChunkedResponseContext {
 	openChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
 	/** Open the final chunk */
 	openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
+	/** @internal Derived response AEAD (for the pipelined buffer path) */
+	readonly _aead: AeadImpl;
+	/** @internal Derived response AEAD key */
+	readonly _aeadKey: Uint8Array;
+	/** @internal Derived response AEAD base nonce */
+	readonly _aeadNonce: Uint8Array;
 }
 
 /**
@@ -431,6 +437,10 @@ export class ChunkedOHTTPClient {
 				const maxChunks = 2 ** 32;
 
 				return {
+					_aead: aead,
+					_aeadKey: aeadKey,
+					_aeadNonce: aeadNonce,
+
 					async openChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
@@ -471,34 +481,16 @@ export class ChunkedOHTTPClient {
 	}> {
 		const ctx = await this.createRequestContext();
 
-		const chunks: Uint8Array[] = [ctx.header];
-
-		// Split request into chunks
-		let offset = 0;
-		while (offset < request.length) {
-			const remaining = request.length - offset;
-			const isLast = remaining <= this.maxChunkSize;
-			const chunkSize = Math.min(remaining, this.maxChunkSize);
-			const chunk = request.subarray(offset, offset + chunkSize);
-			offset += chunkSize;
-
-			if (isLast) {
-				const sealed = await ctx.sealFinalChunk(chunk);
-				chunks.push(frameChunk(sealed, true));
-			} else {
-				const sealed = await ctx.sealChunk(chunk);
-				chunks.push(frameChunk(sealed, false));
-			}
-		}
-
-		// Handle empty request
-		if (request.length === 0) {
-			const sealed = await ctx.sealFinalChunk(new Uint8Array(0));
-			chunks.push(frameChunk(sealed, true));
-		}
+		// Chunk + seal through the same pipelined transforms as the streaming API
+		// (the seals run in a concurrent window), then prepend the header.
+		const sealed = await collectStream(
+			streamOfBytes(request)
+				.pipeThrough(createChunkerTransform(this.maxChunkSize))
+				.pipeThrough(createRequestEncryptTransform(ctx._senderContext)),
+		);
 
 		return {
-			encapsulatedRequest: concat(...chunks),
+			encapsulatedRequest: concat(ctx.header, sealed),
 			responseNonceLength: getResponseNonceLength(this.suite),
 			createResponseContext: (nonce) => ctx.createResponseContext(nonce),
 		};
@@ -522,38 +514,13 @@ export class ChunkedOHTTPClient {
 		const responseNonce = encapsulatedResponse.subarray(0, nonceLength);
 		const ctx = await createResponseContext(responseNonce);
 
-		// Parse and decrypt chunks
-		const responseChunks: Uint8Array[] = [];
-		let data = encapsulatedResponse.subarray(nonceLength);
-		let sawFinal = false;
-
-		while (data.length > 0) {
-			const parsed = parseFramedChunk(data);
-			if (parsed === undefined) {
-				throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
-			}
-
-			if (parsed.isFinal) {
-				responseChunks.push(await ctx.openFinalChunk(parsed.ciphertext));
-				sawFinal = true;
-				break;
-			}
-
-			const chunk = await ctx.openChunk(parsed.ciphertext);
-			// A non-final chunk MUST NOT decrypt to zero-length plaintext (draft-08 Section 7.3).
-			if (chunk.length === 0) {
-				throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
-			}
-			responseChunks.push(chunk);
-			data = data.subarray(parsed.bytesConsumed);
-		}
-
-		// Without a final (0-length prefix) chunk the message is truncated.
-		if (!sawFinal) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
-		}
-
-		return concat(...responseChunks);
+		// Decrypt the framed body through the pipelined response transform
+		// (opens run in a concurrent window; counters are claimed synchronously).
+		return collectStream(
+			streamOfBytes(encapsulatedResponse.subarray(nonceLength)).pipeThrough(
+				createResponseDecryptTransform(ctx._aead, ctx._aeadKey, ctx._aeadNonce),
+			),
+		);
 	}
 
 	/**
