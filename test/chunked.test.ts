@@ -1015,52 +1015,57 @@ describe("chunked OHTTP tolerates fragmented reads (regression)", () => {
 		});
 	}
 
-	it.each([
-		1, 7, 64, 1500,
-	])("decrypts request and response split into %i-byte reads", async (readSize) => {
-		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const keyConfig = await generateKeyConfig(suite, 0x01, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
-		// Small maxChunkSize so the bodies span many frames, including a
-		// final frame likely to straddle a read boundary.
-		const client = new ChunkedOHTTPClient(
-			suite,
-			{
-				keyId: keyConfig.keyId,
-				kemId: keyConfig.kemId,
-				publicKey: keyConfig.publicKey,
-				symmetricAlgorithms: keyConfig.symmetricAlgorithms,
-			},
-			{ maxChunkSize: 64 },
-		);
-		const server = new ChunkedOHTTPServer([keyConfig], { maxChunkSize: 64 });
+	it.each([1, 7, 64, 1500])(
+		"decrypts request and response split into %i-byte reads",
+		async (readSize) => {
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_AES_128_GCM,
+			);
+			const keyConfig = await generateKeyConfig(suite, 0x01, [
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+			]);
+			// Small maxChunkSize so the bodies span many frames, including a
+			// final frame likely to straddle a read boundary.
+			const client = new ChunkedOHTTPClient(
+				suite,
+				{
+					keyId: keyConfig.keyId,
+					kemId: keyConfig.kemId,
+					publicKey: keyConfig.publicKey,
+					symmetricAlgorithms: keyConfig.symmetricAlgorithms,
+				},
+				{ maxChunkSize: 64 },
+			);
+			const server = new ChunkedOHTTPServer([keyConfig], { maxChunkSize: 64 });
 
-		const reqBody = `request-${"a".repeat(500)}`;
-		const { init, context } = await client.encapsulateRequest(
-			new Request("https://example.com/api", {
-				method: "POST",
-				headers: { "Content-Type": "text/plain" },
-				body: reqBody,
-			}),
-		);
-		const relayRequest = new Request("https://relay.example.com/ohttp", {
-			...init,
-			body: refragment(init.body as ReadableStream<Uint8Array>, readSize),
-		});
-		const { request: innerRequest, context: serverContext } =
-			await server.decapsulateRequest(relayRequest);
-		expect(await innerRequest.text()).toBe(reqBody);
+			const reqBody = `request-${"a".repeat(500)}`;
+			const { init, context } = await client.encapsulateRequest(
+				new Request("https://example.com/api", {
+					method: "POST",
+					headers: { "Content-Type": "text/plain" },
+					body: reqBody,
+				}),
+			);
+			const relayRequest = new Request("https://relay.example.com/ohttp", {
+				...init,
+				body: refragment(init.body as ReadableStream<Uint8Array>, readSize),
+			});
+			const { request: innerRequest, context: serverContext } =
+				await server.decapsulateRequest(relayRequest);
+			expect(await innerRequest.text()).toBe(reqBody);
 
-		const resBody = `response-${"b".repeat(500)}`;
-		const encapsulatedResponse = await serverContext.encapsulateResponse(
-			new Response(resBody, { status: 200 }),
-		);
-		const fragmentedResponse = new Response(
-			refragment(encapsulatedResponse.body as ReadableStream<Uint8Array>, readSize),
-			{ status: encapsulatedResponse.status, headers: encapsulatedResponse.headers },
-		);
-		const finalResponse = await context.decapsulateResponse(fragmentedResponse);
-		expect(await finalResponse.text()).toBe(resBody);
-	});
+			const resBody = `response-${"b".repeat(500)}`;
+			const encapsulatedResponse = await serverContext.encapsulateResponse(
+				new Response(resBody, { status: 200 }),
+			);
+			const fragmentedResponse = new Response(
+				refragment(encapsulatedResponse.body as ReadableStream<Uint8Array>, readSize),
+				{ status: encapsulatedResponse.status, headers: encapsulatedResponse.headers },
+			);
+			const finalResponse = await context.decapsulateResponse(fragmentedResponse);
+			expect(await finalResponse.text()).toBe(resBody);
+		},
+	);
 });
