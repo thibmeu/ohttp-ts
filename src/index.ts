@@ -117,7 +117,7 @@ import {
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	FINAL_CHUNK_AAD,
-} from "./encapsulation.js";
+} from "./constants.js";
 
 /** Protocol labels for OHTTP request/response encryption */
 export const Labels = {
