@@ -174,9 +174,7 @@ export {
 	AEAD_TAG_SIZE,
 	type ClientEncapsulationContext,
 	type EncapsulatedRequestHeader,
-	frameChunk,
-	type ParsedChunk,
-	parseFramedChunk,
 	type ResponseCrypto,
 	type ServerEncapsulationContext,
 } from "./encapsulation.js";
+export { frameChunk, type ParsedChunk, parseFramedChunk } from "./framing.js";
