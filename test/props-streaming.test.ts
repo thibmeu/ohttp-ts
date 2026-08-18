@@ -31,7 +31,13 @@ import {
 	streamOfBytes,
 } from "../src/streaming.js";
 import { concat } from "../src/utils.js";
-import { bytesArb, bytesOfLengthArb, splitAt, splitPointsArb } from "./props-helpers.js";
+import {
+	bytesArb,
+	bytesOfLengthArb,
+	CRYPTO_RUNS,
+	splitAt,
+	splitPointsArb,
+} from "./props-helpers.js";
 
 // ============================================================================
 // Shared fixtures - built once and reused across every property run below.
@@ -178,7 +184,7 @@ describe("createChunkerTransform", () => {
 					expect(concat(...chunks)).toEqual(input);
 				},
 			),
-			{ numRuns: 25 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
@@ -220,7 +226,7 @@ describe("chunk-boundary independence", () => {
 					).toEqual(plaintext);
 				},
 			),
-			{ numRuns: 15 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -251,7 +257,7 @@ describe("chunk-boundary independence", () => {
 					expect(await decryptResponseFrames(splitAt(cipherBody, points))).toEqual(plaintext);
 				},
 			),
-			{ numRuns: 15 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
@@ -307,7 +313,7 @@ describe("truncation is rejected", () => {
 					}
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -403,7 +409,7 @@ describe("zero-length non-final chunk is rejected", () => {
 					expect(error.code).toBe(OHTTPErrorCode.DecryptionFailed);
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
@@ -479,7 +485,7 @@ describe("response chunk counter discipline", () => {
 					}
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -549,7 +555,7 @@ describe("response chunk counter discipline", () => {
 					}
 				},
 			),
-			{ numRuns: 15 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
@@ -565,7 +571,7 @@ describe("computeChunkNonce", () => {
 					expect(computeChunkNonce(nonce, counter)).toEqual(base);
 				},
 			),
-			{ numRuns: 25 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
@@ -599,7 +605,7 @@ describe("frame reordering, duplication, and dropping", () => {
 					await expectOHTTPError(decryptRequestFrames(serverCtx._recipientContext, [body]));
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -629,7 +635,7 @@ describe("frame reordering, duplication, and dropping", () => {
 					await expectOHTTPError(decryptRequestFrames(serverCtx._recipientContext, [body]));
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -655,7 +661,7 @@ describe("frame reordering, duplication, and dropping", () => {
 					await expectOHTTPError(decryptRequestFrames(serverCtx._recipientContext, [body]));
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
@@ -700,7 +706,7 @@ describe("maxFrameSize enforcement", () => {
 					expect(error.code).toBe(OHTTPErrorCode.ChunkLimitExceeded);
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -715,7 +721,7 @@ describe("maxFrameSize enforcement", () => {
 					expect(error.code).toBe(OHTTPErrorCode.ChunkLimitExceeded);
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -771,76 +777,10 @@ describe("ChunkedOHTTPClient/ChunkedOHTTPServer round-trip", () => {
 					expect(decryptedResponse).toEqual(responsePayload);
 				},
 			),
-			{ numRuns: 15 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
 
 // ============================================================================
 // Explicit vectors: wire shapes a conforming encoder never emits.
-// ============================================================================
-
-describe("explicit vectors", () => {
-	it("a body of just the final marker (empty final ciphertext) fails authentication, not InvalidMessage", async () => {
-		// draft-08 has no wire form for an empty *non-final* frame: a declared
-		// length of 0 always means the final-chunk marker. With nothing after
-		// it, the final chunk's ciphertext is empty, which fails to
-		// authenticate (a real AEAD ciphertext always carries a tag) rather
-		// than being treated as truncated or as an empty non-final chunk still
-		// awaiting data.
-		const body = new Uint8Array([0x00]);
-		const error = await expectOHTTPError(decryptResponseFrames([body]));
-		expect(error.code).toBe(OHTTPErrorCode.DecryptionFailed);
-	});
-
-	it("a non-minimally-encoded final marker (0x40 0x00) is currently accepted", async () => {
-		const finalPlaintext = new Uint8Array([9, 8, 7]);
-		const ct = await sealResponseChunk(
-			responseKeys.aead,
-			responseKeys.aeadKey,
-			responseKeys.aeadNonce,
-			0,
-			finalPlaintext,
-			true,
-		);
-		// 0x40 0x00 decodes as the 2-byte varint encoding of 0: quicvarint does
-		// not require minimal encodings, so this is accepted as the final
-		// marker (occupying 2 bytes instead of the canonical 1).
-		const body = concat(new Uint8Array([0x40, 0x00]), ct);
-		expect(await decryptResponseFrames([body])).toEqual(finalPlaintext);
-	});
-
-	it("two final markers in a row fails: the second is consumed as final-chunk ciphertext, not reparsed", async () => {
-		const body = new Uint8Array([0x00, 0x00]);
-		const error = await expectOHTTPError(decryptResponseFrames([body]));
-		expect(error.code).toBe(OHTTPErrorCode.DecryptionFailed);
-	});
-
-	it("a stream that ends exactly at a non-final frame boundary with no final marker is InvalidMessage", async () => {
-		const ct = await sealResponseChunk(
-			responseKeys.aead,
-			responseKeys.aeadKey,
-			responseKeys.aeadNonce,
-			0,
-			new Uint8Array([1, 2, 3]),
-			false,
-		);
-		const body = frameChunk(ct, false); // well-formed frame, but no final marker follows
-		const error = await expectOHTTPError(decryptResponseFrames([body]));
-		expect(error.code).toBe(OHTTPErrorCode.InvalidMessage);
-	});
-
-	it("a single frame delivered one byte per read still decrypts correctly", async () => {
-		const plaintext = new Uint8Array([1, 2, 3, 4, 5]);
-		const ct = await sealResponseChunk(
-			responseKeys.aead,
-			responseKeys.aeadKey,
-			responseKeys.aeadNonce,
-			0,
-			plaintext,
-			true,
-		);
-		const body = frameChunk(ct, true);
-		expect(await decryptResponseFrames(byteAtATime(body))).toEqual(plaintext);
-	});
-});

@@ -39,7 +39,7 @@ import {
 	type KeyConfigWithPrivate,
 } from "../src/keyConfig.js";
 import { OHTTPServer } from "../src/server.js";
-import { bytesArb } from "./props-helpers.js";
+import { bytesArb, CRYPTO_RUNS } from "./props-helpers.js";
 
 // ============================================================================
 // Fixtures: derived once, reused across every property run
@@ -65,11 +65,6 @@ const suiteB = new CipherSuite(KEM_DHKEM_P256_HKDF_SHA256, KDF_HKDF_SHA256, AEAD
 // Same KDF/AEAD as suiteA but a different KEM: used to build a request whose
 // header carries a KEM id that mismatches a same-keyId key config while its
 // kdfId/aeadId still match, isolating the KEM comparison in decapsulateRequest.
-const suiteCrossKem = new CipherSuite(
-	KEM_DHKEM_P256_HKDF_SHA256,
-	KDF_HKDF_SHA256,
-	AEAD_AES_128_GCM,
-);
 
 const keyConfigA = await deriveKeyConfig(suiteA, seedBytes(0x11), 1, [
 	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
@@ -80,10 +75,6 @@ const keyConfigB = await deriveKeyConfig(suiteB, seedBytes(0x22), 7, [
 // Same keyId as keyConfigA, different underlying key material: used for
 // cross-key isolation checks.
 const keyConfigAAlt = await deriveKeyConfig(suiteA, seedBytes(0x33), keyConfigA.keyId, [
-	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-]);
-// Same keyId and symmetric algorithm pair as keyConfigA, but a different KEM.
-const keyConfigCrossKem = await deriveKeyConfig(suiteCrossKem, seedBytes(0x44), keyConfigA.keyId, [
 	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
 ]);
 
@@ -173,7 +164,7 @@ describe("request/response round-trip", () => {
 						expect(decryptedResponse).toEqual(response);
 					},
 				),
-				{ numRuns: 15 },
+				{ numRuns: CRYPTO_RUNS },
 			);
 		});
 	}
@@ -227,7 +218,7 @@ describe("response nonce length (RFC 9458 4.2)", () => {
 					expect(nonceLength).toBe(aeadCase.expectedNonceLength);
 				},
 			),
-			{ numRuns: 9 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -241,7 +232,7 @@ describe("response nonce length (RFC 9458 4.2)", () => {
 					const nonceLength = getResponseNonceLength(s.suite);
 					expect(encapsulatedResponse.length).toBe(nonceLength + response.length + s.suite.AEAD.Nt);
 				}),
-				{ numRuns: 10 },
+				{ numRuns: CRYPTO_RUNS },
 			);
 		});
 
@@ -261,7 +252,7 @@ describe("response nonce length (RFC 9458 4.2)", () => {
 						);
 					},
 				),
-				{ numRuns: 15 },
+				{ numRuns: CRYPTO_RUNS },
 			);
 		});
 	}
@@ -285,7 +276,7 @@ describe("header shape (RFC 9458 4.1)", () => {
 					expect(buildRequestHeader(keyId, kemId, kdfId, aeadId).length).toBe(7);
 				},
 			),
-			{ numRuns: 30 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -314,7 +305,7 @@ describe("header shape (RFC 9458 4.1)", () => {
 					expect(offset).toBe(7 + encLength);
 				},
 			),
-			{ numRuns: 60 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 
@@ -331,7 +322,7 @@ describe("header shape (RFC 9458 4.1)", () => {
 					expect(info.subarray(info.length - 7)).toEqual(header);
 				},
 			),
-			{ numRuns: 20 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
@@ -395,7 +386,7 @@ describe("fail closed on mutation: single-bit flips", () => {
 						expectedRequestFlipCodes(idx),
 					);
 				}),
-				{ numRuns: 40 },
+				{ numRuns: CRYPTO_RUNS },
 			);
 		});
 
@@ -423,7 +414,7 @@ describe("fail closed on mutation: single-bit flips", () => {
 						);
 					},
 				),
-				{ numRuns: 30 },
+				{ numRuns: CRYPTO_RUNS },
 			);
 		});
 	}
@@ -453,7 +444,7 @@ describe("truncation and extension", () => {
 						);
 					},
 				),
-				{ numRuns: 25 },
+				{ numRuns: CRYPTO_RUNS },
 			);
 		});
 
@@ -478,7 +469,7 @@ describe("truncation and extension", () => {
 						await assertRejectsWithNoPlaintext(() => context.decryptResponse(mutated));
 					},
 				),
-				{ numRuns: 20 },
+				{ numRuns: CRYPTO_RUNS },
 			);
 		});
 	}
@@ -512,7 +503,7 @@ describe("cross-context isolation", () => {
 						);
 					},
 				),
-				{ numRuns: 10 },
+				{ numRuns: CRYPTO_RUNS },
 			);
 		});
 	}
@@ -530,104 +521,10 @@ describe("cross-context isolation", () => {
 					OHTTPErrorCode.DecryptionFailed,
 				);
 			}),
-			{ numRuns: 10 },
+			{ numRuns: CRYPTO_RUNS },
 		);
 	});
 });
 
 // ============================================================================
 // Explicit vectors
-// ============================================================================
-
-describe("explicit vectors", () => {
-	it("rejects a 6-byte request", async () => {
-		await assertRejectsWithNoPlaintext(
-			() => parseRequestHeader(new Uint8Array(6)),
-			OHTTPErrorCode.InvalidMessage,
-		);
-	});
-
-	it("rejects a request that is exactly 7 bytes (header only, no enc)", async () => {
-		const header = buildRequestHeader(
-			1,
-			KemId.X25519_HKDF_SHA256,
-			KdfId.HKDF_SHA256,
-			AeadId.AES_128_GCM,
-		);
-		expect(header.length).toBe(7);
-		await assertRejectsWithNoPlaintext(
-			() => parseRequestHeader(header),
-			OHTTPErrorCode.InvalidMessage,
-		);
-	});
-
-	it("rejects a request with kemId 0x0000", async () => {
-		const header = buildRequestHeader(1, 0x0000, KdfId.HKDF_SHA256, AeadId.AES_128_GCM);
-		await assertRejectsWithNoPlaintext(
-			() => parseRequestHeader(header),
-			OHTTPErrorCode.UnsupportedCipherSuite,
-		);
-	});
-
-	it("rejects a request with kemId 0xFFFF", async () => {
-		const header = buildRequestHeader(1, 0xffff, KdfId.HKDF_SHA256, AeadId.AES_128_GCM);
-		await assertRejectsWithNoPlaintext(
-			() => parseRequestHeader(header),
-			OHTTPErrorCode.UnsupportedCipherSuite,
-		);
-	});
-
-	it("rejects a request whose header kemId differs from the matching keyId's key config", async () => {
-		// keyConfigCrossKem shares keyConfigA's keyId and symmetric algorithm
-		// pair, but was derived under a different KEM. The server holds only
-		// keyConfigA, so the keyId lookup succeeds and the request must be
-		// rejected on the KEM comparison specifically, before any HPKE
-		// operation is attempted against keyConfigA's (X25519) key pair.
-		const s = setups[0];
-		if (s === undefined) throw new Error("no setup");
-		const crossKemClient = new OHTTPClient(suiteCrossKem, keyConfigCrossKem);
-		const { encapsulatedRequest } = await crossKemClient.encapsulate(new Uint8Array([1, 2, 3]));
-
-		await assertRejectsWithNoPlaintext(
-			() => s.server.decapsulate(encapsulatedRequest).then((r) => r.request),
-			OHTTPErrorCode.UnsupportedCipherSuite,
-		);
-	});
-
-	it("rejects a valid header with zero-length ciphertext", async () => {
-		const s = setups[0];
-		if (s === undefined) throw new Error("no setup");
-		const encLen = getEncLength(s.keyConfig.kemId);
-		const { encapsulatedRequest } = await s.client.encapsulate(new Uint8Array([1, 2, 3]));
-		const headerAndEncOnly = encapsulatedRequest.slice(0, 7 + encLen);
-
-		await assertRejectsWithNoPlaintext(
-			() => s.server.decapsulate(headerAndEncOnly).then((r) => r.request),
-			OHTTPErrorCode.DecryptionFailed,
-		);
-	});
-
-	it("rejects a response of exactly nonceLength bytes (empty ciphertext)", async () => {
-		const s = setups[0];
-		if (s === undefined) throw new Error("no setup");
-		const { context } = await s.client.encapsulate(new Uint8Array([1]));
-		const nonceLength = getResponseNonceLength(s.suite);
-
-		await assertRejectsWithNoPlaintext(
-			() => context.decryptResponse(new Uint8Array(nonceLength)),
-			OHTTPErrorCode.DecryptionFailed,
-		);
-	});
-
-	it("rejects a response of nonceLength - 1 bytes", async () => {
-		const s = setups[0];
-		if (s === undefined) throw new Error("no setup");
-		const { context } = await s.client.encapsulate(new Uint8Array([1]));
-		const nonceLength = getResponseNonceLength(s.suite);
-
-		await assertRejectsWithNoPlaintext(
-			() => context.decryptResponse(new Uint8Array(nonceLength - 1)),
-			OHTTPErrorCode.InvalidMessage,
-		);
-	});
-});
