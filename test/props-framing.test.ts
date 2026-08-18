@@ -206,5 +206,3 @@ describe("parseFramedChunk maxFrameSize enforcement", () => {
 		);
 	});
 });
-
-/** Big-endian counter, right-aligned into `length` bytes, computed independently of computeChunkNonce. */
