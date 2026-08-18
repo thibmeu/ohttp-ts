@@ -113,6 +113,7 @@ import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
 	DEFAULT_MAX_CHUNK_SIZE,
+	DEFAULT_MAX_FRAME_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	FINAL_CHUNK_AAD,
@@ -130,8 +131,10 @@ export const Labels = {
 	CHUNKED_RESPONSE: CHUNKED_RESPONSE_LABEL,
 	/** AAD for final chunk in chunked OHTTP */
 	FINAL_CHUNK_AAD,
-	/** Default maximum chunk size (16384 bytes) */
+	/** Default maximum chunk size sent (16384 bytes) */
 	DEFAULT_MAX_CHUNK_SIZE,
+	/** Default maximum ciphertext frame accepted (1048576 bytes) */
+	DEFAULT_MAX_FRAME_SIZE,
 } as const;
 
 // ============================================================================

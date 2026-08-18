@@ -1069,3 +1069,85 @@ describe("chunked OHTTP tolerates fragmented reads (regression)", () => {
 		},
 	);
 });
+
+describe("received frame size limits (DoS regression)", () => {
+	const encodeVarint4 = (n: number): Uint8Array =>
+		new Uint8Array([0x80 | ((n >> 24) & 0x3f), (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]);
+
+	it("parseFramedChunk rejects a frame larger than the cap instead of waiting for it", () => {
+		// 1 GiB declared, one byte present.
+		const hostile = concat(encodeVarint4(0x3fffffff), new Uint8Array([0x00]));
+		expect(() => parseFramedChunk(hostile)).toThrow(OHTTPError);
+		expect(() => parseFramedChunk(hostile)).toThrow(/CHUNK_LIMIT_EXCEEDED/);
+	});
+
+	it("parseFramedChunk honours an explicit cap and still returns undefined below it", () => {
+		const frame = concat(encodeVarint4(4096), new Uint8Array(10));
+		// Under the cap but genuinely incomplete: still "need more data".
+		expect(parseFramedChunk(frame, 8192)).toBeUndefined();
+		// Over a tighter cap: rejected outright.
+		expect(() => parseFramedChunk(frame, 1024)).toThrow(OHTTPError);
+	});
+
+	it("parseFramedChunk accepts a frame exactly at the cap", () => {
+		const size = 64;
+		const frame = concat(encodeVarint4(size), new Uint8Array(size));
+		const parsed = parseFramedChunk(frame, size);
+		expect(parsed?.isFinal).toBe(false);
+		expect(parsed?.ciphertext.length).toBe(size);
+	});
+
+	it("the decrypt stream rejects an oversized declared frame length", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		const client = new ChunkedOHTTPClient(suite, keyConfig);
+		const server = new ChunkedOHTTPServer([keyConfig], { maxFrameSize: 4096 });
+
+		const { encapsulatedRequest } = await client.encapsulate(
+			new ReadableStream({
+				start(c) {
+					c.enqueue(new TextEncoder().encode("hello"));
+					c.close();
+				},
+			}),
+		);
+
+		// Keep the real header, replace the body with one hostile frame header.
+		const header = await collectHeader(encapsulatedRequest);
+		const hostile = concat(header, encodeVarint4(0x3fffffff), new Uint8Array([0x00]));
+
+		await expect(server.decapsulate(hostile)).rejects.toThrow(/CHUNK_LIMIT_EXCEEDED/);
+	});
+
+	it("the decrypt stream bounds the final chunk, which has no declared length", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		const client = new ChunkedOHTTPClient(suite, keyConfig);
+		const server = new ChunkedOHTTPServer([keyConfig], { maxFrameSize: 4096 });
+
+		const { encapsulatedRequest } = await client.encapsulate(
+			new ReadableStream({
+				start(c) {
+					c.enqueue(new TextEncoder().encode("hello"));
+					c.close();
+				},
+			}),
+		);
+		const header = await collectHeader(encapsulatedRequest);
+
+		// 0-length marker opens the final chunk, then just keep sending.
+		const flood = new Uint8Array(16384);
+		const hostile = concat(header, new Uint8Array([0x00]), flood);
+
+		await expect(server.decapsulate(hostile)).rejects.toThrow(/CHUNK_LIMIT_EXCEEDED/);
+	});
+});
+
+/** Read the encapsulated request header (7 bytes + Nenc for X25519). */
+async function collectHeader(encapsulatedRequest: Uint8Array): Promise<Uint8Array> {
+	return encapsulatedRequest.subarray(0, 7 + 32);
+}

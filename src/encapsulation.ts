@@ -480,6 +480,15 @@ export async function decapsulateResponse(
 export const DEFAULT_MAX_CHUNK_SIZE = 16384;
 
 /**
+ * Default cap on a single received ciphertext frame, in bytes (1 MiB).
+ *
+ * Distinct from {@link DEFAULT_MAX_CHUNK_SIZE}, which bounds what this side
+ * *sends*: a peer may legitimately choose a larger chunk size, so the receive
+ * limit is set generously above it rather than equal to it.
+ */
+export const DEFAULT_MAX_FRAME_SIZE = 1 << 20;
+
+/**
  * AAD for final chunk (draft-08 Section 6.1-6.2)
  */
 export const FINAL_CHUNK_AAD = encodeString("final");
@@ -509,9 +518,13 @@ export interface ParsedChunk {
  * Parse a framed chunk, returning the ciphertext and whether it's final
  *
  * Returns undefined if not enough data available.
- * Throws OHTTPError if varint encoding is malformed.
+ * Throws OHTTPError if the varint encoding is malformed, or if the declared
+ * frame length exceeds `maxFrameSize`.
  */
-export function parseFramedChunk(data: Uint8Array): ParsedChunk | undefined {
+export function parseFramedChunk(
+	data: Uint8Array,
+	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
+): ParsedChunk | undefined {
 	if (data.length === 0) {
 		return undefined;
 	}
@@ -537,6 +550,9 @@ export function parseFramedChunk(data: Uint8Array): ParsedChunk | undefined {
 	}
 
 	// Non-final chunk
+	if (length > maxFrameSize) {
+		throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+	}
 	const totalLength = varintLength + length;
 	if (data.length < totalLength) {
 		// Not enough data
