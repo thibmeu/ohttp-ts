@@ -1,5 +1,6 @@
 import type { AEAD as AeadImpl, CipherSuite, SenderContext } from "hpke";
-import { bhttp, MediaType } from "./constants.js";
+import { bhttp } from "./bhttp.js";
+import { MediaType } from "./constants.js";
 import {
 	AEAD_TAG_SIZE,
 	buildRequestHeader,

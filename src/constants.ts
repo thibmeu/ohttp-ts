@@ -1,4 +1,8 @@
-import { BHttpDecoder, BHttpEncoder } from "bhttp-ts";
+const textEncoder = new TextEncoder();
+
+function encodeString(s: string): Uint8Array {
+	return textEncoder.encode(s);
+}
 
 export {
 	type BHttpContentEvent,
@@ -31,8 +35,41 @@ export const MediaType = {
 
 export type MediaType = (typeof MediaType)[keyof typeof MediaType];
 
-/** Shared Binary HTTP encoder/decoder (stateless singletons) */
-export const bhttp = {
-	encoder: new BHttpEncoder(),
-	decoder: new BHttpDecoder(),
-};
+/**
+ * Default labels for OHTTP request/response (RFC 9458 Section 4.3-4.4)
+ */
+export const DEFAULT_REQUEST_LABEL = "message/bhttp request";
+export const DEFAULT_RESPONSE_LABEL = "message/bhttp response";
+
+/**
+ * Labels for chunked OHTTP (draft-ietf-ohai-chunked-ohttp-08 Section 6.1-6.2)
+ */
+export const CHUNKED_REQUEST_LABEL = "message/bhttp chunked request";
+export const CHUNKED_RESPONSE_LABEL = "message/bhttp chunked response";
+
+/**
+ * Default maximum chunk size (draft-08 Section 3)
+ */
+export const DEFAULT_MAX_CHUNK_SIZE = 16384;
+
+/**
+ * Default cap on a single received ciphertext frame, in bytes (1 MiB).
+ *
+ * Distinct from {@link DEFAULT_MAX_CHUNK_SIZE}, which bounds what this side
+ * *sends*: a peer may legitimately choose a larger chunk size, so the receive
+ * limit is set generously above it rather than equal to it.
+ *
+ * A frame is a chunk's *ciphertext*, so it runs {@link AEAD_TAG_SIZE} bytes
+ * longer than the plaintext chunk it carries.
+ */
+export const DEFAULT_MAX_FRAME_SIZE = 1 << 20;
+
+/**
+ * AEAD tag length in bytes, 16 for every AEAD OHTTP registers (draft-08 Section 6).
+ */
+export const AEAD_TAG_SIZE = 16;
+
+/**
+ * AAD for final chunk (draft-08 Section 6.1-6.2)
+ */
+export const FINAL_CHUNK_AAD = /* @__PURE__ */ encodeString("final");
