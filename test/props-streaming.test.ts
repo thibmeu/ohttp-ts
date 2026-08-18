@@ -781,6 +781,3 @@ describe("ChunkedOHTTPClient/ChunkedOHTTPServer round-trip", () => {
 		);
 	});
 });
-
-// ============================================================================
-// Explicit vectors: wire shapes a conforming encoder never emits.

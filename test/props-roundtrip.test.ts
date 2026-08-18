@@ -62,9 +62,7 @@ function concatBytes(...parts: readonly Uint8Array[]): Uint8Array {
 
 const suiteA = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 const suiteB = new CipherSuite(KEM_DHKEM_P256_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_256_GCM);
-// Same KDF/AEAD as suiteA but a different KEM: used to build a request whose
-// header carries a KEM id that mismatches a same-keyId key config while its
-// kdfId/aeadId still match, isolating the KEM comparison in decapsulateRequest.
+// A second suite (different KEM and AEAD) for the cross-suite `setups` entry.
 
 const keyConfigA = await deriveKeyConfig(suiteA, seedBytes(0x11), 1, [
 	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
@@ -525,6 +523,3 @@ describe("cross-context isolation", () => {
 		);
 	});
 });
-
-// ============================================================================
-// Explicit vectors
