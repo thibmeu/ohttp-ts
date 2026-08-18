@@ -8,14 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- Run the test suite inside workerd via `@cloudflare/vitest-pool-workers` (`npm run test:workers`, plus a CI job). The README claimed Cloudflare Workers support that nothing exercised. All tests pass there; the 3 ChaCha20-Poly1305 cases skip on the capability check the suite already had, since workerd's WebCrypto has no ChaCha20-Poly1305 and `responseCrypto` is the way around it.
-- `npm run check:treeshake`, in CI. It bundles the constant and error exports and fails if anything from `node_modules` survives, which is the only way to notice that a module-scope side effect has re-pinned a dependency.
-- `npm run typecheck` now runs in CI. It covered `src` and `bench` under the strictest config in the repo and ran nowhere, so nothing checked `bench/` at all.
+- Workers CI: the suite runs in workerd (`npm run test:workers`). The three ChaCha20-Poly1305 tests skip there; workerd's WebCrypto has none.
+- `check:treeshake`, in CI, so a stray module-scope `new` cannot quietly re-pin a dependency.
+- `typecheck`, in CI. It had never run there.
 
 ### Changed
 
-- Importing only constants no longer pulls in `bhttp-ts` and `hpke`. `constants.ts` held the media types next to `new BHttpEncoder()` / `new BHttpDecoder()`, and the labels sat in `encapsulation.ts` beside its hpke imports; a module-scope `new` is not provably side-effect-free, so a bundler kept the whole dependency. The singletons moved to `bhttp.ts` and the labels and size defaults to `constants.ts`. For a relay importing `Incremental` and `MediaType`, the bundle drops from 18.9 kB to 2.4 kB. No public export changed.
-- Dropped `engines: node >=24`. Nothing needed it: the only modern API in `src` is `Object.hasOwn` (Node 16.9), `hpke` declares no floor, and an npm-enforced Node assertion says little on a library whose headline runtimes are browsers and Workers.
+- Constant-only imports no longer pull in `bhttp-ts` and `hpke`. A relay importing `Incremental` and `MediaType` drops from 18.9 kB to 2.4 kB. No export changed.
+- Dropped `engines: node >=24`. Nothing needed it.
 
 ## [0.4.0] - 2026-08-18
 
