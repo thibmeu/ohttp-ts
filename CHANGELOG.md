@@ -6,7 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-# [0.3.4] - 2026-06-08
+## [0.4.0] - 2026-08-18
+
+### Added
+
+- `maxFrameSize` option on the chunked client and server, with `DEFAULT_MAX_FRAME_SIZE`. The decrypt path previously buffered whatever a peer declared — a non-final frame length is read from the wire before any authentication runs, and the final chunk carries no length at all — so an unauthenticated peer could pin ~2 GiB, or stream indefinitely after the 0-length marker. Both are now capped, rejecting over-limit frames with `ChunkLimitExceeded`. The default derives from `maxChunkSize` plus the 16-byte AEAD tag, so a peer pair is never configured to reject frames it is willing to send.
+
+### Changed
+
+- The four buffer-path chunked methods (`ChunkedOHTTPClient.encapsulate` / `decapsulateResponse`, `ChunkedOHTTPServer.decapsulate` / `encapsulateResponse`) now run through the same streaming transforms as the Request/Response API, so per-chunk AEAD calls overlap instead of serializing one per `await`. Wire format is unchanged.
+- Bumped `bhttp-ts` 0.4.5 → 0.5.0 and `quicvarint` 0.1.7 → 0.2.0. Holding `quicvarint` at 0.1.7 installed two copies, and the 0.1.7 build's `read()` returns wrapped, sometimes negative, values for 8-byte varints above `MAX`.
+- Bumped `hpke` 1.1.2 → 1.1.4
+- Migrated to TypeScript 7 and bumped dev dependencies
+- `npm run check:package` runs `publint` and `attw --pack` against the packed tarball, checking the exports map and that the `.d.mts`/`.d.cts` pair resolves for both CJS and ESM consumers
+
+## [0.3.5] - 2026-06-11
+
+### Changed
+
+- Chunked streaming decryption keeps a small window of AEAD opens in flight rather than one per `await`, overlapping the per-call WebCrypto latency that otherwise serializes the stream. Output order is preserved, and rejections are captured at issue time so an abandoned window never surfaces an unhandled rejection.
+- Bumped `hpke` 1.1.1 → 1.1.2 and `bhttp-ts` 0.4.4 → 0.4.5 for performance
+- Consolidated the benchmark suite into one set (deterministic `overlap`/`alloc` benches, vitest benches, and a `trace` export), with shared fixtures and a `bench/README.md`
+
+## [0.3.4] - 2026-06-08
 
 ### Changed
 
