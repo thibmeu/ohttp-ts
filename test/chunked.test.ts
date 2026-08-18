@@ -9,6 +9,7 @@ import {
 	KDF_HKDF_SHA256,
 	KEM_DHKEM_X25519_HKDF_SHA256,
 } from "hpke";
+import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
 import { computeChunkNonce, frameChunk, parseFramedChunk } from "../src/encapsulation.js";
@@ -1151,3 +1152,43 @@ describe("received frame size limits (DoS regression)", () => {
 async function collectHeader(encapsulatedRequest: Uint8Array): Promise<Uint8Array> {
 	return encapsulatedRequest.subarray(0, 7 + 32);
 }
+
+describe("non-minimal varint framing", () => {
+	// RFC 9000 permits a value to be encoded in any of the four varint widths, so
+	// the same frame length has up to four wire encodings and all decode alike.
+	it("accepts a non-minimal 2-byte final-chunk marker", () => {
+		const frame = concat(new Uint8Array([0x40, 0x00]), new Uint8Array([1, 2, 3]));
+		const parsed = parseFramedChunk(frame);
+		expect(parsed?.isFinal).toBe(true);
+		expect(parsed?.ciphertext).toEqual(new Uint8Array([1, 2, 3]));
+		expect(parsed?.bytesConsumed).toBe(frame.length);
+	});
+
+	it("accepts a non-minimal 4-byte final-chunk marker", () => {
+		const parsed = parseFramedChunk(new Uint8Array([0x80, 0x00, 0x00, 0x00]));
+		expect(parsed?.isFinal).toBe(true);
+		expect(parsed?.ciphertext).toEqual(new Uint8Array(0));
+		expect(parsed?.bytesConsumed).toBe(4);
+	});
+
+	it("accepts a non-minimal 8-byte final-chunk marker", () => {
+		const parsed = parseFramedChunk(new Uint8Array([0xc0, 0, 0, 0, 0, 0, 0, 0]));
+		expect(parsed?.isFinal).toBe(true);
+		expect(parsed?.ciphertext).toEqual(new Uint8Array(0));
+		expect(parsed?.bytesConsumed).toBe(8);
+	});
+
+	it("accepts a non-minimal encoding of a small non-final length", () => {
+		const payload = new Uint8Array([9, 8, 7, 6, 5]);
+		const frame = concat(encodeVarint(5, 2), payload);
+		const parsed = parseFramedChunk(frame);
+		expect(parsed?.isFinal).toBe(false);
+		expect(parsed?.ciphertext).toEqual(payload);
+		expect(parsed?.bytesConsumed).toBe(7);
+	});
+
+	it("rejects an 8-byte varint declaring a value above quicvarint's MAX", () => {
+		const frame = new Uint8Array([0xc0, 0, 0, 0, 0x80, 0, 0, 0]);
+		expect(() => parseFramedChunk(frame)).toThrow(/INVALID_MESSAGE/);
+	});
+});

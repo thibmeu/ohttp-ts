@@ -7,11 +7,13 @@ import {
 	generateKeyConfig,
 	KdfId,
 	KemId,
+	type KeyConfig,
 	parseKeyConfig,
 	parseKeyConfigs,
 	serializeKeyConfig,
 	serializeKeyConfigs,
 } from "../src/keyConfig.js";
+import { concat } from "../src/utils.js";
 import { fromHex, toHex } from "./test-utils.js";
 import rfc9458Vectors from "./vectors/rfc9458.json";
 
@@ -227,5 +229,42 @@ describe("RFC 9458 Appendix A key config", () => {
 		const reserialized = serializeKeyConfig(config);
 
 		expect(toHex(reserialized)).toBe(vector.keyConfig);
+	});
+});
+
+describe("adversarial key config parsing", () => {
+	const baseConfig: KeyConfig = {
+		keyId: 1,
+		kemId: KemId.X25519_HKDF_SHA256,
+		publicKey: new Uint8Array(32).fill(7),
+		symmetricAlgorithms: [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }],
+	};
+	// keyId(1) + kemId(2) + Npk
+	const symLenOffset = 1 + 2 + 32;
+
+	it("rejects a declared symAlgosLength larger than the remaining bytes", () => {
+		const bytes = serializeKeyConfig(baseConfig);
+		const view = new DataView(bytes.buffer);
+		view.setUint16(symLenOffset, view.getUint16(symLenOffset) + 4);
+		expect(() => parseKeyConfig(bytes)).toThrow(/INVALID_KEY_CONFIG/);
+	});
+
+	it("rejects a kemId swapped to one whose public key length does not match", () => {
+		const bytes = serializeKeyConfig(baseConfig);
+		new DataView(bytes.buffer).setUint16(1, KemId.P256_HKDF_SHA256);
+		expect(() => parseKeyConfig(bytes)).toThrow(/INVALID_KEY_CONFIG/);
+	});
+
+	it.each([-1, 1])("rejects an ohttp-keys length prefix off by %i", (delta) => {
+		const inner = serializeKeyConfig(baseConfig);
+		const blob = new Uint8Array(2 + inner.length);
+		new DataView(blob.buffer).setUint16(0, inner.length + delta);
+		blob.set(inner, 2);
+		expect(() => parseKeyConfigs(blob)).toThrow(/INVALID_KEY_CONFIG/);
+	});
+
+	it("rejects a config with a single trailing byte", () => {
+		const bytes = concat(serializeKeyConfig(baseConfig), new Uint8Array([0x00]));
+		expect(() => parseKeyConfig(bytes)).toThrow(/INVALID_KEY_CONFIG/);
 	});
 });

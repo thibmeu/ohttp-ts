@@ -74,3 +74,9 @@ export function splitAt(data: Uint8Array, points: readonly number[]): Uint8Array
 	pieces.push(data.subarray(prev));
 	return pieces;
 }
+
+/**
+ * Run count for properties that perform HPKE or AEAD operations. Each run costs
+ * a key schedule or a seal/open, so these run far fewer times than the default.
+ */
+export const CRYPTO_RUNS = 20;
