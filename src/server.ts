@@ -1,6 +1,7 @@
 import type { AEAD as AeadImpl, RecipientContext } from "hpke";
 import { bhttp, MediaType } from "./constants.js";
 import {
+	AEAD_TAG_SIZE,
 	buildRequestInfo,
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
@@ -57,9 +58,14 @@ export interface ChunkedOHTTPServerOptions {
 	readonly maxChunkSize?: number;
 	/**
 	 * Maximum ciphertext frame in bytes this side ACCEPTS, including the final
-	 * chunk (default: 1048576). A peer that declares a larger frame, or that
-	 * opens a final chunk and keeps streaming, is rejected with
-	 * {@link OHTTPErrorCode.ChunkLimitExceeded} instead of being buffered.
+	 * chunk (default: the larger of 1048576 and what this side sends). A peer
+	 * that declares a larger frame, or that opens a final chunk and keeps
+	 * streaming, is rejected with {@link OHTTPErrorCode.ChunkLimitExceeded}
+	 * instead of being buffered.
+	 *
+	 * A frame is ciphertext, so it is {@link AEAD_TAG_SIZE} bytes longer than
+	 * the plaintext chunk it carries: a peer sending `maxChunkSize` chunks needs
+	 * `maxChunkSize + AEAD_TAG_SIZE` here, which is what the default allows for.
 	 */
 	readonly maxFrameSize?: number;
 }
@@ -285,7 +291,9 @@ export class ChunkedOHTTPServer {
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
 		this.maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
-		this.maxFrameSize = options.maxFrameSize ?? DEFAULT_MAX_FRAME_SIZE;
+		// Never refuse to receive what this side is willing to send.
+		this.maxFrameSize =
+			options.maxFrameSize ?? Math.max(DEFAULT_MAX_FRAME_SIZE, this.maxChunkSize + AEAD_TAG_SIZE);
 	}
 
 	/**

@@ -455,8 +455,16 @@ export const DEFAULT_MAX_CHUNK_SIZE = 16384;
  * Distinct from {@link DEFAULT_MAX_CHUNK_SIZE}, which bounds what this side
  * *sends*: a peer may legitimately choose a larger chunk size, so the receive
  * limit is set generously above it rather than equal to it.
+ *
+ * A frame is a chunk's *ciphertext*, so it runs {@link AEAD_TAG_SIZE} bytes
+ * longer than the plaintext chunk it carries.
  */
 export const DEFAULT_MAX_FRAME_SIZE = 1 << 20;
+
+/**
+ * AEAD tag length in bytes, 16 for every AEAD OHTTP registers (draft-08 Section 6).
+ */
+export const AEAD_TAG_SIZE = 16;
 
 /**
  * AAD for final chunk (draft-08 Section 6.1-6.2)
@@ -511,9 +519,13 @@ export function parseFramedChunk(
 	}
 
 	if (length === 0) {
-		// Final chunk - extends to end of stream
+		// Final chunk - extends to end of stream, so only the cap bounds it
+		const ciphertext = data.slice(varintLength);
+		if (ciphertext.length > maxFrameSize) {
+			throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+		}
 		return {
-			ciphertext: data.slice(varintLength),
+			ciphertext,
 			isFinal: true,
 			bytesConsumed: data.length,
 		};
