@@ -27,6 +27,7 @@
 		"examples": "tsx examples/index.ts",
 		"test": "vitest run",
 		"test:browser": "vitest run --config vitest.browser.config.ts",
+		"test:workers": "vitest run --config vitest.workers.config.ts",
 		"test:watch": "vitest",
 		"bench": "vitest bench",
 		"bench:browser": "vitest bench --config vitest.browser.config.ts",
@@ -67,6 +68,7 @@
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",
 		"@biomejs/biome": "2.5.8",
+		"@cloudflare/vitest-pool-workers": "^0.22.0",
 		"@hpke/chacha20poly1305": "1.8.0",
 		"@panva/hpke-noble": "1.1.4",
 		"@playwright/test": "1.62.1",
@@ -82,9 +84,6 @@
 		"typescript": "7.0.2",
 		"vite": "8.2.1",
 		"vitest": "4.1.10"
-	},
-	"engines": {
-		"node": ">=24"
 	},
 	"overrides": {
 		"tsdown": {
