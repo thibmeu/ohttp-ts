@@ -171,6 +171,7 @@ export const Incremental = {
 // ============================================================================
 
 export {
+	AEAD_TAG_SIZE,
 	type ClientEncapsulationContext,
 	type EncapsulatedRequestHeader,
 	frameChunk,

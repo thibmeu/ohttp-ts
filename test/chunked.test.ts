@@ -12,7 +12,13 @@ import {
 import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
-import { computeChunkNonce, frameChunk, parseFramedChunk } from "../src/encapsulation.js";
+import {
+	AEAD_TAG_SIZE,
+	computeChunkNonce,
+	DEFAULT_MAX_FRAME_SIZE,
+	frameChunk,
+	parseFramedChunk,
+} from "../src/encapsulation.js";
 import { OHTTPError } from "../src/errors.js";
 import { AeadId, generateKeyConfig, KdfId } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
@@ -1145,6 +1151,32 @@ describe("received frame size limits (DoS regression)", () => {
 		const hostile = concat(header, new Uint8Array([0x00]), flood);
 
 		await expect(server.decapsulate(hostile)).rejects.toThrow(/CHUNK_LIMIT_EXCEEDED/);
+	});
+
+	it("parseFramedChunk bounds the final chunk too", () => {
+		const oversized = concat(new Uint8Array([0x00]), new Uint8Array(4097));
+		expect(() => parseFramedChunk(oversized, 4096)).toThrow(/CHUNK_LIMIT_EXCEEDED/);
+		expect(
+			parseFramedChunk(concat(new Uint8Array([0x00]), new Uint8Array(4096)), 4096)?.isFinal,
+		).toBe(true);
+	});
+
+	it("a chunk size above the default frame cap still round-trips when both sides set it", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		// maxChunkSize alone must lift the receive cap with it, tag included.
+		const maxChunkSize = 2 * 1024 * 1024;
+		const client = new ChunkedOHTTPClient(suite, keyConfig, { maxChunkSize });
+		const server = new ChunkedOHTTPServer([keyConfig], { maxChunkSize });
+		expect(server.maxFrameSize).toBeGreaterThanOrEqual(maxChunkSize + AEAD_TAG_SIZE);
+
+		// One chunk, just past the default 1 MiB frame cap.
+		const payload = new Uint8Array(DEFAULT_MAX_FRAME_SIZE + 100).fill(0x5a);
+		const { encapsulatedRequest } = await client.encapsulate(payload);
+		const { request } = await server.decapsulate(encapsulatedRequest);
+		expect(request).toEqual(payload);
 	});
 });
 
