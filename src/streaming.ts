@@ -14,7 +14,12 @@ import {
 	BHttpResponseStreamEncoder,
 	BHttpStreamDecoder,
 } from "./constants.js";
-import { FINAL_CHUNK_AAD, openResponseChunk, sealResponseChunk } from "./encapsulation.js";
+import {
+	DEFAULT_MAX_FRAME_SIZE,
+	FINAL_CHUNK_AAD,
+	openResponseChunk,
+	sealResponseChunk,
+} from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 import { concat } from "./utils.js";
 
@@ -228,6 +233,7 @@ export function createRequestEncryptTransform(
  */
 function createFramedDecryptTransform(
 	openFrame: (ciphertext: Uint8Array, isFinal: boolean) => Promise<Uint8Array>,
+	maxFrameSize: number,
 ): TransformStream<Uint8Array, Uint8Array> {
 	const buffer = new StreamBuffer();
 	let inFinal = false;
@@ -254,35 +260,49 @@ function createFramedDecryptTransform(
 	return new TransformStream<Uint8Array, Uint8Array>({
 		async transform(chunk, controller) {
 			buffer.append(chunk);
-			if (inFinal) return; // accumulate the final ciphertext until flush
 
-			for (;;) {
-				if (buffer.length < 1) break;
-				const vlen = varintLength(buffer.firstByte());
-				if (buffer.length < vlen) break; // varint itself incomplete
+			if (!inFinal) {
+				for (;;) {
+					if (buffer.length < 1) break;
+					const vlen = varintLength(buffer.firstByte());
+					if (buffer.length < vlen) break; // varint itself incomplete
 
-				let length: number;
-				try {
-					length = decodeVarint(buffer.peek(vlen)).value;
-				} catch {
-					controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
-					return;
+					let length: number;
+					try {
+						length = decodeVarint(buffer.peek(vlen)).value;
+					} catch {
+						controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
+						return;
+					}
+
+					if (length === 0) {
+						buffer.skip(vlen); // final marker; remaining bytes are the final chunk
+						inFinal = true;
+						break;
+					}
+
+					// `length` is the peer's claim: reject before buffering that much.
+					if (length > maxFrameSize) {
+						controller.error(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
+						return;
+					}
+
+					const frameLen = vlen + length;
+					if (buffer.length < frameLen) break; // frame incomplete, need more data
+
+					// materialize exactly one frame (zero-copy when it sits in one read),
+					// start its open immediately, and emit only once the window is full
+					const frame = buffer.read(frameLen);
+					inflight.push(settle(openFrame(frame.subarray(vlen), false)));
+					if (inflight.length >= AEAD_PIPELINE_DEPTH && !(await emitOldest(controller))) return;
 				}
+			}
 
-				if (length === 0) {
-					buffer.skip(vlen); // final marker; remaining bytes are the final chunk
-					inFinal = true;
-					break;
-				}
-
-				const frameLen = vlen + length;
-				if (buffer.length < frameLen) break; // frame incomplete, need more data
-
-				// materialize exactly one frame (zero-copy when it sits in one read),
-				// start its open immediately, and emit only once the window is full
-				const frame = buffer.read(frameLen);
-				inflight.push(settle(openFrame(frame.subarray(vlen), false)));
-				if (inflight.length >= AEAD_PIPELINE_DEPTH && !(await emitOldest(controller))) return;
+			// The final chunk is delimited by end-of-stream, so it has no declared
+			// length to bound it. Checking here covers both the marker arriving in
+			// the same read as its payload and a payload spread over many reads.
+			if (inFinal && buffer.length > maxFrameSize) {
+				controller.error(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
 			}
 		},
 
@@ -316,9 +336,12 @@ function createFramedDecryptTransform(
  */
 export function createRequestDecryptTransform(
 	recipientContext: RecipientContext,
+	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
-	return createFramedDecryptTransform((ciphertext, isFinal) =>
-		recipientContext.Open(ciphertext, isFinal ? FINAL_CHUNK_AAD : undefined),
+	return createFramedDecryptTransform(
+		(ciphertext, isFinal) =>
+			recipientContext.Open(ciphertext, isFinal ? FINAL_CHUNK_AAD : undefined),
+		maxFrameSize,
 	);
 }
 
@@ -408,6 +431,7 @@ export function createResponseDecryptTransform(
 	aead: AeadImpl,
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
+	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	let counter = 0;
 	// The counter is claimed synchronously at call time: opens are pipelined, so
@@ -417,7 +441,7 @@ export function createResponseDecryptTransform(
 			return Promise.reject(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
 		}
 		return openResponseChunk(aead, aeadKey, baseNonce, counter++, ciphertext, isFinal);
-	});
+	}, maxFrameSize);
 }
 
 /**

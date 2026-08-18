@@ -5,6 +5,7 @@ import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
 	DEFAULT_MAX_CHUNK_SIZE,
+	DEFAULT_MAX_FRAME_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	decapsulateRequest,
@@ -52,8 +53,15 @@ export interface ChunkedOHTTPServerOptions {
 	readonly responseLabel?: string;
 	/** Crypto factory overrides for response encryption (default: resolved from the suite) */
 	readonly responseCrypto?: ResponseCrypto;
-	/** Maximum chunk size in bytes (default: 16384) */
+	/** Maximum chunk size in bytes this side SENDS (default: 16384) */
 	readonly maxChunkSize?: number;
+	/**
+	 * Maximum ciphertext frame in bytes this side ACCEPTS, including the final
+	 * chunk (default: 1048576). A peer that declares a larger frame, or that
+	 * opens a final chunk and keeps streaming, is rejected with
+	 * {@link OHTTPErrorCode.ChunkLimitExceeded} instead of being buffered.
+	 */
+	readonly maxFrameSize?: number;
 }
 
 /**
@@ -260,6 +268,7 @@ export class ChunkedOHTTPServer {
 	private readonly responseLabel: string;
 	private readonly responseCrypto: ResponseCrypto | undefined;
 	readonly maxChunkSize: number;
+	readonly maxFrameSize: number;
 
 	/**
 	 * Create a chunked OHTTP server
@@ -276,6 +285,7 @@ export class ChunkedOHTTPServer {
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
 		this.maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
+		this.maxFrameSize = options.maxFrameSize ?? DEFAULT_MAX_FRAME_SIZE;
 	}
 
 	/**
@@ -423,7 +433,7 @@ export class ChunkedOHTTPServer {
 		// in a concurrent window).
 		const request = await collectStream(
 			streamOfBytes(encapsulatedRequest.subarray(headerOffset)).pipeThrough(
-				createRequestDecryptTransform(ctx._recipientContext),
+				createRequestDecryptTransform(ctx._recipientContext, this.maxFrameSize),
 			),
 		);
 
@@ -515,7 +525,10 @@ export class ChunkedOHTTPServer {
 		const requestCtx = await this.createRequestContext(headerBytes);
 
 		// Create decrypt transform
-		const decryptTransform = createRequestDecryptTransform(requestCtx._recipientContext);
+		const decryptTransform = createRequestDecryptTransform(
+			requestCtx._recipientContext,
+			this.maxFrameSize,
+		);
 
 		// Create a stream from remainder + rest of request body
 		const ciphertextStream = new ReadableStream<Uint8Array>({

@@ -6,6 +6,7 @@ import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
 	DEFAULT_MAX_CHUNK_SIZE,
+	DEFAULT_MAX_FRAME_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	decapsulateResponse,
@@ -57,8 +58,15 @@ export interface ChunkedOHTTPClientOptions {
 	readonly responseLabel?: string;
 	/** Crypto factory overrides for response decryption (default: resolved from the suite) */
 	readonly responseCrypto?: ResponseCrypto;
-	/** Maximum chunk size in bytes (default: 16384) */
+	/** Maximum chunk size in bytes this side SENDS (default: 16384) */
 	readonly maxChunkSize?: number;
+	/**
+	 * Maximum ciphertext frame in bytes this side ACCEPTS, including the final
+	 * chunk (default: 1048576). A peer that declares a larger frame, or that
+	 * opens a final chunk and keeps streaming, is rejected with
+	 * {@link OHTTPErrorCode.ChunkLimitExceeded} instead of being buffered.
+	 */
+	readonly maxFrameSize?: number;
 }
 
 /**
@@ -328,6 +336,7 @@ export class ChunkedOHTTPClient {
 	private readonly responseLabel: string;
 	private readonly responseCrypto: ResponseCrypto | undefined;
 	readonly maxChunkSize: number;
+	readonly maxFrameSize: number;
 
 	/**
 	 * Create a chunked OHTTP client
@@ -343,6 +352,7 @@ export class ChunkedOHTTPClient {
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
 		this.maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
+		this.maxFrameSize = options.maxFrameSize ?? DEFAULT_MAX_FRAME_SIZE;
 
 		// Validate and extract cipher suite IDs
 		const rawKdfId = suite.KDF.id;
@@ -518,7 +528,7 @@ export class ChunkedOHTTPClient {
 		// (opens run in a concurrent window; counters are claimed synchronously).
 		return collectStream(
 			streamOfBytes(encapsulatedResponse.subarray(nonceLength)).pipeThrough(
-				createResponseDecryptTransform(ctx._aead, ctx._aeadKey, ctx._aeadNonce),
+				createResponseDecryptTransform(ctx._aead, ctx._aeadKey, ctx._aeadNonce, this.maxFrameSize),
 			),
 		);
 	}
@@ -544,6 +554,7 @@ export class ChunkedOHTTPClient {
 		const requestCtx = await this.createRequestContext();
 		const suite = this.suite;
 		const maxChunkSize = this.maxChunkSize;
+		const maxFrameSize = this.maxFrameSize;
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;
 
@@ -624,7 +635,12 @@ export class ChunkedOHTTPClient {
 				);
 
 				// Create decrypt transform
-				const decryptTransform = createResponseDecryptTransform(aead, aeadKey, aeadNonce);
+				const decryptTransform = createResponseDecryptTransform(
+					aead,
+					aeadKey,
+					aeadNonce,
+					maxFrameSize,
+				);
 
 				// Create a stream from remainder + rest of response
 				const ciphertextStream = new ReadableStream<Uint8Array>({
