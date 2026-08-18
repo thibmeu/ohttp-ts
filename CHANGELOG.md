@@ -6,7 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-# [0.3.4] - 2026-06-08
+## [0.4.0] - 2026-08-18
+
+### Added
+
+- `maxFrameSize` caps how large a received chunk frame can get before it is authenticated. Without it a peer could declare a ~2 GiB frame, or keep streaming past the final-chunk marker. Defaults to `maxChunkSize` plus the 16-byte AEAD tag, so a peer never rejects what this side would send.
+
+### Changed
+
+- The buffer chunked methods now run through the streaming transforms, so their AEAD calls overlap instead of one per `await`. Wire format is unchanged.
+- Bumped `bhttp-ts` to 0.5.0 and `quicvarint` to 0.2.0. Two copies of `quicvarint` were installed before, and the old one misreads 8-byte varints above `MAX`.
+- Bumped `hpke` to 1.1.4, moved to TypeScript 7, bumped dev dependencies
+- `npm run check:package` runs publint and attw against the packed tarball
+
+## [0.3.5] - 2026-06-11
+
+### Changed
+
+- Chunked decryption keeps a few AEAD opens in flight instead of one per `await`. Output order is preserved.
+- Bumped `hpke` to 1.1.2 and `bhttp-ts` to 0.4.5 for performance
+- Folded the benchmarks into one suite with shared fixtures and a `bench/README.md`
+
+## [0.3.4] - 2026-06-08
 
 ### Changed
 
