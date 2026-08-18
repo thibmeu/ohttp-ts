@@ -53,25 +53,34 @@ export const AeadId = {
 export type AeadId = (typeof AeadId)[keyof typeof AeadId];
 
 /**
+ * Wire sizes per KEM: `npk` is the serialized public key, `nenc` the
+ * encapsulated key (RFC 9180 Section 7.1, FIPS 203 for ML-KEM).
+ *
+ * `Record<KemId, ...>` makes adding a KEM to {@link KemId} without its sizes a
+ * compile error.
+ */
+const KEM_SIZES: Record<KemId, { readonly npk: number; readonly nenc: number }> = {
+	// Standard KEMs (RFC 9180)
+	[KemId.P256_HKDF_SHA256]: { npk: 65, nenc: 65 }, // uncompressed point
+	[KemId.P384_HKDF_SHA384]: { npk: 97, nenc: 97 },
+	[KemId.P521_HKDF_SHA512]: { npk: 133, nenc: 133 },
+	[KemId.X25519_HKDF_SHA256]: { npk: 32, nenc: 32 },
+	[KemId.X448_HKDF_SHA512]: { npk: 56, nenc: 56 },
+	// Post-quantum KEMs (FIPS 203)
+	[KemId.ML_KEM_512]: { npk: 800, nenc: 768 },
+	[KemId.ML_KEM_768]: { npk: 1184, nenc: 1088 },
+	[KemId.ML_KEM_1024]: { npk: 1568, nenc: 1568 },
+	// Hybrid KEMs (ML-KEM + ECDH)
+	[KemId.MLKEM768_P256]: { npk: 1184 + 65, nenc: 1088 + 65 },
+	[KemId.MLKEM1024_P384]: { npk: 1568 + 97, nenc: 1568 + 97 },
+	[KemId.MLKEM768_X25519]: { npk: 1184 + 32, nenc: 1088 + 32 },
+};
+
+/**
  * Type guard for valid KEM IDs
  */
 export function isValidKemId(id: number): id is KemId {
-	return (
-		// Standard KEMs
-		id === KemId.P256_HKDF_SHA256 ||
-		id === KemId.P384_HKDF_SHA384 ||
-		id === KemId.P521_HKDF_SHA512 ||
-		id === KemId.X25519_HKDF_SHA256 ||
-		id === KemId.X448_HKDF_SHA512 ||
-		// Post-quantum KEMs
-		id === KemId.ML_KEM_512 ||
-		id === KemId.ML_KEM_768 ||
-		id === KemId.ML_KEM_1024 ||
-		// Hybrid KEMs
-		id === KemId.MLKEM768_P256 ||
-		id === KemId.MLKEM1024_P384 ||
-		id === KemId.MLKEM768_X25519
-	);
+	return Object.hasOwn(KEM_SIZES, id);
 }
 
 /**
@@ -121,38 +130,30 @@ export interface KeyConfigWithPrivate extends KeyConfig {
 }
 
 /**
- * Get public key length for a KEM
+ * Get the serialized public key length (Npk) for a KEM
+ *
+ * @throws OHTTPError if kemId is not a supported KEM
  */
 export function getPublicKeyLength(kemId: KemId): number {
-	switch (kemId) {
-		// Standard KEMs
-		case KemId.X25519_HKDF_SHA256:
-			return 32;
-		case KemId.X448_HKDF_SHA512:
-			return 56;
-		case KemId.P256_HKDF_SHA256:
-			return 65; // Uncompressed point
-		case KemId.P384_HKDF_SHA384:
-			return 97;
-		case KemId.P521_HKDF_SHA512:
-			return 133;
-		// ML-KEM (FIPS 203)
-		case KemId.ML_KEM_512:
-			return 800;
-		case KemId.ML_KEM_768:
-			return 1184;
-		case KemId.ML_KEM_1024:
-			return 1568;
-		// Hybrid KEMs (ML-KEM + ECDH)
-		case KemId.MLKEM768_P256:
-			return 1184 + 65; // ML-KEM-768 + P-256 uncompressed
-		case KemId.MLKEM1024_P384:
-			return 1568 + 97; // ML-KEM-1024 + P-384 uncompressed
-		case KemId.MLKEM768_X25519:
-			return 1184 + 32; // ML-KEM-768 + X25519
-		default:
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+	const sizes = KEM_SIZES[kemId];
+	if (sizes === undefined) {
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
+	return sizes.npk;
+}
+
+/**
+ * Get the encapsulated key length (Nenc) for a KEM
+ *
+ * @param kemId - KEM identifier, validated here
+ * @throws OHTTPError if kemId is not a supported KEM
+ */
+export function getEncLength(kemId: number): number {
+	const sizes = KEM_SIZES[kemId as KemId];
+	if (sizes === undefined) {
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+	}
+	return sizes.nenc;
 }
 
 /**

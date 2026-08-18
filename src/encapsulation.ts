@@ -16,8 +16,16 @@ import {
 } from "hpke";
 import { decode as decodeVarint, encode as encodeVarint } from "quicvarint";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { AeadId, KdfId, KemId, type KeyConfig, type KeyConfigWithPrivate } from "./keyConfig.js";
+import {
+	AeadId,
+	getEncLength,
+	KdfId,
+	type KeyConfig,
+	type KeyConfigWithPrivate,
+} from "./keyConfig.js";
 import { concat } from "./utils.js";
+
+export { getEncLength };
 
 /** Shared TextEncoder instance */
 const textEncoder = new TextEncoder();
@@ -177,44 +185,6 @@ export function buildRequestHeader(
 	const view = new DataView(result.buffer);
 	writeHeader(view, 0, keyId, kemId, kdfId, aeadId);
 	return result;
-}
-
-/**
- * Get the encapsulated secret length for a KEM
- *
- * @param kemId - KEM identifier (validated internally)
- * @throws OHTTPError if kemId is not a supported KEM
- */
-export function getEncLength(kemId: number): number {
-	switch (kemId) {
-		// Standard KEMs
-		case KemId.X25519_HKDF_SHA256:
-			return 32;
-		case KemId.X448_HKDF_SHA512:
-			return 56;
-		case KemId.P256_HKDF_SHA256:
-			return 65;
-		case KemId.P384_HKDF_SHA384:
-			return 97;
-		case KemId.P521_HKDF_SHA512:
-			return 133;
-		// ML-KEM (ciphertext sizes from FIPS 203)
-		case KemId.ML_KEM_512:
-			return 768;
-		case KemId.ML_KEM_768:
-			return 1088;
-		case KemId.ML_KEM_1024:
-			return 1568;
-		// Hybrid KEMs
-		case KemId.MLKEM768_P256:
-			return 1088 + 65; // ML-KEM-768 ct + P-256 point
-		case KemId.MLKEM1024_P384:
-			return 1568 + 97; // ML-KEM-1024 ct + P-384 point
-		case KemId.MLKEM768_X25519:
-			return 1088 + 32; // ML-KEM-768 ct + X25519
-		default:
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-	}
 }
 
 /**
