@@ -9,12 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - Workers CI: the suite runs in workerd (`npm run test:workers`). The three ChaCha20-Poly1305 tests skip there; workerd's WebCrypto has none.
-- `check:treeshake`, in CI. It bundles the constant, framing, and key config exports and fails if an unexpected dependency survives.
+- `check:treeshake`, in CI. It bundles the constant, framing, and key config exports out of `dist/index.mjs` and fails if an unexpected dependency survives.
 - `typecheck`, in CI. It had never run there.
 
 ### Changed
 
-- Constant and framing imports no longer pull in `bhttp-ts` and `hpke`. A relay importing `Incremental` and `MediaType` drops from 18.9 kB to 2.4 kB, and `frameChunk` from 9.5 kB to 2.1 kB. No export changed.
+- Improved tree shaking to reduce downstream build size.
 - Dropped `engines: node >=24`. Nothing needed it.
 
 ## [0.4.0] - 2026-08-18

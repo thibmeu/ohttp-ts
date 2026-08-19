@@ -1,5 +1,5 @@
 import type { AEAD as AeadImpl, CipherSuite, SenderContext } from "hpke";
-import { bhttp } from "./bhttp.js";
+import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
 import { MediaType } from "./constants.js";
 import {
 	AEAD_TAG_SIZE,
@@ -282,7 +282,7 @@ export class OHTTPClient {
 		// Encode request to Binary HTTP
 		let binaryRequest: Uint8Array;
 		try {
-			binaryRequest = await bhttp.encoder.encodeRequest(request);
+			binaryRequest = await bhttpEncoder().encodeRequest(request);
 		} catch {
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
@@ -310,7 +310,7 @@ export class OHTTPClient {
 
 				// Decode Binary HTTP to Response
 				try {
-					return bhttp.decoder.decodeResponse(binaryResponse);
+					return bhttpDecoder().decodeResponse(binaryResponse);
 				} catch {
 					// Wrap bhttp errors as opaque DecryptionFailed to prevent info leak
 					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);

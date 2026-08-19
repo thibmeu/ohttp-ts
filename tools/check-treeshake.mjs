@@ -1,7 +1,14 @@
 // A module-scope `new` pins its module, and with it every package that module
 // imports, into anyone importing anything else from the same file. The diff
 // that causes it looks fine; the cost only shows up in a consumer's bundle.
+import { existsSync } from "node:fs";
 import { build } from "esbuild";
+
+const ENTRY = "./dist/index.mjs";
+if (!existsSync(ENTRY)) {
+	console.error(`${ENTRY} is missing. Run npm run build first.`);
+	process.exit(1);
+}
 
 const ENTRIES = [
 	// [what should stay light, the dependencies it may legitimately reach]
@@ -26,9 +33,9 @@ const ENTRIES = [
 for (const [imports, allowed] of ENTRIES) {
 	const { metafile } = await build({
 		stdin: {
-			contents: `import { ${imports} } from "./src/index.ts";\nconsole.log(${imports});`,
+			contents: `import { ${imports} } from "${ENTRY}";\nconsole.log(${imports});`,
 			resolveDir: ".",
-			loader: "ts",
+			loader: "js",
 		},
 		bundle: true,
 		format: "esm",
