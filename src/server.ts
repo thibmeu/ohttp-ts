@@ -356,12 +356,17 @@ export class ChunkedOHTTPServer {
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;
 
+		let requestFinished = false;
+
 		return {
 			keyConfig,
 			_recipientContext: recipientContext,
 			_enc: enc,
 
 			async openChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+				if (requestFinished) {
+					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+				}
 				try {
 					return await recipientContext.Open(ciphertext);
 				} catch {
@@ -370,8 +375,13 @@ export class ChunkedOHTTPServer {
 			},
 
 			async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+				if (requestFinished) {
+					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+				}
 				try {
-					return await recipientContext.Open(ciphertext, FINAL_CHUNK_AAD);
+					const pt = await recipientContext.Open(ciphertext, FINAL_CHUNK_AAD);
+					requestFinished = true;
+					return pt;
 				} catch {
 					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 				}
@@ -393,6 +403,7 @@ export class ChunkedOHTTPServer {
 				);
 
 				let counter = 0;
+				let responseFinished = false;
 				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
 				const maxChunks = 2 ** 32;
 
@@ -403,6 +414,9 @@ export class ChunkedOHTTPServer {
 					_aeadNonce: aeadNonce,
 
 					async sealChunk(chunk: Uint8Array): Promise<Uint8Array> {
+						if (responseFinished) {
+							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+						}
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
@@ -412,9 +426,13 @@ export class ChunkedOHTTPServer {
 					},
 
 					async sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array> {
+						if (responseFinished) {
+							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+						}
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
+						responseFinished = true;
 						return sealResponseChunk(aead, aeadKey, aeadNonce, counter, chunk, true);
 					},
 				};
