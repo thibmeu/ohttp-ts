@@ -1,6 +1,6 @@
 import type { AEAD as AeadImpl, RecipientContext } from "hpke";
 import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
-import { MediaType } from "./constants.js";
+import { kAead, kAeadKey, kAeadNonce, kEnc, kRecipientContext, MediaType } from "./constants.js";
 import {
 	AEAD_TAG_SIZE,
 	buildRequestInfo,
@@ -119,10 +119,10 @@ export interface ChunkedServerRequestContext {
 	openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
 	/** Create a response context for encrypting the response */
 	createResponseContext(): Promise<ChunkedServerResponseContext>;
-	/** @internal HPKE recipient context for streaming transforms */
-	readonly _recipientContext: RecipientContext;
-	/** @internal Encapsulated secret for response key derivation */
-	readonly _enc: Uint8Array;
+	/** HPKE recipient context for streaming transforms */
+	readonly [kRecipientContext]: RecipientContext;
+	/** Encapsulated secret for response key derivation */
+	readonly [kEnc]: Uint8Array;
 }
 
 /**
@@ -135,12 +135,12 @@ export interface ChunkedServerResponseContext {
 	sealChunk(chunk: Uint8Array): Promise<Uint8Array>;
 	/** Seal the final chunk */
 	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array>;
-	/** @internal Derived response AEAD (for the pipelined buffer path) */
-	readonly _aead: AeadImpl;
-	/** @internal Derived response AEAD key */
-	readonly _aeadKey: Uint8Array;
-	/** @internal Derived response AEAD base nonce */
-	readonly _aeadNonce: Uint8Array;
+	/** Derived response AEAD (for the pipelined buffer path) */
+	readonly [kAead]: AeadImpl;
+	/** Derived response AEAD key */
+	readonly [kAeadKey]: Uint8Array;
+	/** Derived response AEAD base nonce */
+	readonly [kAeadNonce]: Uint8Array;
 }
 
 /**
@@ -360,8 +360,8 @@ export class ChunkedOHTTPServer {
 
 		return {
 			keyConfig,
-			_recipientContext: recipientContext,
-			_enc: enc,
+			[kRecipientContext]: recipientContext,
+			[kEnc]: enc,
 
 			async openChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
 				if (requestFinished) {
@@ -409,9 +409,9 @@ export class ChunkedOHTTPServer {
 
 				return {
 					responseNonce,
-					_aead: aead,
-					_aeadKey: aeadKey,
-					_aeadNonce: aeadNonce,
+					[kAead]: aead,
+					[kAeadKey]: aeadKey,
+					[kAeadNonce]: aeadNonce,
 
 					async sealChunk(chunk: Uint8Array): Promise<Uint8Array> {
 						if (responseFinished) {
@@ -460,7 +460,7 @@ export class ChunkedOHTTPServer {
 		// in a concurrent window).
 		const request = await collectStream(
 			streamOfBytes(encapsulatedRequest.subarray(headerOffset)).pipeThrough(
-				createRequestDecryptTransform(ctx._recipientContext, this.maxFrameSize),
+				createRequestDecryptTransform(ctx[kRecipientContext], this.maxFrameSize),
 			),
 		);
 
@@ -487,9 +487,9 @@ export class ChunkedOHTTPServer {
 				.pipeThrough(createChunkerTransform(this.maxChunkSize))
 				.pipeThrough(
 					createResponseEncryptTransform(
-						responseContext._aead,
-						responseContext._aeadKey,
-						responseContext._aeadNonce,
+						responseContext[kAead],
+						responseContext[kAeadKey],
+						responseContext[kAeadNonce],
 					),
 				),
 		);
@@ -553,7 +553,7 @@ export class ChunkedOHTTPServer {
 
 		// Create decrypt transform
 		const decryptTransform = createRequestDecryptTransform(
-			requestCtx._recipientContext,
+			requestCtx[kRecipientContext],
 			this.maxFrameSize,
 		);
 
@@ -612,8 +612,8 @@ export class ChunkedOHTTPServer {
 				// Derive response keys
 				const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
 					suite,
-					requestCtx._recipientContext,
-					requestCtx._enc,
+					requestCtx[kRecipientContext],
+					requestCtx[kEnc],
 					responseNonce,
 					responseLabel,
 					responseCrypto,

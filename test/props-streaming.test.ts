@@ -12,6 +12,13 @@ import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
 import {
+	kAead,
+	kAeadKey,
+	kAeadNonce,
+	kRecipientContext,
+	kSenderContext,
+} from "../src/constants.js";
+import {
 	computeChunkNonce,
 	DEFAULT_MAX_FRAME_SIZE,
 	frameChunk,
@@ -80,9 +87,9 @@ const responseKeys = await (async () => {
 	const { serverCtx } = await freshRequestPair();
 	const responseCtx = await serverCtx.createResponseContext();
 	return {
-		aead: responseCtx._aead,
-		aeadKey: responseCtx._aeadKey,
-		aeadNonce: responseCtx._aeadNonce,
+		aead: responseCtx[kAead],
+		aeadKey: responseCtx[kAeadKey],
+		aeadNonce: responseCtx[kAeadNonce],
 	};
 })();
 
@@ -204,25 +211,25 @@ describe("chunk-boundary independence", () => {
 					const cipherBody = await collectStream(
 						streamOfBytes(plaintext)
 							.pipeThrough(createChunkerTransform(maxChunkSize))
-							.pipeThrough(createRequestEncryptTransform(clientCtx._senderContext)),
+							.pipeThrough(createRequestEncryptTransform(clientCtx[kSenderContext])),
 					);
 
 					// One giant buffer (a single read).
-					expect(await decryptRequestFrames(serverCtx._recipientContext, [cipherBody])).toEqual(
+					expect(await decryptRequestFrames(serverCtx[kRecipientContext], [cipherBody])).toEqual(
 						plaintext,
 					);
 
 					// Byte-at-a-time delivery.
 					const { serverCtx: serverCtx2 } = await freshRequestPair2(clientCtx);
 					expect(
-						await decryptRequestFrames(serverCtx2._recipientContext, byteAtATime(cipherBody)),
+						await decryptRequestFrames(serverCtx2[kRecipientContext], byteAtATime(cipherBody)),
 					).toEqual(plaintext);
 
 					// Arbitrary re-split boundaries drawn from the shared helper.
 					const points = fc.sample(splitPointsArb(cipherBody.length, 8), 1)[0] ?? [];
 					const { serverCtx: serverCtx3 } = await freshRequestPair2(clientCtx);
 					expect(
-						await decryptRequestFrames(serverCtx3._recipientContext, splitAt(cipherBody, points)),
+						await decryptRequestFrames(serverCtx3[kRecipientContext], splitAt(cipherBody, points)),
 					).toEqual(plaintext);
 				},
 			),
@@ -301,7 +308,7 @@ describe("truncation is rejected", () => {
 
 					const { serverCtx: freshServerCtx } = await freshRequestPair2(clientCtx);
 					const error = await expectOHTTPError(
-						decryptRequestFrames(freshServerCtx._recipientContext, [prefix]),
+						decryptRequestFrames(freshServerCtx[kRecipientContext], [prefix]),
 					);
 
 					// Below the final marker, the stream ends without ever seeing one:
@@ -323,7 +330,9 @@ describe("truncation is rejected", () => {
 		const body = frameChunk(ct1, false); // no final marker follows
 
 		const { serverCtx } = await freshRequestPair2(clientCtx);
-		const error = await expectOHTTPError(decryptRequestFrames(serverCtx._recipientContext, [body]));
+		const error = await expectOHTTPError(
+			decryptRequestFrames(serverCtx[kRecipientContext], [body]),
+		);
 		expect(error.code).toBe(OHTTPErrorCode.InvalidMessage);
 	});
 
@@ -335,7 +344,7 @@ describe("truncation is rejected", () => {
 
 		const { serverCtx } = await freshRequestPair2(clientCtx);
 		const error = await expectOHTTPError(
-			decryptRequestFrames(serverCtx._recipientContext, [midFrame]),
+			decryptRequestFrames(serverCtx[kRecipientContext], [midFrame]),
 		);
 		expect(error.code).toBe(OHTTPErrorCode.InvalidMessage);
 	});
@@ -602,7 +611,7 @@ describe("frame reordering, duplication, and dropping", () => {
 					const body = concat(...permuted, finalFrame);
 
 					const { serverCtx } = await freshRequestPair2(clientCtx);
-					await expectOHTTPError(decryptRequestFrames(serverCtx._recipientContext, [body]));
+					await expectOHTTPError(decryptRequestFrames(serverCtx[kRecipientContext], [body]));
 				},
 			),
 			{ numRuns: CRYPTO_RUNS },
@@ -632,7 +641,7 @@ describe("frame reordering, duplication, and dropping", () => {
 					const body = concat(...withDup, finalFrame);
 
 					const { serverCtx } = await freshRequestPair2(clientCtx);
-					await expectOHTTPError(decryptRequestFrames(serverCtx._recipientContext, [body]));
+					await expectOHTTPError(decryptRequestFrames(serverCtx[kRecipientContext], [body]));
 				},
 			),
 			{ numRuns: CRYPTO_RUNS },
@@ -658,7 +667,7 @@ describe("frame reordering, duplication, and dropping", () => {
 					const body = concat(...withoutOne, finalFrame);
 
 					const { serverCtx } = await freshRequestPair2(clientCtx);
-					await expectOHTTPError(decryptRequestFrames(serverCtx._recipientContext, [body]));
+					await expectOHTTPError(decryptRequestFrames(serverCtx[kRecipientContext], [body]));
 				},
 			),
 			{ numRuns: CRYPTO_RUNS },
