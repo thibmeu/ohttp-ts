@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Improved tree shaking to reduce downstream build size.
 - Dropped `engines: node >=24`. Nothing needed it.
+- The chunked contexts now key their HPKE and AEAD state on module-private symbols instead of `_`-prefixed properties, so the crypto state no longer appears on the published types.
 
 ## [0.4.0] - 2026-08-18
 

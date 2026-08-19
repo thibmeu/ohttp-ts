@@ -1,6 +1,6 @@
 import type { AEAD as AeadImpl, CipherSuite, SenderContext } from "hpke";
 import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
-import { MediaType } from "./constants.js";
+import { kAead, kAeadKey, kAeadNonce, kEnc, kSenderContext, MediaType } from "./constants.js";
 import {
 	AEAD_TAG_SIZE,
 	buildRequestHeader,
@@ -131,10 +131,10 @@ export interface ChunkedRequestContext {
 	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array>;
 	/** Create a response context after receiving the response nonce */
 	createResponseContext(responseNonce: Uint8Array): Promise<ChunkedResponseContext>;
-	/** @internal HPKE sender context for streaming transforms */
-	readonly _senderContext: SenderContext;
-	/** @internal Encapsulated secret for response key derivation */
-	readonly _enc: Uint8Array;
+	/** HPKE sender context for streaming transforms */
+	readonly [kSenderContext]: SenderContext;
+	/** Encapsulated secret for response key derivation */
+	readonly [kEnc]: Uint8Array;
 }
 
 /**
@@ -145,12 +145,12 @@ export interface ChunkedResponseContext {
 	openChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
 	/** Open the final chunk */
 	openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
-	/** @internal Derived response AEAD (for the pipelined buffer path) */
-	readonly _aead: AeadImpl;
-	/** @internal Derived response AEAD key */
-	readonly _aeadKey: Uint8Array;
-	/** @internal Derived response AEAD base nonce */
-	readonly _aeadNonce: Uint8Array;
+	/** Derived response AEAD (for the pipelined buffer path) */
+	readonly [kAead]: AeadImpl;
+	/** Derived response AEAD key */
+	readonly [kAeadKey]: Uint8Array;
+	/** Derived response AEAD base nonce */
+	readonly [kAeadNonce]: Uint8Array;
 }
 
 /**
@@ -428,8 +428,8 @@ export class ChunkedOHTTPClient {
 
 		return {
 			header,
-			_senderContext: senderContext,
-			_enc: enc,
+			[kSenderContext]: senderContext,
+			[kEnc]: enc,
 
 			async sealChunk(chunk: Uint8Array): Promise<Uint8Array> {
 				// Non-final: empty AAD
@@ -456,9 +456,9 @@ export class ChunkedOHTTPClient {
 				const maxChunks = 2 ** 32;
 
 				return {
-					_aead: aead,
-					_aeadKey: aeadKey,
-					_aeadNonce: aeadNonce,
+					[kAead]: aead,
+					[kAeadKey]: aeadKey,
+					[kAeadNonce]: aeadNonce,
 
 					async openChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
 						if (counter >= maxChunks) {
@@ -505,7 +505,7 @@ export class ChunkedOHTTPClient {
 		const sealed = await collectStream(
 			streamOfBytes(request)
 				.pipeThrough(createChunkerTransform(this.maxChunkSize))
-				.pipeThrough(createRequestEncryptTransform(ctx._senderContext)),
+				.pipeThrough(createRequestEncryptTransform(ctx[kSenderContext])),
 		);
 
 		return {
@@ -537,7 +537,12 @@ export class ChunkedOHTTPClient {
 		// (opens run in a concurrent window; counters are claimed synchronously).
 		return collectStream(
 			streamOfBytes(encapsulatedResponse.subarray(nonceLength)).pipeThrough(
-				createResponseDecryptTransform(ctx._aead, ctx._aeadKey, ctx._aeadNonce, this.maxFrameSize),
+				createResponseDecryptTransform(
+					ctx[kAead],
+					ctx[kAeadKey],
+					ctx[kAeadNonce],
+					this.maxFrameSize,
+				),
 			),
 		);
 	}
@@ -577,7 +582,7 @@ export class ChunkedOHTTPClient {
 		// Create the encryption pipeline:
 		// BHTTP bytes → chunker → OHTTP encrypt → framed ciphertext
 		const chunkerTransform = createChunkerTransform(maxChunkSize);
-		const encryptTransform = createRequestEncryptTransform(requestCtx._senderContext);
+		const encryptTransform = createRequestEncryptTransform(requestCtx[kSenderContext]);
 
 		// Pipe through transforms
 		const encryptedStream = bhttpStream.pipeThrough(chunkerTransform).pipeThrough(encryptTransform);
@@ -636,8 +641,8 @@ export class ChunkedOHTTPClient {
 				// Derive response keys
 				const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
 					suite,
-					requestCtx._senderContext,
-					requestCtx._enc,
+					requestCtx[kSenderContext],
+					requestCtx[kEnc],
 					responseNonce,
 					responseLabel,
 					responseCrypto,
