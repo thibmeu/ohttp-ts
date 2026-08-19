@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Improved tree shaking to reduce downstream build size.
 - Dropped `engines: node >=24`. Nothing needed it.
 
+### Fixed
+
+- The chunked seal and open contexts reject a chunk after the final one with `ChunkSequenceError` instead of producing a message the peer would reject.
+
 ## [0.4.0] - 2026-08-18
 
 ### Added

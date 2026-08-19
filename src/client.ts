@@ -426,17 +426,26 @@ export class ChunkedOHTTPClient {
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;
 
+		let requestFinished = false;
+
 		return {
 			header,
 			_senderContext: senderContext,
 			_enc: enc,
 
 			async sealChunk(chunk: Uint8Array): Promise<Uint8Array> {
+				if (requestFinished) {
+					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+				}
 				// Non-final: empty AAD
 				return senderContext.Seal(chunk);
 			},
 
 			async sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array> {
+				if (requestFinished) {
+					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+				}
+				requestFinished = true;
 				// Final: AAD = "final"
 				return senderContext.Seal(chunk, FINAL_CHUNK_AAD);
 			},
@@ -452,6 +461,7 @@ export class ChunkedOHTTPClient {
 				);
 
 				let counter = 0;
+				let responseFinished = false;
 				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
 				const maxChunks = 2 ** 32;
 
@@ -461,6 +471,9 @@ export class ChunkedOHTTPClient {
 					_aeadNonce: aeadNonce,
 
 					async openChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+						if (responseFinished) {
+							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+						}
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
@@ -477,10 +490,15 @@ export class ChunkedOHTTPClient {
 					},
 
 					async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+						if (responseFinished) {
+							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+						}
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						return openResponseChunk(aead, aeadKey, aeadNonce, counter, ciphertext, true);
+						const pt = await openResponseChunk(aead, aeadKey, aeadNonce, counter, ciphertext, true);
+						responseFinished = true;
+						return pt;
 					},
 				};
 			},

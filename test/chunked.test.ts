@@ -19,7 +19,7 @@ import {
 	frameChunk,
 	parseFramedChunk,
 } from "../src/encapsulation.js";
-import { OHTTPError } from "../src/errors.js";
+import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import { AeadId, generateKeyConfig, KdfId } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
 import { concat } from "../src/utils.js";
@@ -329,6 +329,86 @@ describe("chunked OHTTP streaming API", () => {
 		);
 
 		expect(decryptedResponse).toEqual(concat(respChunk1, respChunk2));
+	});
+});
+
+describe("chunk sequence guard", () => {
+	const data = new TextEncoder().encode("chunk");
+
+	/** Every context that tracks final-chunk state, each already past its final chunk. */
+	async function finishedContexts() {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		const client = new ChunkedOHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+
+		const clientReq = await client.createRequestContext();
+		const sealedReq = await clientReq.sealFinalChunk(data);
+		const serverReq = await server.createRequestContext(clientReq.header);
+		expect(await serverReq.openFinalChunk(sealedReq)).toEqual(data);
+
+		const serverResp = await serverReq.createResponseContext();
+		const sealedResp = await serverResp.sealFinalChunk(data);
+		const clientResp = await clientReq.createResponseContext(serverResp.responseNonce);
+		expect(await clientResp.openFinalChunk(sealedResp)).toEqual(data);
+
+		// A second request, left untouched, for the failed-open case
+		const spareReq = await client.createRequestContext();
+		const spareSealed = await spareReq.sealFinalChunk(data);
+		const spare = await server.createRequestContext(spareReq.header);
+
+		return {
+			spare,
+			spareSealed,
+			// [name, another final chunk, a further non-final chunk]
+			contexts: [
+				[
+					"client request seal",
+					() => clientReq.sealFinalChunk(data),
+					() => clientReq.sealChunk(data),
+				],
+				[
+					"server request open",
+					() => serverReq.openFinalChunk(sealedReq),
+					() => serverReq.openChunk(sealedReq),
+				],
+				[
+					"server response seal",
+					() => serverResp.sealFinalChunk(data),
+					() => serverResp.sealChunk(data),
+				],
+				[
+					"client response open",
+					() => clientResp.openFinalChunk(sealedResp),
+					() => clientResp.openChunk(sealedResp),
+				],
+			] as const,
+		};
+	}
+
+	it("rejects any chunk after the final chunk", async () => {
+		const { contexts } = await finishedContexts();
+
+		for (const [name, again, next] of contexts) {
+			await expect(again(), name).rejects.toThrow(OHTTPErrorCode.ChunkSequenceError);
+			await expect(next(), name).rejects.toThrow(OHTTPErrorCode.ChunkSequenceError);
+		}
+	});
+
+	it("stays open when the final chunk fails to decrypt", async () => {
+		const { spare, spareSealed } = await finishedContexts();
+		const tampered = Uint8Array.from(spareSealed);
+		tampered[0] ^= 0x01;
+
+		await expect(spare.openFinalChunk(tampered)).rejects.toThrow(OHTTPErrorCode.DecryptionFailed);
+		expect(await spare.openFinalChunk(spareSealed)).toEqual(data);
 	});
 });
 
