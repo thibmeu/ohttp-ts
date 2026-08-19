@@ -26,3 +26,6 @@ coverage/
 # Environment
 .env
 .env.local
+
+# Size report
+size.html
