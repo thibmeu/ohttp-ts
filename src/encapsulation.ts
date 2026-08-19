@@ -81,17 +81,31 @@ export interface ResponseCrypto {
 	readonly aead?: AEADFactory;
 }
 
-const KDF_FACTORIES: Record<number, KDFFactory> = {
-	[KdfId.HKDF_SHA256]: KDF_HKDF_SHA256,
-	[KdfId.HKDF_SHA384]: KDF_HKDF_SHA384,
-	[KdfId.HKDF_SHA512]: KDF_HKDF_SHA512,
-};
+function kdfFactory(id: number): KDFFactory | undefined {
+	switch (id) {
+		case KdfId.HKDF_SHA256:
+			return KDF_HKDF_SHA256;
+		case KdfId.HKDF_SHA384:
+			return KDF_HKDF_SHA384;
+		case KdfId.HKDF_SHA512:
+			return KDF_HKDF_SHA512;
+		default:
+			return undefined;
+	}
+}
 
-const AEAD_FACTORIES: Record<number, AEADFactory> = {
-	[AeadId.AES_128_GCM]: AEAD_AES_128_GCM,
-	[AeadId.AES_256_GCM]: AEAD_AES_256_GCM,
-	[AeadId.ChaCha20Poly1305]: AEAD_ChaCha20Poly1305,
-};
+function aeadFactory(id: number): AEADFactory | undefined {
+	switch (id) {
+		case AeadId.AES_128_GCM:
+			return AEAD_AES_128_GCM;
+		case AeadId.AES_256_GCM:
+			return AEAD_AES_256_GCM;
+		case AeadId.ChaCha20Poly1305:
+			return AEAD_ChaCha20Poly1305;
+		default:
+			return undefined;
+	}
+}
 
 /**
  * Resolve the KDF and AEAD implementations used for response encryption.
@@ -106,13 +120,13 @@ function resolveResponseCrypto(
 	suite: CipherSuite,
 	responseCrypto?: ResponseCrypto,
 ): { kdf: KdfImpl; aead: AeadImpl } {
-	const kdfFactory = responseCrypto?.kdf ?? KDF_FACTORIES[suite.KDF.id];
-	const aeadFactory = responseCrypto?.aead ?? AEAD_FACTORIES[suite.AEAD.id];
-	if (!kdfFactory || !aeadFactory) {
+	const kdfImpl = responseCrypto?.kdf ?? kdfFactory(suite.KDF.id);
+	const aeadImpl = responseCrypto?.aead ?? aeadFactory(suite.AEAD.id);
+	if (!kdfImpl || !aeadImpl) {
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
-	const kdf = kdfFactory();
-	const aead = aeadFactory();
+	const kdf = kdfImpl();
+	const aead = aeadImpl();
 	if (kdf.id !== suite.KDF.id || aead.id !== suite.AEAD.id) {
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}

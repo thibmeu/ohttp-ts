@@ -1,5 +1,5 @@
 import type { AEAD as AeadImpl, RecipientContext } from "hpke";
-import { bhttp } from "./bhttp.js";
+import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
 import { MediaType } from "./constants.js";
 import {
 	AEAD_TAG_SIZE,
@@ -232,7 +232,7 @@ export class OHTTPServer {
 		// Decode Binary HTTP to Request
 		let innerRequest: Request;
 		try {
-			innerRequest = bhttp.decoder.decodeRequest(binaryRequest);
+			innerRequest = bhttpDecoder().decodeRequest(binaryRequest);
 		} catch {
 			// Wrap bhttp errors as opaque DecryptionFailed to prevent info leak
 			throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
@@ -244,7 +244,7 @@ export class OHTTPServer {
 				// Encode response to Binary HTTP
 				let binaryResponse: Uint8Array;
 				try {
-					binaryResponse = await bhttp.encoder.encodeResponse(response);
+					binaryResponse = await bhttpEncoder().encodeResponse(response);
 				} catch {
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
