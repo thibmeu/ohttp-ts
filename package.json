@@ -1,6 +1,6 @@
 {
 	"name": "ohttp-ts",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"description": "Oblivious HTTP (RFC 9458) implementation with chunked extension support",
 	"type": "module",
 	"sideEffects": false,
@@ -64,9 +64,9 @@
 	},
 	"homepage": "https://github.com/thibmeu/ohttp-ts#readme",
 	"dependencies": {
-		"bhttp-ts": "0.5.0",
+		"bhttp-ts": "0.5.1",
 		"hpke": "1.1.4",
-		"quicvarint": "0.2.0"
+		"quicvarint": "0.2.1"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",

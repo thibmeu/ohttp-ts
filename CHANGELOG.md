@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-19
+
 ### Added
 
 - Workers CI: the suite runs in workerd (`npm run test:workers`). The three ChaCha20-Poly1305 tests skip there; workerd's WebCrypto has none.
@@ -14,7 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
-- Improved tree shaking to reduce downstream build size.
+- Updated bhttp-ts to 0.5.1 and quicvarint to 0.2.1. Packaging only, both ship their source once instead of inlining it into every sourcemap. No published JS changed.
+- Improved tree shaking to reduce downstream build size. A client or server export now bundles to 17.6 kB (5.3 kB gzipped), the constant exports reach no dependency at all. The published package drops from 104.8 to 85.2 kB packed, 522.6 to 404.9 kB unpacked.
 - Dropped `engines: node >=24`. Nothing needed it.
 - The chunked contexts now key their HPKE and AEAD state on module-private symbols instead of `_`-prefixed properties, so the crypto state no longer appears on the published types.
 
