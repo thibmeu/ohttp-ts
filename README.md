@@ -67,6 +67,28 @@ const innerResponse = await context.decapsulateResponse(relayResponse);
 // innerResponse is the original Response object
 ```
 
+### Gateway Key Configuration
+
+`KeyConfig.parse` reads a single serialized config, which is what the Quick Start
+passes it. A gateway's `application/ohttp-keys` resource is a *list*, and it may
+name algorithms this client does not implement - during a post-quantum
+migration, for instance. Use `parseMultiple` to read the list and `select` to
+pick a config the client's suite can actually use:
+
+```typescript
+const response = await fetch("https://gateway.example/.well-known/ohttp-gateway");
+const configs = KeyConfig.parseMultiple(new Uint8Array(await response.arrayBuffer()));
+
+// Configs naming algorithms this library lacks are skipped, so `configs` may be
+// empty. `select` throws UnsupportedCipherSuite when none match the suite -
+// re-fetch, try another suite, or fall back to a direct request.
+const client = new OHTTPClient(suite, KeyConfig.select(suite, configs));
+```
+
+Do not reach for `configs[0]`: it picks by the gateway's order, not by what the
+client implements, and hands you a config for the wrong KEM as readily as the
+right one.
+
 ### Protocol Flow
 
 ```
@@ -196,6 +218,11 @@ import { KEM_ML_KEM_768, KDF_HKDF_SHA256, AEAD_AES_128_GCM } from "@panva/hpke-n
 const suite = new CipherSuite(KEM_ML_KEM_768, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 // Use with KeyConfig.generate(), OHTTPClient, OHTTPServer as usual
 ```
+
+A gateway migrating to ML-KEM publishes both keys for a while, so read its list
+with `KeyConfig.parseMultiple` and pick with `KeyConfig.select` rather than
+assuming which one comes first. See [Gateway Key Configuration](#gateway-key-configuration)
+and `examples/mlkem.example.ts`.
 
 ## Response Encryption
 
