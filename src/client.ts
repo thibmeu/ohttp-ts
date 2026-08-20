@@ -24,6 +24,7 @@ import {
 	isValidKdfId,
 	type KdfId,
 	type KeyConfig,
+	supportsKeyConfig,
 } from "./keyConfig.js";
 import {
 	collectStream,
@@ -207,16 +208,11 @@ export class OHTTPClient {
 		const rawKdfId = suite.KDF.id;
 		const rawAeadId = suite.AEAD.id;
 
-		if (!isValidKdfId(rawKdfId) || !isValidAeadId(rawAeadId)) {
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-		}
-
-		// Find the first matching symmetric algorithm
-		const matchingAlgo = keyConfig.symmetricAlgorithms.find(
-			(a) => a.kdfId === rawKdfId && a.aeadId === rawAeadId,
-		);
-
-		if (matchingAlgo === undefined) {
+		if (
+			!isValidKdfId(rawKdfId) ||
+			!isValidAeadId(rawAeadId) ||
+			!supportsKeyConfig(suite, keyConfig)
+		) {
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 		}
 
@@ -364,16 +360,11 @@ export class ChunkedOHTTPClient {
 		const rawKdfId = suite.KDF.id;
 		const rawAeadId = suite.AEAD.id;
 
-		if (!isValidKdfId(rawKdfId) || !isValidAeadId(rawAeadId)) {
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-		}
-
-		// Find the first matching symmetric algorithm
-		const matchingAlgo = keyConfig.symmetricAlgorithms.find(
-			(a) => a.kdfId === rawKdfId && a.aeadId === rawAeadId,
-		);
-
-		if (matchingAlgo === undefined) {
+		if (
+			!isValidKdfId(rawKdfId) ||
+			!isValidAeadId(rawAeadId) ||
+			!supportsKeyConfig(suite, keyConfig)
+		) {
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 		}
 

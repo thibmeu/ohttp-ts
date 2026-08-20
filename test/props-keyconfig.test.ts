@@ -24,6 +24,7 @@ import {
 	KEM_MLKEM1024_P384,
 } from "hpke";
 import { describe, expect } from "vitest";
+import { ChunkedOHTTPClient, OHTTPClient } from "../src/client.js";
 import { isOHTTPError, OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
 	AeadId,
@@ -39,9 +40,11 @@ import {
 	parseKeyConfig,
 	parseKeyConfigs,
 	type SymmetricAlgorithm,
+	selectKeyConfig,
 	serializeKeyConfig,
 	serializeKeyConfigs,
 } from "../src/keyConfig.js";
+import { OHTTPServer } from "../src/server.js";
 import { bytesArb, bytesOfLengthArb } from "./props-helpers.js";
 import { toHex } from "./test-utils.js";
 
@@ -248,9 +251,9 @@ describe("canonical acceptance: parseKeyConfig", () => {
 	);
 
 	it.prop([mutatedConfigBytesArb])(
-		"parseKeyConfig either rejects or round-trips exactly",
+		"parseKeyConfig either rejects or round-trips exactly, minus unimplemented pairs",
 		(bytes) => {
-			assertCanonicalOrRejects(bytes, parseKeyConfig, serializeKeyConfig);
+			assertCanonicalOrRejects(bytes);
 		},
 	);
 });
@@ -321,9 +324,8 @@ describe("list tolerance", () => {
 		return out;
 	}
 
-	// A gateway that adds a KEM we do not implement must not take down the entry
-	// we can still use. Both Rust clients tested against ohttp-gateway do this;
-	// rejecting the whole list makes every client break on the gateway's upgrade.
+	// Forward compatibility: a gateway that adds a KEM we do not implement must
+	// not take down the entry we can still use.
 	it("skips a config naming an unimplemented KEM and keeps the rest", async () => {
 		const { good, other } = await pair();
 
@@ -335,13 +337,27 @@ describe("list tolerance", () => {
 		expect(serializeKeyConfig(survivor)).toEqual(good);
 	});
 
-	it("skips a config naming an unimplemented AEAD", async () => {
+	// RFC 9458 Section 3.1 has the client pick a mutually supported pair from the
+	// list, so an unimplemented pair costs its own slot, not the whole config.
+	it("drops an unimplemented pair but keeps the config's usable ones", async () => {
+		const priv = await generateKeyConfig(suite(), 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+		]);
+		const bytes = serializeKeyConfig(priv);
+		new DataView(bytes.buffer).setUint16(bytes.length - 2, 0xffff);
+
+		expect(parseKeyConfig(bytes).symmetricAlgorithms).toEqual([
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+	});
+
+	it("skips a config whose every pair is unimplemented", async () => {
 		const priv = await generateKeyConfig(suite(), 1, [
 			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
 		]);
 		const good = serializeKeyConfig(priv);
 		const other = new Uint8Array(good);
-		// Last four bytes are the sole (KDF, AEAD) pair; leave the KDF, break the AEAD.
 		new DataView(other.buffer).setUint16(other.length - 2, 0xffff);
 
 		expect(parseKeyConfigs(list(other, good))).toHaveLength(1);
@@ -358,17 +374,116 @@ describe("list tolerance", () => {
 		);
 	});
 
-	// Fail closed: callers reach for configs[0].
-	it("throws rather than returning an empty list when nothing is usable", async () => {
+	it("returns an empty list when nothing is usable, as it does for empty input", async () => {
 		const { other } = await pair();
 
-		expect(() => parseKeyConfigs(list(other, other))).toThrow(
+		expect(parseKeyConfigs(list(other, other))).toEqual([]);
+		expect(parseKeyConfigs(new Uint8Array(0))).toEqual([]);
+	});
+});
+
+describe("selectKeyConfig", () => {
+	const suite = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	// Spoofing `kemId` leaves a 32-byte X25519 public key where ML-KEM-768 wants
+	// 1184, which is the point: a length-compatible mismatch is the case that
+	// slips past HPKE deserialization and onto the wire.
+	async function config(keyId: number, algos: readonly SymmetricAlgorithm[], kemId?: KemId) {
+		const priv = await generateKeyConfig(suite(), keyId, algos);
+		return kemId === undefined ? priv : { ...priv, kemId };
+	}
+
+	it("skips a config the suite's KEM cannot use", async () => {
+		const mlKem = await config(
+			1,
+			[{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }],
+			0x0041,
+		);
+		const usable = await config(2, [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }]);
+
+		expect(selectKeyConfig(suite(), [mlKem, usable]).keyId).toBe(2);
+	});
+
+	it("skips a config with no mutually supported symmetric algorithm", async () => {
+		const chachaOnly = await config(1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+		]);
+		const usable = await config(2, [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }]);
+
+		expect(selectKeyConfig(suite(), [chachaOnly, usable]).keyId).toBe(2);
+	});
+
+	it("keeps the gateway's order among usable configs", async () => {
+		const first = await config(1, [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }]);
+		const second = await config(2, [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }]);
+
+		expect(selectKeyConfig(suite(), [first, second]).keyId).toBe(1);
+	});
+
+	it("throws UnsupportedCipherSuite when nothing matches", async () => {
+		const mlKem = await config(
+			1,
+			[{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }],
+			0x0041,
+		);
+
+		expect(() => selectKeyConfig(suite(), [mlKem])).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }),
+		);
+		expect(() => selectKeyConfig(suite(), [])).toThrow(
 			expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }),
 		);
 	});
 
-	it("still returns an empty list for empty input", () => {
-		expect(parseKeyConfigs(new Uint8Array(0))).toEqual([]);
+	// The pairing that matters: parse tolerates, select decides.
+	it("picks the survivor of a list whose first record names an unimplemented KEM", async () => {
+		const usable = await config(7, [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }]);
+		const good = serializeKeyConfig(usable);
+		const other = new Uint8Array(good);
+		new DataView(other.buffer).setUint16(1, 0xffff);
+		const blob = new Uint8Array(4 + other.length + good.length);
+		const view = new DataView(blob.buffer);
+		view.setUint16(0, other.length);
+		blob.set(other, 2);
+		view.setUint16(2 + other.length, good.length);
+		blob.set(good, 4 + other.length);
+
+		expect(selectKeyConfig(suite(), parseKeyConfigs(blob)).keyId).toBe(7);
+	});
+
+	// The contract is "fails here rather than at encapsulation", which only holds
+	// if what select returns is exactly what the client accepts.
+	it("returns a config the client accepts and can round-trip", async () => {
+		const usable = await config(3, [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }]);
+		const selected = selectKeyConfig(suite(), [usable]);
+
+		const client = new OHTTPClient(suite(), selected);
+		const server = new OHTTPServer([usable]);
+		const payload = new Uint8Array([0x00, 0x03, 0x47, 0x45, 0x54]);
+
+		const { encapsulatedRequest } = await client.encapsulate(payload);
+		const { request } = await server.decapsulate(encapsulatedRequest);
+
+		expect(request).toEqual(payload);
+	});
+
+	// Both clients used to check the KDF and AEAD but not the KEM, so a config
+	// select rejects would construct, then either fail deep inside HPKE or send a
+	// header naming a KEM it never used.
+	it.each([
+		["OHTTPClient", (c: KeyConfig) => new OHTTPClient(suite(), c)],
+		["ChunkedOHTTPClient", (c: KeyConfig) => new ChunkedOHTTPClient(suite(), c)],
+	])("%s rejects a config select would skip for its KEM", async (_name, construct) => {
+		const mlKem = await config(
+			1,
+			[{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }],
+			KemId.ML_KEM_768,
+		);
+
+		expect(() => construct(mlKem)).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }),
+		);
 	});
 });
 
@@ -398,60 +513,110 @@ function catchOHTTPError(fn: () => unknown): OHTTPError {
 }
 
 /**
- * Asserts `parse` either rejects `bytes`, or produces something `serialize`
- * maps back to exactly `bytes` - so no input is accepted into a value that
- * would re-encode differently.
+ * Asserts `parseKeyConfig` either rejects `bytes`, or produces something that
+ * re-encodes to exactly `bytes` minus the (KDF, AEAD) pairs it is allowed to
+ * drop - so no input is accepted into a value that would re-encode differently.
  */
-function assertCanonicalOrRejects<T>(
-	bytes: Uint8Array,
-	parse: (bytes: Uint8Array) => T,
-	serialize: (parsed: T) => Uint8Array,
-): void {
-	let parsed: T;
+function assertCanonicalOrRejects(bytes: Uint8Array): void {
+	let parsed: KeyConfig;
 	try {
-		parsed = parse(bytes);
+		parsed = parseKeyConfig(bytes);
 	} catch (err) {
-		assertRejection(err);
+		assertRejection(bytes, err);
 		return;
 	}
-	expect(serialize(parsed)).toEqual(bytes);
+	expect(toHex(serializeKeyConfig(parsed))).toBe(toHex(dropUnknownPairs(bytes, parsed)));
 }
 
-/** Either rejection code is allowed; which one appears is pinned in "list tolerance". */
-function assertRejection(err: unknown): void {
+/**
+ * Structural damage must never be skippable, so `UnsupportedCipherSuite` is
+ * reserved for a record that is intact apart from naming algorithms we lack.
+ */
+function assertRejection(bytes: Uint8Array, err: unknown): void {
 	expect(isOHTTPError(err)).toBe(true);
-	if (isOHTTPError(err)) {
-		expect([OHTTPErrorCode.InvalidKeyConfig, OHTTPErrorCode.UnsupportedCipherSuite]).toContain(
-			err.code,
-		);
+	if (!isOHTTPError(err)) return;
+	if (err.code !== OHTTPErrorCode.UnsupportedCipherSuite) {
+		expect(err.code).toBe(OHTTPErrorCode.InvalidKeyConfig);
+		return;
 	}
+	expect(onlyAlgorithmsUnsupported(bytes), `${toHex(bytes)} is not merely unimplemented`).toBe(
+		true,
+	);
 }
 
 /**
  * The list parser is deliberately lossy, so it cannot round-trip. What must
  * still hold is that it never invents or rewrites a config: each one it returns
- * re-encodes to exactly one of the input's records, in order.
+ * re-encodes to one of the input's records, minus droppable pairs, in order.
  */
 function assertSubsequenceOrRejects(bytes: Uint8Array): void {
 	let parsed: KeyConfig[];
 	try {
 		parsed = parseKeyConfigs(bytes);
 	} catch (err) {
-		assertRejection(err);
+		expect(isOHTTPError(err)).toBe(true);
+		if (isOHTTPError(err)) expect(err.code).toBe(OHTTPErrorCode.InvalidKeyConfig);
 		return;
 	}
 
-	const records = splitRecords(bytes).map(toHex);
+	const records = splitRecords(bytes);
 	let at = 0;
 	for (const config of parsed) {
 		const encoded = toHex(serializeKeyConfig(config));
-		const found = records.indexOf(encoded, at);
+		const found = records.findIndex(
+			(record, i) => i >= at && toHex(dropUnknownPairs(record, config)) === encoded,
+		);
 		expect(
 			found,
 			`config ${encoded} is not a record of the input at or after ${at}`,
 		).toBeGreaterThan(-1);
 		at = found + 1;
 	}
+}
+
+/** `record` re-encoded with its unimplemented (KDF, AEAD) pairs removed. */
+function dropUnknownPairs(record: Uint8Array, parsed: KeyConfig): Uint8Array {
+	const symLenOffset = 3 + parsed.publicKey.length;
+	if (symLenOffset + 2 > record.length) return record;
+
+	const view = new DataView(record.buffer, record.byteOffset, record.byteLength);
+	const end = Math.min(symLenOffset + 2 + view.getUint16(symLenOffset), record.length);
+	const kept: number[] = [];
+	for (let offset = symLenOffset + 2; offset + 4 <= end; offset += 4) {
+		const kdfId = view.getUint16(offset);
+		const aeadId = view.getUint16(offset + 2);
+		if (isValidKdfId(kdfId) && isValidAeadId(aeadId)) kept.push(kdfId, aeadId);
+	}
+
+	const out = new Uint8Array(symLenOffset + 2 + kept.length * 2);
+	out.set(record.subarray(0, symLenOffset + 2));
+	const outView = new DataView(out.buffer);
+	outView.setUint16(symLenOffset, kept.length * 2);
+	for (const [i, id] of kept.entries()) {
+		outView.setUint16(symLenOffset + 2 + i * 2, id);
+	}
+	return out;
+}
+
+/** True when `bytes` is a structurally intact record naming only algorithms we lack. */
+function onlyAlgorithmsUnsupported(bytes: Uint8Array): boolean {
+	if (bytes.length < 7) return false;
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+	const kemId = view.getUint16(1);
+	if (!isValidKemId(kemId)) return true;
+
+	const symLenOffset = 3 + getPublicKeyLength(kemId);
+	if (symLenOffset + 2 > bytes.length) return false;
+	const symLen = view.getUint16(symLenOffset);
+	if (symLen === 0 || symLen % 4 !== 0 || symLenOffset + 2 + symLen !== bytes.length) return false;
+
+	for (let offset = symLenOffset + 2; offset < bytes.length; offset += 4) {
+		if (isValidKdfId(view.getUint16(offset)) && isValidAeadId(view.getUint16(offset + 2))) {
+			return false;
+		}
+	}
+	return true;
 }
 
 /** Split an `application/ohttp-keys` blob into its length-prefixed records. */

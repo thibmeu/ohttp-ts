@@ -196,8 +196,10 @@ export function serializeKeyConfig(config: KeyConfig): Uint8Array {
  * Parse a KeyConfig from bytes (RFC 9458 Section 3.1)
  *
  * Rejects with {@link OHTTPErrorCode.InvalidKeyConfig} for structural damage
- * and {@link OHTTPErrorCode.UnsupportedCipherSuite} for an algorithm this
- * library does not implement. Only the latter is safe for a list to skip.
+ * and {@link OHTTPErrorCode.UnsupportedCipherSuite} for a KEM this library does
+ * not implement, or a config whose every symmetric algorithm is unimplemented.
+ * Unimplemented (KDF, AEAD) pairs alongside implemented ones are dropped, per
+ * RFC 9458 Section 3.1. Only the latter code is safe for a list to skip.
  */
 export function parseKeyConfig(data: Uint8Array): KeyConfig {
 	if (data.length < 7) {
@@ -247,17 +249,17 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 	while (offset < endOffset) {
 		const kdfIdRaw = view.getUint16(offset);
 		const aeadIdRaw = view.getUint16(offset + 2);
-		if (!isValidKdfId(kdfIdRaw) || !isValidAeadId(aeadIdRaw)) {
-			// Drops the whole config, as martinthomson/ohttp does. Keeping its known
-			// suites would cost the byte-exact round-trip property below.
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+		if (isValidKdfId(kdfIdRaw) && isValidAeadId(aeadIdRaw)) {
+			symmetricAlgorithms.push({ kdfId: kdfIdRaw, aeadId: aeadIdRaw });
 		}
-		symmetricAlgorithms.push({ kdfId: kdfIdRaw, aeadId: aeadIdRaw });
 		offset += 4;
 	}
 
-	if (symmetricAlgorithms.length === 0) {
+	if (symmetricAlgorithmsLength === 0) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+	if (symmetricAlgorithms.length === 0) {
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
 
 	// Validate no trailing data
@@ -304,6 +306,10 @@ export function serializeKeyConfigs(configs: readonly KeyConfig[]): Uint8Array {
 
 /**
  * Parse application/ohttp-keys format to KeyConfig array (RFC 9458 Section 3.2)
+ *
+ * Configs naming algorithms this library does not implement are skipped, so the
+ * result may be empty. Use {@link selectKeyConfig} to pick a usable one rather
+ * than reaching for `configs[0]`.
  */
 export function parseKeyConfigs(data: Uint8Array): KeyConfig[] {
 	const configs: KeyConfig[] = [];
@@ -337,12 +343,45 @@ export function parseKeyConfigs(data: Uint8Array): KeyConfig[] {
 		}
 	}
 
-	// Fail closed: callers reach for configs[0].
-	if (data.length > 0 && configs.length === 0) {
+	return configs;
+}
+
+/**
+ * Whether `suite` can encapsulate to `config`: same KEM, and a (KDF, AEAD) pair
+ * in common (RFC 9458 Section 4.1)
+ *
+ * The KEM half is easy to forget - a mismatch there produces a client that
+ * either fails deep inside HPKE key deserialization or, when the two KEMs
+ * happen to share a public key length, silently sends a header advertising a
+ * KEM it did not use.
+ */
+export function supportsKeyConfig(suite: CipherSuite, config: KeyConfig): boolean {
+	return (
+		config.kemId === suite.KEM.id &&
+		config.symmetricAlgorithms.some(
+			(algo) => algo.kdfId === suite.KDF.id && algo.aeadId === suite.AEAD.id,
+		)
+	);
+}
+
+/**
+ * Pick the first config a `suite` can actually use (RFC 9458 Section 4.1)
+ *
+ * Throws {@link OHTTPErrorCode.UnsupportedCipherSuite} when none match, so a
+ * gateway rotating to a KEM this client lacks fails here rather than at
+ * encapsulation. That code from this function means exactly "no offered config
+ * matches this suite", which is the case worth catching: re-fetch the key
+ * configuration, try another suite, or fall back to a direct request.
+ *
+ * First match means the gateway's order decides. Where it lists two keys this
+ * suite can use, the earlier one wins.
+ */
+export function selectKeyConfig(suite: CipherSuite, configs: readonly KeyConfig[]): KeyConfig {
+	const selected = configs.find((config) => supportsKeyConfig(suite, config));
+	if (selected === undefined) {
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
-
-	return configs;
+	return selected;
 }
 
 /**
