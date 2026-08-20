@@ -9,7 +9,14 @@
  */
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { AeadId, ChunkedOHTTPClient, ChunkedOHTTPServer, KdfId, KeyConfig } from "../src/index.js";
+import {
+	AeadId,
+	ChunkedOHTTPClient,
+	ChunkedOHTTPServer,
+	KdfId,
+	KeyConfig,
+	type StreamingRequestInit,
+} from "../src/index.js";
 
 async function setup() {
 	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
@@ -57,7 +64,7 @@ export async function chunkedHttpApi(): Promise<boolean> {
 		await gateway.decapsulateRequest(relayRequest);
 
 	// Verify the request was correctly reconstructed
-	const reconstructedBody = await innerRequest.json();
+	const reconstructedBody = (await innerRequest.json()) as { query: string; limit: number };
 	const requestValid =
 		innerRequest.method === "POST" &&
 		innerRequest.url === "https://api.example.com/v1/data" &&
@@ -88,7 +95,7 @@ export async function chunkedHttpApi(): Promise<boolean> {
 	const finalResponse = await context.decapsulateResponse(encapsulatedResponse);
 
 	// Verify the response
-	const responseBody = await finalResponse.json();
+	const responseBody = (await finalResponse.json()) as { answer: string; sources: number };
 	const responseValid =
 		finalResponse.status === 200 &&
 		finalResponse.headers.get("Content-Type") === "application/json" &&
@@ -135,13 +142,13 @@ export async function chunkedHttpLargeBody(): Promise<boolean> {
 		},
 	});
 
-	const originalRequest = new Request("https://storage.example.com/upload", {
+	const uploadInit: StreamingRequestInit = {
 		method: "PUT",
 		headers: { "Content-Type": "application/octet-stream" },
 		body: sourceStream,
-		// @ts-expect-error - duplex required for streaming request bodies in Node.js
 		duplex: "half",
-	});
+	};
+	const originalRequest = new Request("https://storage.example.com/upload", uploadInit);
 
 	// Encapsulate - body streams through chunked OHTTP encryption
 	const { init, context } = await client.encapsulateRequest(originalRequest);

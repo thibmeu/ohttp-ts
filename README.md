@@ -149,19 +149,20 @@ const client = new ChunkedOHTTPClient(suite, keyConfig);
 For streaming large requests/responses, use `ChunkedOHTTPClient`/`ChunkedOHTTPServer`:
 
 ```typescript
-import { ChunkedOHTTPClient, ChunkedOHTTPServer } from "ohttp-ts";
+import { ChunkedOHTTPClient, ChunkedOHTTPServer, type StreamingRequestInit } from "ohttp-ts";
 
 // Setup (same key configuration as above)
 const gateway = new ChunkedOHTTPServer([keyConfig]);
 const client = new ChunkedOHTTPClient(suite, keyConfig);
 
 // Client: encapsulate streaming request
-const streamingRequest = new Request("https://target.example/upload", {
+// StreamingRequestInit supplies the duplex the DOM lib types still lack
+const uploadInit: StreamingRequestInit = {
   method: "POST",
   body: largeReadableStream,
-  // @ts-expect-error - required for streaming bodies in Node.js
   duplex: "half",
-});
+};
+const streamingRequest = new Request("https://target.example/upload", uploadInit);
 const { init, context } = await client.encapsulateRequest(streamingRequest);
 
 // Send to relay (init includes duplex: "half" for streaming)

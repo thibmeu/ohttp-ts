@@ -15,16 +15,6 @@ export function concat(...arrays: Uint8Array[]): Uint8Array<ArrayBuffer> {
 }
 
 /**
- * Convert Uint8Array to ArrayBuffer for use as BodyInit.
- * Creates a copy to ensure it's a plain ArrayBuffer (not SharedArrayBuffer).
- */
-export function toArrayBuffer(data: Uint8Array): ArrayBuffer {
-	const buffer = new ArrayBuffer(data.byteLength);
-	new Uint8Array(buffer).set(data);
-	return buffer;
-}
-
-/**
  * Resolve the chunk/frame size options shared by the chunked client and server.
  *
  * A `maxChunkSize` of 0 spins `createChunkerTransform` forever and a
@@ -55,4 +45,15 @@ export function resolveChunkSizes(options: {
 	}
 
 	return { maxChunkSize, maxFrameSize };
+}
+
+/**
+ * Narrow bytes produced by hpke to the `ArrayBuffer` backing they already have.
+ *
+ * hpke returns a bare `Uint8Array`, i.e. `Uint8Array<ArrayBufferLike>`, which
+ * `BodyInit` rejects. These are always freshly allocated, never on a
+ * `SharedArrayBuffer`, so the narrowing is free and needs no copy.
+ */
+export function asOwnedBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+	return bytes as Uint8Array<ArrayBuffer>;
 }

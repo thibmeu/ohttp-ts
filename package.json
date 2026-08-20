@@ -42,7 +42,7 @@
 		"size": "node tools/size.mjs",
 		"lint": "biome check bench examples src test",
 		"format": "biome format --write bench examples src test",
-		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.bench.json"
+		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
 	},
 	"keywords": [
 		"ohttp",
