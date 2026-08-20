@@ -10,6 +10,7 @@
 
 import { CipherSuite } from "hpke";
 import { KEM_ML_KEM_768, KDF_HKDF_SHA256, AEAD_AES_128_GCM } from "@panva/hpke-noble";
+import { KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 // Follows RFC 9458 Oblivious HTTP with ML-KEM-768 (FIPS 203)
@@ -21,13 +22,26 @@ async function setup() {
 	const keyConfig = await KeyConfig.generate(suite, 0x01, [
 		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
 	]);
-	const gateway = new OHTTPServer([keyConfig]);
+	// A real gateway publishes several keys during a migration, so serve both.
+	const legacySuite = new CipherSuite(
+		KEM_DHKEM_X25519_HKDF_SHA256,
+		KDF_HKDF_SHA256,
+		AEAD_AES_128_GCM,
+	);
+	const legacyKeyConfig = await KeyConfig.generate(legacySuite, 0x02, [
+		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+	]);
+	const gateway = new OHTTPServer([keyConfig, legacyKeyConfig]);
 
-	// [ Client ] fetches gateway's public key configuration
+	// [ Client ] fetches gateway's application/ohttp-keys blob
 	// Note: ML-KEM-768 public keys are 1184 bytes (vs 32 bytes for X25519)
-	const publicKeyConfig = KeyConfig.serialize(keyConfig);
-	const clientKeyConfig = KeyConfig.parse(publicKeyConfig);
-	const client = new OHTTPClient(suite, clientKeyConfig);
+	const publicKeyConfig = KeyConfig.serializeMultiple([keyConfig, legacyKeyConfig]);
+
+	// parseMultiple reports what the gateway published; select decides which of
+	// those this suite can use. Reaching for [0] would pick by the gateway's
+	// order, not by what the client implements.
+	const configs = KeyConfig.parseMultiple(publicKeyConfig);
+	const client = new OHTTPClient(suite, KeyConfig.select(suite, configs));
 
 	return { gateway, client, publicKeyConfig };
 }

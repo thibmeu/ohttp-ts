@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `KeyConfig.select` (`selectKeyConfig`), which picks the first config a `CipherSuite` can actually use. `parseKeyConfigs` reports what the gateway published; selection decides what this client can do with it. Reaching for `configs[0]` hands you whatever the gateway listed first, which may name a KEM your suite does not implement.
+- The RFC 9458 and draft-08 Appendix A vectors are now known-answer tests: both specs' encapsulated requests are decapsulated, and both encapsulated responses reproduced byte for byte by feeding the spec's response nonce back in. Six transcribed values were wrong and nothing noticed, because the old assertions checked the vector file against itself rather than against the library. Round-trip tests are symmetric and cannot see a key-schedule error - both sides derive the same wrong key and agree. Corrupting the response HKDF `nonce` label now fails these two tests and nothing else; before, it failed nothing.
+
+### Fixed
+
+- Both chunked and non-chunked clients accepted a key config whose KEM their `CipherSuite` does not implement, checking only the KDF and AEAD. With a real ML-KEM-768 config that surfaced as an hpke `DeserializeError` from `encapsulate` rather than an `OHTTPError` from the constructor; where the two KEMs share a public key length it did not surface at all, and the client sent a header advertising a KEM it had not used. Both constructors now reject the mismatch with `UnsupportedCipherSuite`, via the same `supportsKeyConfig` predicate `KeyConfig.select` uses.
+
+### Changed
+
+- `parseKeyConfigs` skips configs naming a KEM, KDF, or AEAD this library does not implement instead of rejecting the whole list, so a gateway adding one does not take down the entries a client can still use. Structural damage - bad length, truncation, trailing bytes - still rejects the list, since malformed bytes may be tampering rather than registry evolution. An all-unsupported list now returns `[]`; pair it with `KeyConfig.select`, which throws `UnsupportedCipherSuite`.
+- `parseKeyConfig` throws `UnsupportedCipherSuite`, not `InvalidKeyConfig`, for a KEM it does not implement or a config whose every symmetric algorithm it lacks. Callers matching on `InvalidKeyConfig` for those cases need updating.
+- `parseKeyConfig` keeps a config's implemented `(KDF, AEAD)` pairs when it lacks another, rather than dropping the config, per RFC 9458 Section 3.1.
+- The chunked client and server throw `RangeError` for a `maxChunkSize` that is not a positive integer, or a `maxFrameSize` below one AEAD tag. A `maxChunkSize` of 0 hung `createChunkerTransform` on zero-length reads; a non-integer silently disabled chunking. `RangeError` rather than `OHTTPError`: this is API misuse, not a protocol condition a peer can trigger.
+
 ### Security
 
 - The incremental chunked response contexts claimed their chunk counter *after* awaiting the AEAD call, so two `sealChunk` calls issued before the first resolved both sealed at the same counter, reusing an (AEAD key, nonce) pair. AES-GCM does not survive that. `openChunk` had the same shape, failing the second concurrent call and leaving the counter misaligned for every chunk after it. Both now claim the counter synchronously, as the streaming transforms already did. `openFinalChunk` now marks the context finished synchronously as well, so a concurrent `openChunk` cannot land on the final chunk's counter. Sequential callers are unaffected and the wire format is unchanged.
