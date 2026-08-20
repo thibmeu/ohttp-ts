@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-20
+
 ### Added
 
 - `StreamingRequestInit`, the `RequestInit & { duplex: "half" }` that a streaming request body requires. The DOM lib types still lack `duplex`, so building that `Request` needed a `@ts-expect-error`; annotating the init with this type does not.
