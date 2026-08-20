@@ -402,6 +402,9 @@ export class ChunkedOHTTPServer {
 					responseCrypto,
 				);
 
+				// Counter and finished flag are claimed synchronously at call time: a
+				// caller may issue several seals before the first resolves, and sealing
+				// twice at one counter reuses an (AEAD key, nonce) pair.
 				let counter = 0;
 				let responseFinished = false;
 				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3

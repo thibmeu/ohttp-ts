@@ -1,19 +1,5 @@
-/**
- * Concurrency and interleaving properties for the chunked path.
- *
- * The other `props-*` files are input-output: they feed bytes in and check bytes
- * out, letting the AEAD calls settle in whatever order the runtime picks - which,
- * with real WebCrypto, is issue order essentially always. These properties fix
- * the inputs and vary the *scheduling* instead, because the pipelined transforms
- * keep a window of {@link AEAD_PIPELINE_DEPTH} AEAD calls in flight and drain it
- * through a FIFO, and nothing else in the suite makes that FIFO do any work.
- *
- * Cloudflare's Tamarin analysis of OHTTP (https://github.com/cloudflare/ohttp-analysis)
- * proves protocol-level properties - secrecy, unlinkability, gateway authentication -
- * on top of assumptions the *implementation* has to keep, chief among them that an
- * (AEAD key, nonce) pair is never reused. A symbolic proof cannot check that for us.
- * These are the implementation-side obligations behind it.
- */
+// Concurrency and interleaving properties for the chunked path: the inputs are
+// fixed, the AEAD completion order is what varies.
 
 import { fc, it } from "@fast-check/vitest";
 import {
@@ -183,10 +169,6 @@ async function readUntilError(
 
 // ============================================================================
 // 1. Nonce uniqueness under concurrent issue
-//
-// The obligation the Tamarin model rests on. Needs no scheduler: concurrency of
-// *issue* is enough, because a counter claimed after its own `await` is already
-// stale for the call that follows it.
 // ============================================================================
 
 describe("concurrent use of one response context", () => {
@@ -319,9 +301,6 @@ describe("failure inside the in-flight window", () => {
 
 // ============================================================================
 // 4. Abandoning the window is quiet
-//
-// `settle()` exists so that seals/opens still in flight when the stream is torn
-// down have their rejections captured at issue time. Nothing else asserts it.
 // ============================================================================
 
 describe("abandoned in-flight window", () => {
@@ -363,9 +342,6 @@ describe("abandoned in-flight window", () => {
 
 // ============================================================================
 // 5. Counter-derived nonces stay distinct across the whole window
-//
-// The transforms claim counters synchronously; this pins the consequence that
-// matters rather than the mechanism.
 // ============================================================================
 
 describe("nonces emitted by the response transforms", () => {
