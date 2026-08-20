@@ -535,6 +535,69 @@ describe("draft-08 Appendix A test vectors", () => {
 	});
 });
 
+describe("chunk size options", () => {
+	const suite = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	async function keyConfigs() {
+		const priv = await generateKeyConfig(suite(), 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		return {
+			priv,
+			pub: {
+				keyId: priv.keyId,
+				kemId: priv.kemId,
+				publicKey: priv.publicKey,
+				symmetricAlgorithms: priv.symmetricAlgorithms,
+			},
+		};
+	}
+
+	// createChunkerTransform emits while `buffer.length >= maxChunkSize`, so a
+	// size of 0 makes it spin on zero-length reads forever. Catch it at the
+	// constructor instead of hanging mid-stream.
+	it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+		"rejects maxChunkSize %p",
+		async (maxChunkSize) => {
+			const { priv, pub } = await keyConfigs();
+
+			expect(() => new ChunkedOHTTPClient(suite(), pub, { maxChunkSize })).toThrow(RangeError);
+			expect(() => new ChunkedOHTTPServer([priv], { maxChunkSize })).toThrow(RangeError);
+		},
+	);
+
+	it.each([0, 15, -1, Number.NaN])("rejects maxFrameSize %p", async (maxFrameSize) => {
+		const { priv, pub } = await keyConfigs();
+
+		expect(() => new ChunkedOHTTPClient(suite(), pub, { maxFrameSize })).toThrow(RangeError);
+		expect(() => new ChunkedOHTTPServer([priv], { maxFrameSize })).toThrow(RangeError);
+	});
+
+	// draft-08 Section 3 makes 16384 a floor receivers MUST support and a SHOULD
+	// for senders "unless they are aware of support for larger sizes by the
+	// receiving party" - passing this option is exactly that awareness.
+	it("allows a chunk size above the draft's 16384 and still round-trips", async () => {
+		const { priv, pub } = await keyConfigs();
+		const client = new ChunkedOHTTPClient(suite(), pub, { maxChunkSize: 40_000 });
+		const server = new ChunkedOHTTPServer([priv], { maxChunkSize: 40_000 });
+		const payload = new Uint8Array(100_000).fill(7);
+
+		const { encapsulatedRequest } = await client.encapsulate(payload);
+		const { request } = await server.decapsulate(encapsulatedRequest);
+
+		expect(request).toEqual(payload);
+	});
+
+	it("raises the receive limit to cover an oversized send size", async () => {
+		const { pub } = await keyConfigs();
+
+		const client = new ChunkedOHTTPClient(suite(), pub, { maxChunkSize: 4 << 20 });
+
+		expect(client.maxFrameSize).toBeGreaterThanOrEqual(client.maxChunkSize + AEAD_TAG_SIZE);
+	});
+});
+
 describe("chunked OHTTP error handling", () => {
 	it("rejects corrupted chunk ciphertext", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);

@@ -1,3 +1,5 @@
+import { AEAD_TAG_SIZE, DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_FRAME_SIZE } from "./constants.js";
+
 /**
  * Concatenate multiple Uint8Arrays into one
  */
@@ -20,4 +22,33 @@ export function toArrayBuffer(data: Uint8Array): ArrayBuffer {
 	const buffer = new ArrayBuffer(data.byteLength);
 	new Uint8Array(buffer).set(data);
 	return buffer;
+}
+
+/**
+ * Resolve the chunk/frame size options shared by the chunked client and server.
+ *
+ * A `maxChunkSize` of 0 spins `createChunkerTransform` forever and a
+ * non-integer silently disables chunking, so both are rejected here. Sizes
+ * above the 16384 default are allowed: draft-08 Section 3 makes that a SHOULD
+ * for senders "aware of support for larger sizes by the receiving party".
+ */
+export function resolveChunkSizes(options: {
+	readonly maxChunkSize?: number;
+	readonly maxFrameSize?: number;
+}): { maxChunkSize: number; maxFrameSize: number } {
+	const maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
+	if (!Number.isSafeInteger(maxChunkSize) || maxChunkSize < 1) {
+		throw new RangeError(`maxChunkSize must be a positive integer, got ${maxChunkSize}`);
+	}
+
+	// Never refuse to receive what this side is willing to send.
+	const maxFrameSize =
+		options.maxFrameSize ?? Math.max(DEFAULT_MAX_FRAME_SIZE, maxChunkSize + AEAD_TAG_SIZE);
+	if (!Number.isSafeInteger(maxFrameSize) || maxFrameSize < AEAD_TAG_SIZE) {
+		throw new RangeError(
+			`maxFrameSize must be an integer of at least ${AEAD_TAG_SIZE} (one AEAD tag), got ${maxFrameSize}`,
+		);
+	}
+
+	return { maxChunkSize, maxFrameSize };
 }

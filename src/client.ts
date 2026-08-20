@@ -7,8 +7,6 @@ import {
 	buildRequestInfo,
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
-	DEFAULT_MAX_CHUNK_SIZE,
-	DEFAULT_MAX_FRAME_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	decapsulateResponse,
@@ -36,7 +34,7 @@ import {
 	encodeBHttpRequestStream,
 	streamOfBytes,
 } from "./streaming.js";
-import { concat, toArrayBuffer } from "./utils.js";
+import { concat, resolveChunkSizes, toArrayBuffer } from "./utils.js";
 
 /**
  * Options for OHTTP client
@@ -358,10 +356,9 @@ export class ChunkedOHTTPClient {
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
-		this.maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
-		// Never refuse to receive what this side is willing to send.
-		this.maxFrameSize =
-			options.maxFrameSize ?? Math.max(DEFAULT_MAX_FRAME_SIZE, this.maxChunkSize + AEAD_TAG_SIZE);
+		const sizes = resolveChunkSizes(options);
+		this.maxChunkSize = sizes.maxChunkSize;
+		this.maxFrameSize = sizes.maxFrameSize;
 
 		// Validate and extract cipher suite IDs
 		const rawKdfId = suite.KDF.id;
