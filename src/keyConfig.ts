@@ -255,16 +255,18 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 		offset += 4;
 	}
 
+	// Structural checks come first: parseKeyConfigs skips an UnsupportedCipherSuite
+	// but rethrows InvalidKeyConfig, so reporting "unsupported" for bytes that are
+	// also malformed would silently drop a damaged config instead of rejecting it.
+	if (offset !== data.length) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
 	if (symmetricAlgorithmsLength === 0) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
+
 	if (symmetricAlgorithms.length === 0) {
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-	}
-
-	// Validate no trailing data
-	if (offset !== data.length) {
-		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
 
 	return {

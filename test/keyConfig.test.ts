@@ -267,4 +267,22 @@ describe("adversarial key config parsing", () => {
 		const bytes = concat(serializeKeyConfig(baseConfig), new Uint8Array([0x00]));
 		expect(() => parseKeyConfig(bytes)).toThrow(/INVALID_KEY_CONFIG/);
 	});
+
+	it("reports trailing bytes as structural damage even when no algorithm is supported", () => {
+		const unsupported = serializeKeyConfig({
+			...baseConfig,
+			symmetricAlgorithms: [{ kdfId: 0xffff as KdfId, aeadId: 0xffff as AeadId }],
+		});
+		expect(() => parseKeyConfig(unsupported)).toThrow(/UNSUPPORTED_CIPHER_SUITE/);
+
+		// With trailing bytes it must not report "unsupported", or parseKeyConfigs
+		// would skip the damaged config instead of rejecting the list.
+		const damaged = concat(unsupported, new Uint8Array([0x00]));
+		expect(() => parseKeyConfig(damaged)).toThrow(/INVALID_KEY_CONFIG/);
+
+		const blob = new Uint8Array(2 + damaged.length);
+		new DataView(blob.buffer).setUint16(0, damaged.length);
+		blob.set(damaged, 2);
+		expect(() => parseKeyConfigs(blob)).toThrow(/INVALID_KEY_CONFIG/);
+	});
 });

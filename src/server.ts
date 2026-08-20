@@ -377,6 +377,10 @@ export class ChunkedOHTTPServer {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
 				try {
+					// Unlike the response contexts, the flag is claimed after the await on
+					// purpose: the HPKE context carries its own sequence number, so no two
+					// opens can share a nonce, and a chunk that fails to decrypt should
+					// leave the context usable rather than wedged as finished.
 					const pt = asOwnedBytes(await recipientContext.Open(ciphertext, FINAL_CHUNK_AAD));
 					requestFinished = true;
 					return pt;
