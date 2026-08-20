@@ -420,9 +420,7 @@ export class ChunkedOHTTPServer {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						const ct = await sealResponseChunk(aead, aeadKey, aeadNonce, counter, chunk, false);
-						counter++;
-						return ct;
+						return sealResponseChunk(aead, aeadKey, aeadNonce, counter++, chunk, false);
 					},
 
 					async sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array> {

@@ -477,16 +477,7 @@ export class ChunkedOHTTPClient {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						const pt = await openResponseChunk(
-							aead,
-							aeadKey,
-							aeadNonce,
-							counter,
-							ciphertext,
-							false,
-						);
-						counter++;
-						return pt;
+						return openResponseChunk(aead, aeadKey, aeadNonce, counter++, ciphertext, false);
 					},
 
 					async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
