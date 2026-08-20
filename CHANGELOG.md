@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-### Fixed
+### Security
 
-- The incremental chunked response contexts claimed their chunk counter *after* awaiting the AEAD call, so two `sealChunk` calls issued before the first resolved both sealed at the same counter, reusing an (AEAD key, nonce) pair. AES-GCM does not survive that. `openChunk` had the same shape, failing the second concurrent call and leaving the counter misaligned for every chunk after it. Both now claim the counter synchronously, as the streaming transforms already did. Sequential callers are unaffected and the wire format is unchanged.
+- The incremental chunked response contexts claimed their chunk counter *after* awaiting the AEAD call, so two `sealChunk` calls issued before the first resolved both sealed at the same counter, reusing an (AEAD key, nonce) pair. AES-GCM does not survive that. `openChunk` had the same shape, failing the second concurrent call and leaving the counter misaligned for every chunk after it. Both now claim the counter synchronously, as the streaming transforms already did. `openFinalChunk` now marks the context finished synchronously as well, so a concurrent `openChunk` cannot land on the final chunk's counter. Sequential callers are unaffected and the wire format is unchanged.
 
 ## [0.4.1] - 2026-08-19
 

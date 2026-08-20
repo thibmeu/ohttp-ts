@@ -460,6 +460,9 @@ export class ChunkedOHTTPClient {
 					responseCrypto,
 				);
 
+				// Counter and finished flag are claimed synchronously at call time: a
+				// caller may issue several opens before the first resolves, and each
+				// chunk needs its own counter-derived nonce.
 				let counter = 0;
 				let responseFinished = false;
 				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
@@ -487,9 +490,8 @@ export class ChunkedOHTTPClient {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						const pt = await openResponseChunk(aead, aeadKey, aeadNonce, counter, ciphertext, true);
 						responseFinished = true;
-						return pt;
+						return openResponseChunk(aead, aeadKey, aeadNonce, counter, ciphertext, true);
 					},
 				};
 			},
