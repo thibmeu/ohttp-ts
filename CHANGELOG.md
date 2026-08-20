@@ -8,15 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `StreamingRequestInit`, the `RequestInit & { duplex: "half" }` that a streaming request body requires. The DOM lib types still lack `duplex`, so building that `Request` needed a `@ts-expect-error`; annotating the init with this type does not.
 - `KeyConfig.select` (`selectKeyConfig`), which picks the first config a `CipherSuite` can actually use. `parseKeyConfigs` reports what the gateway published; selection decides what this client can do with it. Reaching for `configs[0]` hands you whatever the gateway listed first, which may name a KEM your suite does not implement.
 - The RFC 9458 and draft-08 Appendix A vectors are now known-answer tests: both specs' encapsulated requests are decapsulated, and both encapsulated responses reproduced byte for byte by feeding the spec's response nonce back in. Six transcribed values were wrong and nothing noticed, because the old assertions checked the vector file against itself rather than against the library. Round-trip tests are symmetric and cannot see a key-schedule error - both sides derive the same wrong key and agree. Corrupting the response HKDF `nonce` label now fails these two tests and nothing else; before, it failed nothing.
 
 ### Fixed
 
+- Bytes returned by the low-level API are typed `Uint8Array<ArrayBuffer>` instead of a bare `Uint8Array`. Since TypeScript 5.7 the bare form means `Uint8Array<ArrayBufferLike>`, which the DOM `BodyInit` rejects, so `new Response(encapsulatedRequest)` failed with an error naming `URLSearchParams`. Browsers and Workers hit this; Node's `BodyInit` accepts the bare form, so it never showed up there. The `Request`/`Response` API never exposed it either. `test/types.assert.ts` pins the assignability under DOM lib.
 - Both chunked and non-chunked clients accepted a key config whose KEM their `CipherSuite` does not implement, checking only the KDF and AEAD. With a real ML-KEM-768 config that surfaced as an hpke `DeserializeError` from `encapsulate` rather than an `OHTTPError` from the constructor; where the two KEMs share a public key length it did not surface at all, and the client sent a header advertising a KEM it had not used. Both constructors now reject the mismatch with `UnsupportedCipherSuite`, via the same `supportsKeyConfig` predicate `KeyConfig.select` uses.
+
+### Removed
+
+- `toArrayBuffer`, which copied a whole buffer to get something `BodyInit` would accept. Now that the bytes are typed `Uint8Array<ArrayBuffer>` they go in unchanged, dropping a full copy of the request on the client and of the response payload on the gateway.
 
 ### Changed
 
+- `examples/` is typechecked. `tsconfig.bench.json` becomes `tsconfig.node.json` and covers both; the examples ran through `tsx`, which strips types without checking them.
+- Property tests get a 30s timeout, up from the 5s default. `props-framing` timed out under parallel load while passing on its own.
 - `parseKeyConfigs` skips configs naming a KEM, KDF, or AEAD this library does not implement instead of rejecting the whole list, so a gateway adding one does not take down the entries a client can still use. Structural damage - bad length, truncation, trailing bytes - still rejects the list, since malformed bytes may be tampering rather than registry evolution. An all-unsupported list now returns `[]`; pair it with `KeyConfig.select`, which throws `UnsupportedCipherSuite`.
 - `parseKeyConfig` throws `UnsupportedCipherSuite`, not `InvalidKeyConfig`, for a KEM it does not implement or a config whose every symmetric algorithm it lacks. Callers matching on `InvalidKeyConfig` for those cases need updating.
 - `parseKeyConfig` keeps a config's implemented `(KDF, AEAD)` pairs when it lacks another, rather than dropping the config, per RFC 9458 Section 3.1.

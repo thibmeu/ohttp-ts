@@ -9,7 +9,7 @@ import { concat } from "./utils.js";
  * Non-final chunks: length (varint) + ciphertext
  * Final chunk: 0 (varint) + ciphertext
  */
-export function frameChunk(ciphertext: Uint8Array, isFinal: boolean): Uint8Array {
+export function frameChunk(ciphertext: Uint8Array, isFinal: boolean): Uint8Array<ArrayBuffer> {
 	const length = isFinal ? 0 : ciphertext.length;
 	const lengthBytes = encodeVarint(length);
 	return concat(lengthBytes, ciphertext);
@@ -19,7 +19,7 @@ export function frameChunk(ciphertext: Uint8Array, isFinal: boolean): Uint8Array
  * Result of parsing a framed chunk
  */
 export interface ParsedChunk {
-	readonly ciphertext: Uint8Array;
+	readonly ciphertext: Uint8Array<ArrayBuffer>;
 	readonly isFinal: boolean;
 	readonly bytesConsumed: number;
 }

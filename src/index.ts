@@ -26,6 +26,7 @@ export {
 	type HttpClientContext,
 	OHTTPClient,
 	type OHTTPClientOptions,
+	type StreamingRequestInit,
 } from "./client.js";
 
 export {

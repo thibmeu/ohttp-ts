@@ -1,5 +1,6 @@
 import type { AEAD as AeadImpl, RecipientContext } from "hpke";
 import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
+import type { StreamingRequestInit } from "./client.js";
 import { kAead, kAeadKey, kAeadNonce, kEnc, kRecipientContext, MediaType } from "./constants.js";
 import {
 	AEAD_TAG_SIZE,
@@ -29,7 +30,7 @@ import {
 	encodeBHttpResponseStream,
 	streamOfBytes,
 } from "./streaming.js";
-import { concat, resolveChunkSizes, toArrayBuffer } from "./utils.js";
+import { asOwnedBytes, concat, resolveChunkSizes } from "./utils.js";
 
 /**
  * Options for OHTTP server
@@ -74,7 +75,7 @@ export interface ChunkedOHTTPServerOptions {
  */
 export interface DecapsulatedRequest {
 	/** The decrypted binary HTTP request */
-	readonly request: Uint8Array;
+	readonly request: Uint8Array<ArrayBuffer>;
 	/** Context needed to encrypt the response */
 	readonly context: ServerContext;
 }
@@ -94,7 +95,7 @@ export interface DecapsulatedHttpRequest {
  */
 export interface ServerContext {
 	/** Encrypt a response */
-	encryptResponse(response: Uint8Array): Promise<Uint8Array>;
+	encryptResponse(response: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 }
 
 /**
@@ -112,9 +113,9 @@ export interface ChunkedServerRequestContext {
 	/** The key config used for decryption */
 	readonly keyConfig: KeyConfigWithPrivate;
 	/** Open a non-final chunk */
-	openChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
+	openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Open the final chunk */
-	openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
+	openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Create a response context for encrypting the response */
 	createResponseContext(): Promise<ChunkedServerResponseContext>;
 	/** HPKE recipient context for streaming transforms */
@@ -128,11 +129,11 @@ export interface ChunkedServerRequestContext {
  */
 export interface ChunkedServerResponseContext {
 	/** The response nonce (must be sent first) */
-	readonly responseNonce: Uint8Array;
+	readonly responseNonce: Uint8Array<ArrayBuffer>;
 	/** Seal a non-final chunk */
-	sealChunk(chunk: Uint8Array): Promise<Uint8Array>;
+	sealChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Seal the final chunk */
-	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array>;
+	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Derived response AEAD (for the pipelined buffer path) */
 	readonly [kAead]: AeadImpl;
 	/** Derived response AEAD key */
@@ -193,7 +194,7 @@ export class OHTTPServer {
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;
 		const context: ServerContext = {
-			async encryptResponse(response: Uint8Array): Promise<Uint8Array> {
+			async encryptResponse(response: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				// Generate random response nonce
 				const nonceLength = getResponseNonceLength(ctx.suite);
 				const responseNonce = crypto.getRandomValues(new Uint8Array(nonceLength));
@@ -251,7 +252,7 @@ export class OHTTPServer {
 				const encapsulatedResponse = await bytesContext.encryptResponse(binaryResponse);
 
 				// Return as OHTTP response
-				return new Response(toArrayBuffer(encapsulatedResponse), {
+				return new Response(encapsulatedResponse, {
 					status: 200,
 					headers: {
 						"Content-Type": MediaType.RESPONSE,
@@ -360,23 +361,23 @@ export class ChunkedOHTTPServer {
 			[kRecipientContext]: recipientContext,
 			[kEnc]: enc,
 
-			async openChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+			async openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				if (requestFinished) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
 				try {
-					return await recipientContext.Open(ciphertext);
+					return asOwnedBytes(await recipientContext.Open(ciphertext));
 				} catch {
 					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 				}
 			},
 
-			async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+			async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				if (requestFinished) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
 				try {
-					const pt = await recipientContext.Open(ciphertext, FINAL_CHUNK_AAD);
+					const pt = asOwnedBytes(await recipientContext.Open(ciphertext, FINAL_CHUNK_AAD));
 					requestFinished = true;
 					return pt;
 				} catch {
@@ -413,7 +414,7 @@ export class ChunkedOHTTPServer {
 					[kAeadKey]: aeadKey,
 					[kAeadNonce]: aeadNonce,
 
-					async sealChunk(chunk: Uint8Array): Promise<Uint8Array> {
+					async sealChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 						}
@@ -423,7 +424,7 @@ export class ChunkedOHTTPServer {
 						return sealResponseChunk(aead, aeadKey, aeadNonce, counter++, chunk, false);
 					},
 
-					async sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array> {
+					async sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 						}
@@ -443,11 +444,7 @@ export class ChunkedOHTTPServer {
 	 *
 	 * Convenience method that parses and decrypts all request chunks.
 	 */
-	async decapsulate(encapsulatedRequest: Uint8Array): Promise<{
-		request: Uint8Array;
-		keyConfig: KeyConfigWithPrivate;
-		createResponseContext: () => Promise<ChunkedServerResponseContext>;
-	}> {
+	async decapsulate(encapsulatedRequest: Uint8Array) {
 		// Parse header to get offset
 		const { offset: headerOffset } = parseRequestHeader(encapsulatedRequest);
 		const header = encapsulatedRequest.subarray(0, headerOffset);
@@ -477,7 +474,7 @@ export class ChunkedOHTTPServer {
 	async encapsulateResponse(
 		responseContext: ChunkedServerResponseContext,
 		response: Uint8Array,
-	): Promise<Uint8Array> {
+	): Promise<Uint8Array<ArrayBuffer>> {
 		// Chunk + seal through the pipelined response transform (seals run in a
 		// concurrent window), prefixed with the response nonce.
 		const sealed = await collectStream(
@@ -593,7 +590,7 @@ export class ChunkedOHTTPServer {
 			headers: decoded.headers,
 			body: bodylessMethod ? null : decoded.body,
 			duplex: "half",
-		} as RequestInit & { duplex: "half" });
+		} as StreamingRequestInit);
 
 		const suite = requestCtx.keyConfig.suite;
 		const maxChunkSize = this.maxChunkSize;

@@ -34,7 +34,9 @@ export function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 /** Collect a stream of byte chunks into one contiguous buffer. */
-export async function collectStream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+export async function collectStream(
+	stream: ReadableStream<Uint8Array>,
+): Promise<Uint8Array<ArrayBuffer>> {
 	const parts: Uint8Array[] = [];
 	const reader = stream.getReader();
 	for (;;) {

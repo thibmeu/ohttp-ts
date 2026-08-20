@@ -166,7 +166,7 @@ export function getEncLength(kemId: number): number {
  * - Symmetric Algorithms Length (2 bytes)
  * - Symmetric Algorithms (4 bytes each: KDF ID + AEAD ID)
  */
-export function serializeKeyConfig(config: KeyConfig): Uint8Array {
+export function serializeKeyConfig(config: KeyConfig): Uint8Array<ArrayBuffer> {
 	const symAlgosLen = config.symmetricAlgorithms.length * 4;
 	// keyId(1) + kemId(2) + publicKey + symAlgosLen(2) + symAlgos
 	const totalLen = 1 + 2 + config.publicKey.length + 2 + symAlgosLen;
@@ -280,7 +280,7 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
  *
  * Format: For each config: 2-byte length prefix + serialized KeyConfig
  */
-export function serializeKeyConfigs(configs: readonly KeyConfig[]): Uint8Array {
+export function serializeKeyConfigs(configs: readonly KeyConfig[]): Uint8Array<ArrayBuffer> {
 	// First pass: serialize all configs and calculate total size
 	const serialized: Uint8Array[] = [];
 	let totalLen = 0;

@@ -32,7 +32,7 @@ import {
 	type KeyConfig,
 	type KeyConfigWithPrivate,
 } from "./keyConfig.js";
-import { concat } from "./utils.js";
+import { asOwnedBytes, concat } from "./utils.js";
 
 export { frameChunk, type ParsedChunk, parseFramedChunk } from "./framing.js";
 
@@ -266,7 +266,7 @@ export function parseRequestHeader(data: Uint8Array): {
  */
 export interface ClientEncapsulationContext {
 	/** The encapsulated request bytes (header + enc + ciphertext) */
-	readonly encapsulatedRequest: Uint8Array;
+	readonly encapsulatedRequest: Uint8Array<ArrayBuffer>;
 	/** The HPKE sender context for exporting secrets */
 	readonly senderContext: SenderContext;
 	/** The encapsulated secret (enc) */
@@ -280,7 +280,7 @@ export interface ClientEncapsulationContext {
  */
 export interface ServerEncapsulationContext {
 	/** The decrypted request */
-	readonly request: Uint8Array;
+	readonly request: Uint8Array<ArrayBuffer>;
 	/** The HPKE recipient context for exporting secrets */
 	readonly recipientContext: RecipientContext;
 	/** The encapsulated secret (enc) */
@@ -373,9 +373,9 @@ export async function decapsulateRequest(
 	}
 
 	// Decrypt the request
-	let request: Uint8Array;
+	let request: Uint8Array<ArrayBuffer>;
 	try {
-		request = await recipientContext.Open(ciphertext);
+		request = asOwnedBytes(await recipientContext.Open(ciphertext));
 	} catch {
 		throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 	}
@@ -398,7 +398,7 @@ export async function encapsulateResponse(
 	responseNonce: Uint8Array,
 	label: string = DEFAULT_RESPONSE_LABEL,
 	responseCrypto?: ResponseCrypto,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
 	const { recipientContext, enc, suite } = serverContext;
 
 	const nonceLength = getResponseNonceLength(suite);
@@ -433,7 +433,7 @@ export async function decapsulateResponse(
 	encapsulatedResponse: Uint8Array,
 	label: string = DEFAULT_RESPONSE_LABEL,
 	responseCrypto?: ResponseCrypto,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
 	const { senderContext, enc, suite } = clientContext;
 
 	const nonceLength = getResponseNonceLength(suite);
@@ -457,7 +457,7 @@ export async function decapsulateResponse(
 
 	// Decrypt response
 	try {
-		return await aead.Open(aeadKey, aeadNonce, new Uint8Array(0), ciphertext);
+		return asOwnedBytes(await aead.Open(aeadKey, aeadNonce, new Uint8Array(0), ciphertext));
 	} catch {
 		throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 	}
@@ -524,10 +524,10 @@ export async function sealResponseChunk(
 	counter: number,
 	chunk: Uint8Array,
 	isFinal: boolean,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
 	const chunkNonce = computeChunkNonce(baseNonce, counter);
 	const aad = isFinal ? FINAL_CHUNK_AAD : new Uint8Array(0);
-	return aead.Seal(aeadKey, chunkNonce, aad, chunk);
+	return asOwnedBytes(await aead.Seal(aeadKey, chunkNonce, aad, chunk));
 }
 
 /**
@@ -540,11 +540,11 @@ export async function openResponseChunk(
 	counter: number,
 	ciphertext: Uint8Array,
 	isFinal: boolean,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
 	const chunkNonce = computeChunkNonce(baseNonce, counter);
 	const aad = isFinal ? FINAL_CHUNK_AAD : new Uint8Array(0);
 	try {
-		return await aead.Open(aeadKey, chunkNonce, aad, ciphertext);
+		return asOwnedBytes(await aead.Open(aeadKey, chunkNonce, aad, ciphertext));
 	} catch {
 		throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 	}

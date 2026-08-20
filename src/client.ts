@@ -35,7 +35,7 @@ import {
 	encodeBHttpRequestStream,
 	streamOfBytes,
 } from "./streaming.js";
-import { concat, resolveChunkSizes, toArrayBuffer } from "./utils.js";
+import { asOwnedBytes, concat, resolveChunkSizes } from "./utils.js";
 
 /**
  * Options for OHTTP client
@@ -80,7 +80,7 @@ export interface ChunkedOHTTPClientOptions {
  */
 export interface EncapsulatedRequest {
 	/** The encapsulated request bytes */
-	readonly encapsulatedRequest: Uint8Array;
+	readonly encapsulatedRequest: Uint8Array<ArrayBuffer>;
 	/** Context needed to decrypt the response */
 	readonly context: ClientContext;
 }
@@ -107,7 +107,7 @@ export interface EncapsulatedRequestInit {
  */
 export interface ClientContext {
 	/** Decrypt an encapsulated response */
-	decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array>;
+	decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 }
 
 /**
@@ -123,11 +123,11 @@ export interface HttpClientContext {
  */
 export interface ChunkedRequestContext {
 	/** The request header bytes (must be sent first) */
-	readonly header: Uint8Array;
+	readonly header: Uint8Array<ArrayBuffer>;
 	/** Seal a non-final chunk */
-	sealChunk(chunk: Uint8Array): Promise<Uint8Array>;
+	sealChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Seal the final chunk */
-	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array>;
+	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Create a response context after receiving the response nonce */
 	createResponseContext(responseNonce: Uint8Array): Promise<ChunkedResponseContext>;
 	/** HPKE sender context for streaming transforms */
@@ -141,9 +141,9 @@ export interface ChunkedRequestContext {
  */
 export interface ChunkedResponseContext {
 	/** Open a non-final chunk */
-	openChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
+	openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Open the final chunk */
-	openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array>;
+	openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Derived response AEAD (for the pipelined buffer path) */
 	readonly [kAead]: AeadImpl;
 	/** Derived response AEAD key */
@@ -151,6 +151,13 @@ export interface ChunkedResponseContext {
 	/** Derived response AEAD base nonce */
 	readonly [kAeadNonce]: Uint8Array;
 }
+
+/**
+ * A `RequestInit` carrying the `duplex: "half"` that a streaming request body
+ * requires. The DOM lib types have no `duplex`, so annotate the init with this
+ * rather than suppressing the error it raises.
+ */
+export type StreamingRequestInit = RequestInit & { duplex: "half" };
 
 /**
  * Result of encapsulating a chunked HTTP request (Request/Response API)
@@ -165,7 +172,7 @@ export interface ChunkedResponseContext {
  */
 export interface EncapsulatedChunkedRequestInit {
 	/** RequestInit for fetch() - POST with streaming body and Content-Type: message/ohttp-chunked-req */
-	readonly init: RequestInit & { duplex: "half" };
+	readonly init: StreamingRequestInit;
 	/** Context needed to decrypt the chunked response */
 	readonly context: ChunkedHttpClientContext;
 }
@@ -245,7 +252,7 @@ export class OHTTPClient {
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;
 		const context: ClientContext = {
-			async decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array> {
+			async decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				return decapsulateResponse(ctx, encapsulatedResponse, responseLabel, responseCrypto);
 			},
 		};
@@ -318,7 +325,7 @@ export class OHTTPClient {
 			headers: {
 				"Content-Type": MediaType.REQUEST,
 			},
-			body: toArrayBuffer(encapsulatedRequest),
+			body: encapsulatedRequest,
 		};
 
 		return { init, context };
@@ -421,21 +428,21 @@ export class ChunkedOHTTPClient {
 			[kSenderContext]: senderContext,
 			[kEnc]: enc,
 
-			async sealChunk(chunk: Uint8Array): Promise<Uint8Array> {
+			async sealChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				if (requestFinished) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
 				// Non-final: empty AAD
-				return senderContext.Seal(chunk);
+				return asOwnedBytes(await senderContext.Seal(chunk));
 			},
 
-			async sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array> {
+			async sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				if (requestFinished) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
 				requestFinished = true;
 				// Final: AAD = "final"
-				return senderContext.Seal(chunk, FINAL_CHUNK_AAD);
+				return asOwnedBytes(await senderContext.Seal(chunk, FINAL_CHUNK_AAD));
 			},
 
 			async createResponseContext(responseNonce: Uint8Array): Promise<ChunkedResponseContext> {
@@ -461,7 +468,7 @@ export class ChunkedOHTTPClient {
 					[kAeadKey]: aeadKey,
 					[kAeadNonce]: aeadNonce,
 
-					async openChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+					async openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 						}
@@ -471,7 +478,7 @@ export class ChunkedOHTTPClient {
 						return openResponseChunk(aead, aeadKey, aeadNonce, counter++, ciphertext, false);
 					},
 
-					async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array> {
+					async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 						}
@@ -492,11 +499,7 @@ export class ChunkedOHTTPClient {
 	 * Convenience method that splits the request into chunks.
 	 * Returns the full encapsulated message and a function to create response context.
 	 */
-	async encapsulate(request: Uint8Array): Promise<{
-		encapsulatedRequest: Uint8Array;
-		responseNonceLength: number;
-		createResponseContext: (responseNonce: Uint8Array) => Promise<ChunkedResponseContext>;
-	}> {
+	async encapsulate(request: Uint8Array) {
 		const ctx = await this.createRequestContext();
 
 		// Chunk + seal through the same pipelined transforms as the streaming API
@@ -510,7 +513,7 @@ export class ChunkedOHTTPClient {
 		return {
 			encapsulatedRequest: concat(ctx.header, sealed),
 			responseNonceLength: getResponseNonceLength(this.suite),
-			createResponseContext: (nonce) => ctx.createResponseContext(nonce),
+			createResponseContext: (nonce: Uint8Array) => ctx.createResponseContext(nonce),
 		};
 	}
 
@@ -522,7 +525,7 @@ export class ChunkedOHTTPClient {
 	async decapsulateResponse(
 		createResponseContext: (responseNonce: Uint8Array) => Promise<ChunkedResponseContext>,
 		encapsulatedResponse: Uint8Array,
-	): Promise<Uint8Array> {
+	): Promise<Uint8Array<ArrayBuffer>> {
 		const nonceLength = getResponseNonceLength(this.suite);
 		if (encapsulatedResponse.length < nonceLength) {
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
@@ -694,7 +697,7 @@ export class ChunkedOHTTPClient {
 		};
 
 		// Build RequestInit for relay with streaming body
-		const init: RequestInit & { duplex: "half" } = {
+		const init: StreamingRequestInit = {
 			method: "POST",
 			headers: {
 				"Content-Type": MediaType.CHUNKED_REQUEST,
