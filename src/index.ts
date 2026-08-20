@@ -70,6 +70,7 @@ import {
 	parseKeyConfig,
 	parseKeyConfigs,
 	type SymmetricAlgorithm as SymmetricAlgorithmType,
+	selectKeyConfig,
 	serializeKeyConfig,
 	serializeKeyConfigs,
 } from "./keyConfig.js";
@@ -86,6 +87,8 @@ export const KeyConfig = {
 	parse: parseKeyConfig,
 	/** Parse multiple KeyConfigs from application/ohttp-keys format */
 	parseMultiple: parseKeyConfigs,
+	/** Pick the first config a cipher suite can use */
+	select: selectKeyConfig,
 	/** Serialize a KeyConfig to bytes */
 	serialize: serializeKeyConfig,
 	/** Serialize multiple KeyConfigs to application/ohttp-keys format */
