@@ -5,7 +5,7 @@
  * KEM/KDF/AEAD id tables that back them.
  */
 
-import fc from "fast-check";
+import { fc, it } from "@fast-check/vitest";
 import type { KEMFactory } from "hpke";
 import {
 	KEM_DHKEM_P256_HKDF_SHA256,
@@ -20,7 +20,7 @@ import {
 	KEM_MLKEM768_X25519,
 	KEM_MLKEM1024_P384,
 } from "hpke";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { isOHTTPError, OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
 	AeadId,
@@ -62,6 +62,11 @@ const KEM_FACTORIES: Record<KemId, KEMFactory> = {
 
 const kemIdArb: fc.Arbitrary<KemId> = fc.constantFrom(...Object.values(KemId));
 
+const idArb = fc.integer({ min: 0, max: 0xffff });
+
+/** 16-bit ids the KEM table does not know about. */
+const unknownKemIdArb = idArb.filter((id) => !isValidKemId(id));
+
 const symmetricAlgorithmArb: fc.Arbitrary<SymmetricAlgorithm> = fc.record({
 	kdfId: fc.constantFrom(...Object.values(KdfId)),
 	aeadId: fc.constantFrom(...Object.values(AeadId)),
@@ -77,51 +82,7 @@ const configArb: fc.Arbitrary<KeyConfig> = kemIdArb.chain((kemId) =>
 	}),
 );
 
-/**
- * Type-only escape hatch used solely to exercise `getPublicKeyLength`'s
- * runtime guard with ids `isValidKemId` rejects. `getPublicKeyLength`'s
- * parameter type is `KemId`, so calling it with an arbitrary rejected id
- * needs the type system to accept a value it would otherwise never admit;
- * this asserts that intent without an `as` cast, mirroring how `isValidKemId`
- * narrows in the other direction.
- */
-function assertIsKemId(id: number): asserts id is KemId {}
-
-/** Asserts `parseKeyConfig` either rejects with `OHTTPError`/`InvalidKeyConfig`, or its result re-serializes to exactly `bytes`. */
-function assertConfigCanonicalOrRejects(bytes: Uint8Array): void {
-	let parsed: KeyConfig;
-	try {
-		parsed = parseKeyConfig(bytes);
-	} catch (err) {
-		expect(isOHTTPError(err)).toBe(true);
-		if (isOHTTPError(err)) {
-			expect(err.code).toBe(OHTTPErrorCode.InvalidKeyConfig);
-		}
-		return;
-	}
-	expect(serializeKeyConfig(parsed)).toEqual(bytes);
-}
-
-/** Asserts `parseKeyConfigs` either rejects with `OHTTPError`/`InvalidKeyConfig`, or its result re-serializes to exactly `bytes`. */
-function assertListCanonicalOrRejects(bytes: Uint8Array): void {
-	let parsed: KeyConfig[];
-	try {
-		parsed = parseKeyConfigs(bytes);
-	} catch (err) {
-		expect(isOHTTPError(err)).toBe(true);
-		if (isOHTTPError(err)) {
-			expect(err.code).toBe(OHTTPErrorCode.InvalidKeyConfig);
-		}
-		return;
-	}
-	expect(serializeKeyConfigs(parsed)).toEqual(bytes);
-}
-
-/** Field offsets within a serialized `KeyConfig`, derived from the config itself rather than by re-parsing. */
-function fieldOffsets(config: KeyConfig): { symLenOffset: number; algosOffset: number } {
-	const symLenOffset = 3 + config.publicKey.length;
-	return { symLenOffset, algosOffset: symLenOffset + 2 };
-}
+const configListArb = fc.array(configArb, { minLength: 0, maxLength: 4 });
 
 describe("KEM sizes vs. hpke", () => {
 	it("getPublicKeyLength/getEncLength match hpke's own Npk/Nenc for every KemId", () => {
@@ -135,96 +96,64 @@ describe("KEM sizes vs. hpke", () => {
 });
 
 describe("KEM/KDF/AEAD id guards", () => {
-	it("isValidKemId/isValidKdfId/isValidAeadId agree with the tables for arbitrary 16-bit ids", () => {
-		const kemIds: readonly number[] = Object.values(KemId);
-		const kdfIds: readonly number[] = Object.values(KdfId);
-		const aeadIds: readonly number[] = Object.values(AeadId);
-		fc.assert(
-			fc.property(fc.integer({ min: 0, max: 0xffff }), (id) => {
-				expect(isValidKemId(id)).toBe(kemIds.includes(id));
-				expect(isValidKdfId(id)).toBe(kdfIds.includes(id));
-				expect(isValidAeadId(id)).toBe(aeadIds.includes(id));
-			}),
-		);
-	});
+	it.prop([idArb])(
+		"isValidKemId/isValidKdfId/isValidAeadId agree with the tables for arbitrary 16-bit ids",
+		(id) => {
+			const kemIds: readonly number[] = Object.values(KemId);
+			const kdfIds: readonly number[] = Object.values(KdfId);
+			const aeadIds: readonly number[] = Object.values(AeadId);
+			expect(isValidKemId(id)).toBe(kemIds.includes(id));
+			expect(isValidKdfId(id)).toBe(kdfIds.includes(id));
+			expect(isValidAeadId(id)).toBe(aeadIds.includes(id));
+		},
+	);
 
-	it("getPublicKeyLength/getEncLength throw UnsupportedCipherSuite for every id isValidKemId rejects", () => {
-		fc.assert(
-			fc.property(fc.integer({ min: 0, max: 0xffff }), (id) => {
-				if (isValidKemId(id)) {
-					return;
-				}
-				assertIsKemId(id);
-				for (const thunk of [() => getPublicKeyLength(id), () => getEncLength(id)]) {
-					expect(thunk).toThrow(OHTTPError);
-					try {
-						thunk();
-					} catch (err) {
-						expect(isOHTTPError(err)).toBe(true);
-						if (isOHTTPError(err)) {
-							expect(err.code).toBe(OHTTPErrorCode.UnsupportedCipherSuite);
-						}
-					}
-				}
-			}),
-		);
-	});
+	it.prop([unknownKemIdArb])(
+		"getPublicKeyLength/getEncLength throw UnsupportedCipherSuite for every id isValidKemId rejects",
+		(id) => {
+			assertIsKemId(id);
+			for (const thunk of [() => getPublicKeyLength(id), () => getEncLength(id)]) {
+				expect(thunk).toThrow(OHTTPError);
+				expect(catchOHTTPError(thunk).code).toBe(OHTTPErrorCode.UnsupportedCipherSuite);
+			}
+		},
+	);
 });
 
 describe("KeyConfig round-trip", () => {
-	it("serializeKeyConfig -> parseKeyConfig round-trips structurally valid configs", () => {
-		fc.assert(
-			fc.property(configArb, (config) => {
-				const parsed = parseKeyConfig(serializeKeyConfig(config));
-				expect(parsed).toEqual(config);
-			}),
-		);
-	});
+	it.prop([configArb])(
+		"serializeKeyConfig -> parseKeyConfig round-trips structurally valid configs",
+		(config) => {
+			expect(parseKeyConfig(serializeKeyConfig(config))).toEqual(config);
+		},
+	);
 
-	it("serializeKeyConfigs -> parseKeyConfigs round-trips lists of 0..4 configs, mixing KEMs", () => {
-		fc.assert(
-			fc.property(fc.array(configArb, { minLength: 0, maxLength: 4 }), (configs) => {
-				const parsed = parseKeyConfigs(serializeKeyConfigs(configs));
-				expect(parsed).toEqual(configs);
-			}),
-		);
-	});
+	it.prop([configListArb])(
+		"serializeKeyConfigs -> parseKeyConfigs round-trips lists of 0..4 configs, mixing KEMs",
+		(configs) => {
+			expect(parseKeyConfigs(serializeKeyConfigs(configs))).toEqual(configs);
+		},
+	);
 });
 
 describe("offset safety", () => {
-	it("parsing a KeyConfig embedded at a non-zero byteOffset matches parsing a standalone copy", () => {
-		fc.assert(
-			fc.property(
-				configArb,
-				fc.nat({ max: 16 }),
-				fc.nat({ max: 16 }),
-				(config, prefixLen, suffixLen) => {
-					const inner = serializeKeyConfig(config);
-					const buffer = new Uint8Array(prefixLen + inner.length + suffixLen);
-					buffer.set(inner, prefixLen);
-					const embedded = buffer.subarray(prefixLen, prefixLen + inner.length);
-					expect(parseKeyConfig(embedded)).toEqual(parseKeyConfig(inner.slice()));
-				},
-			),
-		);
-	});
+	it.prop([configArb, fc.nat({ max: 16 }), fc.nat({ max: 16 })])(
+		"parsing a KeyConfig embedded at a non-zero byteOffset matches parsing a standalone copy",
+		(config, prefixLen, suffixLen) => {
+			const inner = serializeKeyConfig(config);
+			const embedded = embedAt(inner, prefixLen, suffixLen);
+			expect(parseKeyConfig(embedded)).toEqual(parseKeyConfig(inner.slice()));
+		},
+	);
 
-	it("parsing a config list embedded at a non-zero byteOffset matches parsing a standalone copy", () => {
-		fc.assert(
-			fc.property(
-				fc.array(configArb, { minLength: 0, maxLength: 4 }),
-				fc.nat({ max: 16 }),
-				fc.nat({ max: 16 }),
-				(configs, prefixLen, suffixLen) => {
-					const inner = serializeKeyConfigs(configs);
-					const buffer = new Uint8Array(prefixLen + inner.length + suffixLen);
-					buffer.set(inner, prefixLen);
-					const embedded = buffer.subarray(prefixLen, prefixLen + inner.length);
-					expect(parseKeyConfigs(embedded)).toEqual(parseKeyConfigs(inner.slice()));
-				},
-			),
-		);
-	});
+	it.prop([configListArb, fc.nat({ max: 16 }), fc.nat({ max: 16 })])(
+		"parsing a config list embedded at a non-zero byteOffset matches parsing a standalone copy",
+		(configs, prefixLen, suffixLen) => {
+			const inner = serializeKeyConfigs(configs);
+			const embedded = embedAt(inner, prefixLen, suffixLen);
+			expect(parseKeyConfigs(embedded)).toEqual(parseKeyConfigs(inner.slice()));
+		},
+	);
 });
 
 describe("canonical acceptance: parseKeyConfig", () => {
@@ -236,16 +165,11 @@ describe("canonical acceptance: parseKeyConfig", () => {
 	 */
 	const mutatedConfigBytesArb: fc.Arbitrary<Uint8Array> = fc.oneof(
 		// Unknown KEM id.
-		fc
-			.tuple(
-				configArb,
-				fc.integer({ min: 0, max: 0xffff }).filter((id) => !isValidKemId(id)),
-			)
-			.map(([config, badKemId]) => {
-				const bytes = serializeKeyConfig(config);
-				new DataView(bytes.buffer).setUint16(1, badKemId);
-				return bytes;
-			}),
+		fc.tuple(configArb, unknownKemIdArb).map(([config, badKemId]) => {
+			const bytes = serializeKeyConfig(config);
+			new DataView(bytes.buffer).setUint16(1, badKemId);
+			return bytes;
+		}),
 		// symAlgosLength not a multiple of 4, shrunk so it still fits within the
 		// remaining bytes: this must be rejected on misalignment alone, not on
 		// the separate past-the-end bounds check.
@@ -279,20 +203,16 @@ describe("canonical acceptance: parseKeyConfig", () => {
 			return bytes.slice(0, bytes.length - cut);
 		}),
 		// Trailing bytes appended after an otherwise valid config.
-		fc.tuple(configArb, fc.uint8Array({ minLength: 1, maxLength: 4 })).map(([config, extra]) => {
-			const bytes = serializeKeyConfig(config);
-			const out = new Uint8Array(bytes.length + extra.length);
-			out.set(bytes, 0);
-			out.set(extra, bytes.length);
-			return out;
-		}),
+		fc
+			.tuple(configArb, fc.uint8Array({ minLength: 1, maxLength: 4 }))
+			.map(([config, extra]) => appendBytes(serializeKeyConfig(config), extra)),
 		// Zero declared symmetric algorithms (serializeKeyConfig itself does not reject this).
 		configArb.map((config) => serializeKeyConfig({ ...config, symmetricAlgorithms: [] })),
 		// Unknown kdfId in the first algorithm slot.
 		fc
 			.tuple(
 				configArb,
-				fc.integer({ min: 0, max: 0xffff }).filter((id) => !isValidKdfId(id)),
+				idArb.filter((id) => !isValidKdfId(id)),
 			)
 			.map(([config, badKdfId]) => {
 				const bytes = serializeKeyConfig(config);
@@ -304,7 +224,7 @@ describe("canonical acceptance: parseKeyConfig", () => {
 		fc
 			.tuple(
 				configArb,
-				fc.integer({ min: 0, max: 0xffff }).filter((id) => !isValidAeadId(id)),
+				idArb.filter((id) => !isValidAeadId(id)),
 			)
 			.map(([config, badAeadId]) => {
 				const bytes = serializeKeyConfig(config);
@@ -322,19 +242,18 @@ describe("canonical acceptance: parseKeyConfig", () => {
 		bytesArb({ maxLength: 300 }),
 	);
 
-	it("parseKeyConfig either rejects with InvalidKeyConfig or round-trips exactly", () => {
-		fc.assert(
-			fc.property(mutatedConfigBytesArb, (bytes) => {
-				assertConfigCanonicalOrRejects(bytes);
-			}),
-		);
-	});
+	it.prop([mutatedConfigBytesArb])(
+		"parseKeyConfig either rejects with InvalidKeyConfig or round-trips exactly",
+		(bytes) => {
+			assertCanonicalOrRejects(bytes, parseKeyConfig, serializeKeyConfig);
+		},
+	);
 });
 
 describe("canonical acceptance: parseKeyConfigs", () => {
 	const mutatedListBytesArb: fc.Arbitrary<Uint8Array> = fc.oneof(
 		// Valid lists.
-		fc.array(configArb, { minLength: 0, maxLength: 4 }).map(serializeKeyConfigs),
+		configListArb.map(serializeKeyConfigs),
 		// Length prefix corrupted by a small delta (covers both short and long).
 		fc
 			.tuple(
@@ -354,24 +273,86 @@ describe("canonical acceptance: parseKeyConfigs", () => {
 				fc.array(configArb, { minLength: 0, maxLength: 3 }),
 				fc.uint8Array({ minLength: 1, maxLength: 3 }),
 			)
-			.map(([configs, extra]) => {
-				const bytes = serializeKeyConfigs(configs);
-				const out = new Uint8Array(bytes.length + extra.length);
-				out.set(bytes, 0);
-				out.set(extra, bytes.length);
-				return out;
-			}),
+			.map(([configs, extra]) => appendBytes(serializeKeyConfigs(configs), extra)),
 		// A single byte, too short even for one length prefix.
 		fc.uint8Array({ minLength: 1, maxLength: 1 }),
 		// Unstructured random bytes.
 		bytesArb({ maxLength: 300 }),
 	);
 
-	it("parseKeyConfigs either rejects with InvalidKeyConfig or round-trips exactly", () => {
-		fc.assert(
-			fc.property(mutatedListBytesArb, (bytes) => {
-				assertListCanonicalOrRejects(bytes);
-			}),
-		);
-	});
+	it.prop([mutatedListBytesArb])(
+		"parseKeyConfigs either rejects with InvalidKeyConfig or round-trips exactly",
+		(bytes) => {
+			assertCanonicalOrRejects(bytes, parseKeyConfigs, serializeKeyConfigs);
+		},
+	);
 });
+
+// Helpers
+
+/**
+ * Type-only escape hatch used solely to exercise `getPublicKeyLength`'s
+ * runtime guard with ids `isValidKemId` rejects. `getPublicKeyLength`'s
+ * parameter type is `KemId`, so calling it with an arbitrary rejected id
+ * needs the type system to accept a value it would otherwise never admit;
+ * this asserts that intent without an `as` cast, mirroring how `isValidKemId`
+ * narrows in the other direction.
+ */
+function assertIsKemId(id: number): asserts id is KemId {}
+
+/** Run `fn`, returning the OHTTPError it threw. Fails the test if it throws anything else, or nothing. */
+function catchOHTTPError(fn: () => unknown): OHTTPError {
+	try {
+		fn();
+	} catch (err) {
+		if (isOHTTPError(err)) {
+			return err;
+		}
+		throw err;
+	}
+	throw new Error("expected an OHTTPError to be thrown");
+}
+
+/**
+ * Asserts `parse` either rejects `bytes` with `OHTTPError`/`InvalidKeyConfig`,
+ * or produces something `serialize` maps back to exactly `bytes` - so no input
+ * is accepted into a value that would re-encode differently.
+ */
+function assertCanonicalOrRejects<T>(
+	bytes: Uint8Array,
+	parse: (bytes: Uint8Array) => T,
+	serialize: (parsed: T) => Uint8Array,
+): void {
+	let parsed: T;
+	try {
+		parsed = parse(bytes);
+	} catch (err) {
+		expect(isOHTTPError(err)).toBe(true);
+		if (isOHTTPError(err)) {
+			expect(err.code).toBe(OHTTPErrorCode.InvalidKeyConfig);
+		}
+		return;
+	}
+	expect(serialize(parsed)).toEqual(bytes);
+}
+
+/** Field offsets within a serialized `KeyConfig`, derived from the config itself rather than by re-parsing. */
+function fieldOffsets(config: KeyConfig): { symLenOffset: number; algosOffset: number } {
+	const symLenOffset = 3 + config.publicKey.length;
+	return { symLenOffset, algosOffset: symLenOffset + 2 };
+}
+
+/** `inner` placed inside a larger buffer, returned as a non-zero-offset view of it. */
+function embedAt(inner: Uint8Array, prefixLen: number, suffixLen: number): Uint8Array {
+	const buffer = new Uint8Array(prefixLen + inner.length + suffixLen);
+	buffer.set(inner, prefixLen);
+	return buffer.subarray(prefixLen, prefixLen + inner.length);
+}
+
+/** `bytes` with `extra` appended. */
+function appendBytes(bytes: Uint8Array, extra: Uint8Array): Uint8Array {
+	const out = new Uint8Array(bytes.length + extra.length);
+	out.set(bytes, 0);
+	out.set(extra, bytes.length);
+	return out;
+}
