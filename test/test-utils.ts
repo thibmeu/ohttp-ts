@@ -132,3 +132,15 @@ export function xor(a: Uint8Array, b: Uint8Array): Uint8Array {
 export function encodeString(s: string): Uint8Array {
 	return new TextEncoder().encode(s);
 }
+
+/**
+ * {@link fromHex}, but throwing - known-answer tests want the bytes, not a
+ * guard at every call site.
+ */
+export function hex(s: string): Uint8Array {
+	const bytes = fromHex(s);
+	if (bytes === undefined) {
+		throw new Error(`invalid hex in test vector: ${s}`);
+	}
+	return bytes;
+}

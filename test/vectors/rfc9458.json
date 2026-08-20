@@ -15,8 +15,17 @@
 			"symmetricAlgorithms": [{ "kdfId": 1, "aeadId": 1 }, { "kdfId": 1, "aeadId": 3 }],
 			"request": "00034745540568747470730b6578616d706c652e636f6d012f",
 			"response": "0140c8",
-			"clientEphemeralPrivate": "37b03c960a8d06e0f41a8fed85f15f37ba8ec8b3d03d5fee0e1b32e4b46a4c47",
-			"responseNonce": "4b93c8c8b0d8eca9c25fbd9a"
+			"clientEphemeralPrivate": "bc51d5e930bda26589890ac7032f70ad12e4ecb37abb1b65b1256c9c48999c73",
+			"clientEphemeralPublic": "4b28f881333e7c164ffc499ad9796f877f4e1051ee6d31bad19dec96c208b472",
+			"info": "6d6573736167652f626874747020726571756573740001002000010001",
+			"encapsulatedRequest": "010020000100014b28f881333e7c164ffc499ad9796f877f4e1051ee6d31bad19dec96c208b4726374e469135906992e1268c594d2a10c695d858c40a026e7965e7d86b83dd440b2c0185204b4d63525",
+			"secret": "62d87a6ba569ee81014c2641f52bea36",
+			"responseNonce": "c789e7151fcba46158ca84b04464910d",
+			"salt": "4b28f881333e7c164ffc499ad9796f877f4e1051ee6d31bad19dec96c208b472c789e7151fcba46158ca84b04464910d",
+			"prk": "979aaeae066cf211ab407b31ae49767f344e1501e475c84e8aff547cc5a683db",
+			"aeadKey": "5d0172a080e428b16d298c4ea0db620d",
+			"aeadNonce": "f6bf1aeb88d6df87007fa263",
+			"encapsulatedResponse": "c789e7151fcba46158ca84b04464910d86f9013e404feea014e7be4a441f234f857fbd"
 		}
 	]
 }
