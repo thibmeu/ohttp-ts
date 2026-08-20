@@ -1,23 +1,14 @@
 // Copyright (c) 2024
 // Licensed under the MIT license
 
-import {
-	AEAD_AES_128_GCM,
-	CipherSuite,
-	KDF_HKDF_SHA256,
-	KEM_DHKEM_X25519_HKDF_SHA256,
-} from "hpke";
+import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 // Follows RFC 9458 Oblivious HTTP
 
 async function setup() {
 	// [ Gateway ] creates key configuration
-	const suite = new CipherSuite(
-		KEM_DHKEM_X25519_HKDF_SHA256,
-		KDF_HKDF_SHA256,
-		AEAD_AES_128_GCM,
-	);
+	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 	const keyConfig = await KeyConfig.generate(suite, 0x01, [
 		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
 	]);
@@ -48,7 +39,9 @@ export async function obliviousHTTP(): Promise<boolean> {
 	//      | Request         |                  |              |
 	//      | [+ Encapsulated |                  |              |
 	//      |    Request ]    |                  |              |
-	const request = new TextEncoder().encode("GET /resource HTTP/1.1\r\nHost: target.example\r\n\r\n");
+	const request = new TextEncoder().encode(
+		"GET /resource HTTP/1.1\r\nHost: target.example\r\n\r\n",
+	);
 	const { encapsulatedRequest, context } = await client.encapsulate(request);
 	//      +---------------->| Gateway          |              |
 	//      |                 | Request          |              |

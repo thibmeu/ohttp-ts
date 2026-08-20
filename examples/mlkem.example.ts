@@ -8,9 +8,8 @@
 //
 // Install: pnpm add @panva/hpke-noble
 
-import { CipherSuite } from "hpke";
-import { KEM_ML_KEM_768, KDF_HKDF_SHA256, AEAD_AES_128_GCM } from "@panva/hpke-noble";
-import { KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
+import { AEAD_AES_128_GCM, KDF_HKDF_SHA256, KEM_ML_KEM_768 } from "@panva/hpke-noble";
+import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 // Follows RFC 9458 Oblivious HTTP with ML-KEM-768 (FIPS 203)

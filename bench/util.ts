@@ -6,12 +6,12 @@
  */
 
 import type { AEAD as AeadImpl } from "hpke";
-import { concat } from "../src/utils.js";
 import {
 	createChunkerTransform,
 	createResponseDecryptTransform,
 	createResponseEncryptTransform,
 } from "../src/streaming.js";
+import { concat } from "../src/utils.js";
 
 export function randomBytes(size: number): Uint8Array {
 	const buf = new Uint8Array(size);

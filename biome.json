@@ -13,6 +13,12 @@
 			}
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["bench/**"],
+			"linter": { "rules": { "style": { "noNonNullAssertion": "off" } } }
+		}
+	],
 	"formatter": {
 		"enabled": true,
 		"indentStyle": "tab",

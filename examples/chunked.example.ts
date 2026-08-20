@@ -1,28 +1,13 @@
 // Copyright (c) 2024
 // Licensed under the MIT license
 
-import {
-	AEAD_AES_128_GCM,
-	CipherSuite,
-	KDF_HKDF_SHA256,
-	KEM_DHKEM_X25519_HKDF_SHA256,
-} from "hpke";
-import {
-	AeadId,
-	ChunkedOHTTPClient,
-	ChunkedOHTTPServer,
-	KdfId,
-	KeyConfig,
-} from "../src/index.js";
+import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
+import { AeadId, ChunkedOHTTPClient, ChunkedOHTTPServer, KdfId, KeyConfig } from "../src/index.js";
 
 // Follows draft-ietf-ohai-chunked-ohttp-08
 
 async function setup() {
-	const suite = new CipherSuite(
-		KEM_DHKEM_X25519_HKDF_SHA256,
-		KDF_HKDF_SHA256,
-		AEAD_AES_128_GCM,
-	);
+	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 	const keyConfig = await KeyConfig.generate(suite, 0x01, [
 		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
 	]);
@@ -48,7 +33,7 @@ export async function chunkedOHTTP(): Promise<boolean> {
 	//   |   [+ Encapsulated Request   |                             |
 	//   |           (chunk 1 ... N) ] |                             |
 	const request = new TextEncoder().encode(
-		"POST /upload HTTP/1.1\r\n\r\n" + "X".repeat(200), // Large enough to chunk
+		`POST /upload HTTP/1.1\r\n\r\n${"X".repeat(200)}`, // Large enough to chunk
 	);
 	const { encapsulatedRequest, createResponseContext } = await client.encapsulate(request);
 	//   +---------------------------->|       Gateway Request       |
@@ -63,7 +48,7 @@ export async function chunkedOHTTP(): Promise<boolean> {
 	//   |                             |  [+ Encapsulated Response   |
 	//   |                             |           (chunk 1 ... M) ] |
 	const response = new TextEncoder().encode(
-		"HTTP/1.1 200 OK\r\n\r\n" + "Y".repeat(150), // Large enough to chunk
+		`HTTP/1.1 200 OK\r\n\r\n${"Y".repeat(150)}`, // Large enough to chunk
 	);
 	const responseCtx = await serverCreateResponse();
 	const encapsulatedResponse = await gateway.encapsulateResponse(responseCtx, response);

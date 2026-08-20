@@ -2,8 +2,8 @@
 // Licensed under the MIT license
 
 import { obliviousHTTPWithRequestResponse } from "./bhttp.example.js";
-import { chunkedHttpApi, chunkedHttpLargeBody } from "./chunked-http.example.js";
 import { chunkedOHTTP } from "./chunked.example.js";
+import { chunkedHttpApi, chunkedHttpLargeBody } from "./chunked-http.example.js";
 import { postQuantumOHTTP } from "./mlkem.example.js";
 import { obliviousHTTP } from "./ohttp.example.js";
 import { chachaResponseOHTTP } from "./response-chacha.example.js";

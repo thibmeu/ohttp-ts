@@ -18,7 +18,11 @@ import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index
 
 export async function chachaResponseOHTTP(): Promise<boolean> {
 	// [ Everybody ] agree on DHKEM(X25519), HKDF-SHA256, ChaCha20-Poly1305.
-	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_ChaCha20Poly1305);
+	const suite = new CipherSuite(
+		KEM_DHKEM_X25519_HKDF_SHA256,
+		KDF_HKDF_SHA256,
+		AEAD_ChaCha20Poly1305,
+	);
 
 	// Route response HKDF + AEAD through @panva/hpke-noble so it works without
 	// WebCrypto ChaCha20 support. Partial overrides are allowed; here we set both.
@@ -35,7 +39,9 @@ export async function chachaResponseOHTTP(): Promise<boolean> {
 	const client = new OHTTPClient(suite, KeyConfig.parse(publicKeyConfig), { responseCrypto });
 
 	// Online protocol (RFC 9458 Figure 1)
-	const request = new TextEncoder().encode("GET /resource HTTP/1.1\r\nHost: target.example\r\n\r\n");
+	const request = new TextEncoder().encode(
+		"GET /resource HTTP/1.1\r\nHost: target.example\r\n\r\n",
+	);
 	const { encapsulatedRequest, context } = await client.encapsulate(request);
 
 	const { request: decryptedRequest, context: serverContext } =

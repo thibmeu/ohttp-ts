@@ -40,8 +40,8 @@
 		"check:package": "publint && attw --pack",
 		"check:treeshake": "node tools/check-treeshake.mjs",
 		"size": "node tools/size.mjs",
-		"lint": "biome check src test",
-		"format": "biome format --write src test",
+		"lint": "biome check bench examples src test",
+		"format": "biome format --write bench examples src test",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.bench.json"
 	},
 	"keywords": [
