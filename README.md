@@ -111,6 +111,11 @@ right one.
      | Response       |                |             |
 ```
 
+This library encapsulates and decapsulates; it never sends anything. Each hop
+is a `fetch()` you make yourself, which is what keeps relay and gateway
+authentication - mTLS, bearer tokens, whatever your deployment needs - out of
+the library and under your control.
+
 ## Binary HTTP
 
 OHTTP encapsulates [Binary HTTP (RFC 9292)](https://www.rfc-editor.org/rfc/rfc9292.html) messages. The high-level API (`encapsulateRequest`, `decapsulateRequest`, etc.) handles encoding automatically.
