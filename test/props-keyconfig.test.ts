@@ -8,6 +8,9 @@
 import { fc, it } from "@fast-check/vitest";
 import type { KEMFactory } from "hpke";
 import {
+	AEAD_AES_128_GCM,
+	CipherSuite,
+	KDF_HKDF_SHA256,
 	KEM_DHKEM_P256_HKDF_SHA256,
 	KEM_DHKEM_P384_HKDF_SHA384,
 	KEM_DHKEM_P521_HKDF_SHA512,
@@ -24,6 +27,7 @@ import { describe, expect } from "vitest";
 import { isOHTTPError, OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
 	AeadId,
+	generateKeyConfig,
 	getEncLength,
 	getPublicKeyLength,
 	isValidAeadId,
@@ -39,6 +43,7 @@ import {
 	serializeKeyConfigs,
 } from "../src/keyConfig.js";
 import { bytesArb, bytesOfLengthArb } from "./props-helpers.js";
+import { toHex } from "./test-utils.js";
 
 /**
  * Maps every `KemId` to the `hpke` factory implementing it. Declaring this as
@@ -243,7 +248,7 @@ describe("canonical acceptance: parseKeyConfig", () => {
 	);
 
 	it.prop([mutatedConfigBytesArb])(
-		"parseKeyConfig either rejects with InvalidKeyConfig or round-trips exactly",
+		"parseKeyConfig either rejects or round-trips exactly",
 		(bytes) => {
 			assertCanonicalOrRejects(bytes, parseKeyConfig, serializeKeyConfig);
 		},
@@ -281,11 +286,90 @@ describe("canonical acceptance: parseKeyConfigs", () => {
 	);
 
 	it.prop([mutatedListBytesArb])(
-		"parseKeyConfigs either rejects with InvalidKeyConfig or round-trips exactly",
+		"parseKeyConfigs either rejects or returns configs that are byte-exact slices of the input",
 		(bytes) => {
-			assertCanonicalOrRejects(bytes, parseKeyConfigs, serializeKeyConfigs);
+			assertSubsequenceOrRejects(bytes);
 		},
 	);
+});
+
+describe("list tolerance", () => {
+	const suite = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	/** A usable config, plus the same bytes with the KEM id set to one we lack. */
+	async function pair() {
+		const priv = await generateKeyConfig(suite(), 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		const good = serializeKeyConfig(priv);
+		const other = new Uint8Array(good);
+		new DataView(other.buffer).setUint16(1, 0xffff);
+		return { good, other };
+	}
+
+	function list(...configs: Uint8Array[]): Uint8Array {
+		const total = configs.reduce((n, c) => n + 2 + c.length, 0);
+		const out = new Uint8Array(total);
+		const view = new DataView(out.buffer);
+		let offset = 0;
+		for (const c of configs) {
+			view.setUint16(offset, c.length);
+			out.set(c, offset + 2);
+			offset += 2 + c.length;
+		}
+		return out;
+	}
+
+	// A gateway that adds a KEM we do not implement must not take down the entry
+	// we can still use. Both Rust clients tested against ohttp-gateway do this;
+	// rejecting the whole list makes every client break on the gateway's upgrade.
+	it("skips a config naming an unimplemented KEM and keeps the rest", async () => {
+		const { good, other } = await pair();
+
+		expect(parseKeyConfigs(list(other, good))).toHaveLength(1);
+		expect(parseKeyConfigs(list(good, other))).toHaveLength(1);
+		const [survivor] = parseKeyConfigs(list(other, good));
+		expect(survivor).toBeDefined();
+		if (survivor === undefined) throw new Error("unreachable");
+		expect(serializeKeyConfig(survivor)).toEqual(good);
+	});
+
+	it("skips a config naming an unimplemented AEAD", async () => {
+		const priv = await generateKeyConfig(suite(), 1, [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+		const good = serializeKeyConfig(priv);
+		const other = new Uint8Array(good);
+		// Last four bytes are the sole (KDF, AEAD) pair; leave the KDF, break the AEAD.
+		new DataView(other.buffer).setUint16(other.length - 2, 0xffff);
+
+		expect(parseKeyConfigs(list(other, good))).toHaveLength(1);
+	});
+
+	// Malformed bytes are a tampering signal, not registry evolution, so they
+	// must not be quietly skipped the way an unknown algorithm is.
+	it("rejects the whole list when a record is structurally damaged", async () => {
+		const { good } = await pair();
+		const truncated = good.subarray(0, good.length - 1);
+
+		expect(() => parseKeyConfigs(list(truncated, good))).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
+		);
+	});
+
+	// Fail closed: callers reach for configs[0].
+	it("throws rather than returning an empty list when nothing is usable", async () => {
+		const { other } = await pair();
+
+		expect(() => parseKeyConfigs(list(other, other))).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }),
+		);
+	});
+
+	it("still returns an empty list for empty input", () => {
+		expect(parseKeyConfigs(new Uint8Array(0))).toEqual([]);
+	});
 });
 
 // Helpers
@@ -314,9 +398,9 @@ function catchOHTTPError(fn: () => unknown): OHTTPError {
 }
 
 /**
- * Asserts `parse` either rejects `bytes` with `OHTTPError`/`InvalidKeyConfig`,
- * or produces something `serialize` maps back to exactly `bytes` - so no input
- * is accepted into a value that would re-encode differently.
+ * Asserts `parse` either rejects `bytes`, or produces something `serialize`
+ * maps back to exactly `bytes` - so no input is accepted into a value that
+ * would re-encode differently.
  */
 function assertCanonicalOrRejects<T>(
 	bytes: Uint8Array,
@@ -327,13 +411,62 @@ function assertCanonicalOrRejects<T>(
 	try {
 		parsed = parse(bytes);
 	} catch (err) {
-		expect(isOHTTPError(err)).toBe(true);
-		if (isOHTTPError(err)) {
-			expect(err.code).toBe(OHTTPErrorCode.InvalidKeyConfig);
-		}
+		assertRejection(err);
 		return;
 	}
 	expect(serialize(parsed)).toEqual(bytes);
+}
+
+/** Either rejection code is allowed; which one appears is pinned in "list tolerance". */
+function assertRejection(err: unknown): void {
+	expect(isOHTTPError(err)).toBe(true);
+	if (isOHTTPError(err)) {
+		expect([OHTTPErrorCode.InvalidKeyConfig, OHTTPErrorCode.UnsupportedCipherSuite]).toContain(
+			err.code,
+		);
+	}
+}
+
+/**
+ * The list parser is deliberately lossy, so it cannot round-trip. What must
+ * still hold is that it never invents or rewrites a config: each one it returns
+ * re-encodes to exactly one of the input's records, in order.
+ */
+function assertSubsequenceOrRejects(bytes: Uint8Array): void {
+	let parsed: KeyConfig[];
+	try {
+		parsed = parseKeyConfigs(bytes);
+	} catch (err) {
+		assertRejection(err);
+		return;
+	}
+
+	const records = splitRecords(bytes).map(toHex);
+	let at = 0;
+	for (const config of parsed) {
+		const encoded = toHex(serializeKeyConfig(config));
+		const found = records.indexOf(encoded, at);
+		expect(
+			found,
+			`config ${encoded} is not a record of the input at or after ${at}`,
+		).toBeGreaterThan(-1);
+		at = found + 1;
+	}
+}
+
+/** Split an `application/ohttp-keys` blob into its length-prefixed records. */
+function splitRecords(bytes: Uint8Array): Uint8Array[] {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	const records: Uint8Array[] = [];
+	let offset = 0;
+	while (offset + 2 <= bytes.length) {
+		const length = view.getUint16(offset);
+		offset += 2;
+		if (offset + length > bytes.length) break;
+		records.push(bytes.slice(offset, offset + length));
+		offset += length;
+	}
+	return records;
 }
 
 /** Field offsets within a serialized `KeyConfig`, derived from the config itself rather than by re-parsing. */

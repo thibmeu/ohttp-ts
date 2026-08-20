@@ -1,5 +1,5 @@
 import type { CipherSuite, KeyPair } from "hpke";
-import { OHTTPError, OHTTPErrorCode } from "./errors.js";
+import { isOHTTPError, OHTTPError, OHTTPErrorCode } from "./errors.js";
 
 /**
  * HPKE KEM identifiers (RFC 9458 Section 3.1)
@@ -194,6 +194,10 @@ export function serializeKeyConfig(config: KeyConfig): Uint8Array {
 
 /**
  * Parse a KeyConfig from bytes (RFC 9458 Section 3.1)
+ *
+ * Rejects with {@link OHTTPErrorCode.InvalidKeyConfig} for structural damage
+ * and {@link OHTTPErrorCode.UnsupportedCipherSuite} for an algorithm this
+ * library does not implement. Only the latter is safe for a list to skip.
  */
 export function parseKeyConfig(data: Uint8Array): KeyConfig {
 	if (data.length < 7) {
@@ -210,7 +214,7 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 	// KEM ID (2 bytes)
 	const kemIdRaw = view.getUint16(offset);
 	if (!isValidKemId(kemIdRaw)) {
-		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
 	const kemId = kemIdRaw;
 	offset += 2;
@@ -244,7 +248,9 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 		const kdfIdRaw = view.getUint16(offset);
 		const aeadIdRaw = view.getUint16(offset + 2);
 		if (!isValidKdfId(kdfIdRaw) || !isValidAeadId(aeadIdRaw)) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+			// Drops the whole config, as martinthomson/ohttp does. Keeping its known
+			// suites would cost the byte-exact round-trip property below.
+			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 		}
 		symmetricAlgorithms.push({ kdfId: kdfIdRaw, aeadId: aeadIdRaw });
 		offset += 4;
@@ -317,8 +323,23 @@ export function parseKeyConfigs(data: Uint8Array): KeyConfig[] {
 		}
 
 		const configBytes = data.slice(offset, offset + length);
-		configs.push(parseKeyConfig(configBytes));
 		offset += length;
+
+		// Skip configs naming algorithms we lack, so a gateway adding one does not
+		// take down the entries we can still use. Structural errors still reject.
+		try {
+			configs.push(parseKeyConfig(configBytes));
+		} catch (err) {
+			if (isOHTTPError(err) && err.code === OHTTPErrorCode.UnsupportedCipherSuite) {
+				continue;
+			}
+			throw err;
+		}
+	}
+
+	// Fail closed: callers reach for configs[0].
+	if (data.length > 0 && configs.length === 0) {
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
 
 	return configs;
