@@ -12,18 +12,29 @@ import {
 import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
+import { CHUNKED_REQUEST_LABEL, kRecipientContext } from "../src/constants.js";
 import {
 	AEAD_TAG_SIZE,
+	buildRequestInfo,
 	computeChunkNonce,
 	DEFAULT_MAX_FRAME_SIZE,
+	deriveChunkedResponseKeys,
 	frameChunk,
 	parseFramedChunk,
+	sealResponseChunk,
 } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
-import { AeadId, generateKeyConfig, KdfId } from "../src/keyConfig.js";
+import {
+	AeadId,
+	generateKeyConfig,
+	importKeyConfig,
+	KdfId,
+	parseKeyConfig,
+	serializeKeyConfig,
+} from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
 import { concat } from "../src/utils.js";
-import { fromHex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
+import { hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import chunkedVectors from "./vectors/chunked-ohttp-08.json";
 
 describe("chunk framing", () => {
@@ -418,58 +429,110 @@ describe("draft-08 Appendix A test vectors", () => {
 		throw new Error("No test vector found");
 	}
 
-	it("validates key config parsing", () => {
-		const keyConfigHex = vector.keyConfig;
-		const keyConfigBytes = fromHex(keyConfigHex);
-		expect(keyConfigBytes).toBeDefined();
+	const suite = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		expect(vector.keyId).toBe(1);
-		expect(vector.kemId).toBe(0x0020);
-		expect(vector.kdfId).toBe(0x0001);
-		expect(vector.aeadId).toBe(0x0001);
+	/** Gateway side of the draft's exchange, rebuilt from its private key. */
+	function draftKeyConfig() {
+		const config = parseKeyConfig(hex(vector.keyConfig));
+		return importKeyConfig(suite(), vector.keyId, config.publicKey, hex(vector.skR), [
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+	}
+
+	it("parses the draft's key config correctly", () => {
+		const config = parseKeyConfig(hex(vector.keyConfig));
+
+		expect(config.keyId).toBe(vector.keyId);
+		expect(config.kemId).toBe(vector.kemId);
+		// Canonical: what we parsed re-encodes to exactly the draft's bytes.
+		expect(toHex(serializeKeyConfig(config))).toBe(vector.keyConfig);
 	});
 
-	it("validates request chunking structure", () => {
-		const request = fromHex(vector.request);
-		expect(request).toBeDefined();
+	it("builds the draft's HPKE info string", () => {
+		const info = buildRequestInfo(
+			vector.keyId,
+			vector.kemId,
+			vector.kdfId,
+			vector.aeadId,
+			CHUNKED_REQUEST_LABEL,
+		);
 
-		// Verify chunks concatenate to original request
-		const chunks = vector.requestChunks.map((c) => fromHex(c.plaintext));
-		const reassembled = concat(...(chunks.filter((c) => c !== undefined) as Uint8Array[]));
-		expect(reassembled).toEqual(request);
+		expect(toHex(info)).toBe(vector.info);
 	});
 
-	it("validates response chunking structure", () => {
-		const response = fromHex(vector.response);
-		expect(response).toBeDefined();
+	it("decapsulates the draft's encapsulated request", async () => {
+		const server = new ChunkedOHTTPServer([await draftKeyConfig()]);
 
-		// Verify chunks concatenate to original response
-		const chunks = vector.responseChunks.map((c) => fromHex(c.plaintext));
-		const reassembled = concat(...(chunks.filter((c) => c !== undefined) as Uint8Array[]));
-		expect(reassembled).toEqual(response);
+		const { request } = await server.decapsulate(hex(vector.encapsulatedRequest));
+
+		expect(toHex(request)).toBe(vector.request);
 	});
 
-	it("validates response nonce XOR counter pattern", () => {
-		const baseNonce = fromHex(vector.aeadNonce);
-		expect(baseNonce).toBeDefined();
-		if (baseNonce === undefined) throw new Error("Invalid hex");
+	it("opens the draft's request chunks one at a time, in order", async () => {
+		const server = new ChunkedOHTTPServer([await draftKeyConfig()]);
+		const encapsulated = hex(vector.encapsulatedRequest);
+		const ctx = await server.createRequestContext(encapsulated.subarray(0, 39));
 
-		// Counter 0: nonce unchanged
-		expect(toHex(baseNonce)).toBe(vector.responseChunks[0]?.chunkNonce);
+		let offset = 39;
+		for (const chunk of vector.requestChunks) {
+			const parsed = parseFramedChunk(encapsulated.subarray(offset));
+			expect(parsed).toBeDefined();
+			if (parsed === undefined) throw new Error("unreachable");
+			// The vector's `ciphertext` carries its own varint length prefix.
+			expect(toHex(encapsulated.subarray(offset, offset + parsed.bytesConsumed))).toBe(
+				chunk.ciphertext,
+			);
+			expect(parsed.isFinal).toBe("final" in chunk);
 
-		// Counter 1: XOR with 1
-		const nonce1 = new Uint8Array(baseNonce);
-		nonce1[nonce1.length - 1] ^= 1;
-		expect(toHex(nonce1)).toBe(vector.responseChunks[1]?.chunkNonce);
-
-		// Counter 2: XOR with 2
-		const nonce2 = new Uint8Array(baseNonce);
-		nonce2[nonce2.length - 1] ^= 2;
-		expect(toHex(nonce2)).toBe(vector.responseChunks[2]?.chunkNonce);
+			const plaintext = parsed.isFinal
+				? await ctx.openFinalChunk(parsed.ciphertext)
+				: await ctx.openChunk(parsed.ciphertext);
+			expect(toHex(plaintext)).toBe(chunk.plaintext);
+			offset += parsed.bytesConsumed;
+		}
+		expect(offset).toBe(encapsulated.length);
 	});
 
-	// Note: Full deterministic test would require controlling HPKE randomness
-	// which isn't easily achievable. The round-trip tests verify correctness.
+	// The response leg derives its key from the request's HPKE context plus the
+	// response nonce, so supplying the draft's nonce makes it deterministic.
+	// This is what a round-trip test cannot do: if the counter stopped advancing,
+	// seal and open would agree on the same reused nonce and the round-trip would
+	// still pass, while these vectors would not.
+	it("reproduces the draft's response key schedule and every chunk", async () => {
+		const keyConfig = await draftKeyConfig();
+		const server = new ChunkedOHTTPServer([keyConfig]);
+		const ctx = await server.createRequestContext(hex(vector.encapsulatedRequest).subarray(0, 39));
+
+		const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
+			keyConfig.suite,
+			ctx[kRecipientContext],
+			hex(vector.enc),
+			hex(vector.responseNonce),
+		);
+
+		expect(toHex(aeadNonce)).toBe(vector.aeadNonce);
+
+		const framed: Uint8Array[] = [hex(vector.responseNonce)];
+		for (const chunk of vector.responseChunks) {
+			const isFinal = "final" in chunk;
+			expect(toHex(computeChunkNonce(aeadNonce, chunk.counter))).toBe(chunk.chunkNonce);
+
+			const sealed = await sealResponseChunk(
+				aead,
+				aeadKey,
+				aeadNonce,
+				chunk.counter,
+				hex(chunk.plaintext),
+				isFinal,
+			);
+			const withLength = frameChunk(sealed, isFinal);
+			expect(toHex(withLength)).toBe(chunk.ciphertext);
+			framed.push(withLength);
+		}
+
+		expect(toHex(concat(...framed))).toBe(vector.encapsulatedResponse);
+	});
 });
 
 describe("chunked OHTTP error handling", () => {

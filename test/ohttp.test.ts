@@ -14,16 +14,23 @@ import {
 import { describe, expect, it } from "vitest";
 import { OHTTPClient } from "../src/client.js";
 import { MediaType } from "../src/constants.js";
+import {
+	decapsulateRequest,
+	encapsulateResponse,
+	getResponseNonceLength,
+} from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
 	AeadId,
 	deriveKeyConfig,
 	generateKeyConfig,
+	importKeyConfig,
 	KdfId,
 	parseKeyConfig,
+	serializeKeyConfig,
 } from "../src/keyConfig.js";
 import { OHTTPServer } from "../src/server.js";
-import { fromHex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
+import { fromHex, hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import ohttpJsVectors from "./vectors/ohttp-js.json";
 import rfc9458Vectors from "./vectors/rfc9458.json";
 
@@ -298,31 +305,65 @@ describe("RFC 9458 Appendix A test vectors", () => {
 		throw new Error("No test vector found");
 	}
 
-	it("parses the RFC key config correctly", () => {
-		const data = fromHex(vector.keyConfig);
-		expect(data).toBeDefined();
-		if (data === undefined) throw new Error("Invalid hex");
+	/** Server side of the RFC's exchange, rebuilt from the gateway private key. */
+	async function rfcServer() {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await importKeyConfig(
+			suite,
+			vector.keyId,
+			hex(vector.publicKey),
+			hex(vector.privateKey),
+			[
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+			],
+		);
+		return { suite, keyConfig };
+	}
 
-		const config = parseKeyConfig(data);
+	it("parses the RFC key config correctly", () => {
+		const config = parseKeyConfig(hex(vector.keyConfig));
 
 		expect(config.keyId).toBe(vector.keyId);
 		expect(config.kemId).toBe(vector.kemId);
-		expect(config.symmetricAlgorithms.length).toBe(vector.symmetricAlgorithms.length);
+		expect(config.symmetricAlgorithms).toEqual(vector.symmetricAlgorithms);
+		// Canonical: what we parsed re-encodes to exactly the RFC's bytes.
+		expect(toHex(serializeKeyConfig(config))).toBe(vector.keyConfig);
 	});
 
-	it("validates request/response hex values", () => {
-		const request = fromHex(vector.request);
-		const response = fromHex(vector.response);
+	// The gateway direction is fully deterministic from the private key - no
+	// randomness to control - so it pins the request key schedule against bytes
+	// this library did not generate.
+	it("decapsulates the RFC's encapsulated request", async () => {
+		const { keyConfig } = await rfcServer();
+		const server = new OHTTPServer([keyConfig]);
 
-		expect(request).toBeDefined();
-		expect(response).toBeDefined();
-		expect(request?.length).toBeGreaterThan(0);
-		expect(response?.length).toBeGreaterThan(0);
+		const { request } = await server.decapsulate(hex(vector.encapsulatedRequest));
+
+		expect(toHex(request)).toBe(vector.request);
 	});
 
-	// Note: Full vector validation would require controlling the randomness
-	// in HPKE operations, which isn't easily achievable with the hpke library.
-	// The round-trip tests above verify correctness.
+	// Response encryption takes the nonce as an argument, so feeding the RFC's
+	// nonce back in makes this leg deterministic too. This is the test that
+	// catches a broken response key schedule: a round-trip cannot, because it
+	// would derive the same wrong key on both sides.
+	it("reproduces the RFC's encapsulated response byte for byte", async () => {
+		const { keyConfig } = await rfcServer();
+		const ctx = await decapsulateRequest(hex(vector.encapsulatedRequest), [keyConfig]);
+
+		const encapsulatedResponse = await encapsulateResponse(
+			ctx,
+			hex(vector.response),
+			hex(vector.responseNonce),
+		);
+
+		expect(toHex(encapsulatedResponse)).toBe(vector.encapsulatedResponse);
+	});
+
+	it("uses max(Nn, Nk) for the response nonce, as the RFC's vector does", async () => {
+		const { suite } = await rfcServer();
+		expect(getResponseNonceLength(suite)).toBe(hex(vector.responseNonce).length);
+	});
 });
 
 describe("Interoperability with chris-wood/ohttp-js", () => {
