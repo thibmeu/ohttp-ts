@@ -5,5 +5,5 @@
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "include": ["bench", "examples"]
+  "include": ["bench", "examples", "tools"]
 }

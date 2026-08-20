@@ -38,10 +38,10 @@
 		"bench:profile": "node --import tsx bench/profile.ts",
 		"bench:trace": "node --import tsx bench/trace.ts",
 		"check:package": "publint && attw --pack",
-		"check:treeshake": "node tools/check-treeshake.mjs",
-		"size": "node tools/size.mjs",
-		"lint": "biome check bench examples src test",
-		"format": "biome format --write bench examples src test",
+		"check:treeshake": "tsx tools/check-treeshake.ts",
+		"size": "tsx tools/size.ts",
+		"lint": "biome check bench examples src test tools",
+		"format": "biome format --write bench examples src test tools",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
 	},
 	"keywords": [
