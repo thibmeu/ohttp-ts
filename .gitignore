@@ -29,3 +29,6 @@ coverage/
 
 # Size report
 size.html
+
+# Scratch probes, never committed
+*.tmp.ts

@@ -10,19 +10,15 @@
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
 import {
-	AeadId,
 	ChunkedOHTTPClient,
 	ChunkedOHTTPServer,
-	KdfId,
 	KeyConfig,
 	type StreamingRequestInit,
 } from "../src/index.js";
 
 async function setup() {
 	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-	const keyConfig = await KeyConfig.generate(suite, 0x01, [
-		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-	]);
+	const keyConfig = await KeyConfig.generate(suite, 0x01);
 
 	const gateway = new ChunkedOHTTPServer([keyConfig]);
 	const client = new ChunkedOHTTPClient(suite, keyConfig);

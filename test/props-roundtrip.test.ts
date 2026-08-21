@@ -31,10 +31,8 @@ import {
 } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
-	AeadId,
 	deriveKeyConfig,
 	getEncLength,
-	KdfId,
 	KemId,
 	type KeyConfigWithPrivate,
 } from "../src/keyConfig.js";
@@ -50,17 +48,11 @@ const suiteA = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AE
 const suiteB = new CipherSuite(KEM_DHKEM_P256_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_256_GCM);
 // A second suite (different KEM and AEAD) for the cross-suite `setups` entry.
 
-const keyConfigA = await deriveKeyConfig(suiteA, seedBytes(0x11), 1, [
-	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-]);
-const keyConfigB = await deriveKeyConfig(suiteB, seedBytes(0x22), 7, [
-	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_256_GCM },
-]);
+const keyConfigA = await deriveKeyConfig(suiteA, seedBytes(0x11), 1);
+const keyConfigB = await deriveKeyConfig(suiteB, seedBytes(0x22), 7);
 // Same keyId as keyConfigA, different underlying key material: used for
 // cross-key isolation checks.
-const keyConfigAAlt = await deriveKeyConfig(suiteA, seedBytes(0x33), keyConfigA.keyId, [
-	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-]);
+const keyConfigAAlt = await deriveKeyConfig(suiteA, seedBytes(0x33), keyConfigA.keyId);
 
 interface Setup {
 	readonly name: string;

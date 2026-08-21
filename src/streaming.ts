@@ -515,10 +515,19 @@ export interface DecodedBHttpResponse {
  * framing is the peer's encoding bug, not a decryption failure. Without this
  * the bhttp library's error escapes an API that documents {@link OHTTPError}.
  */
-function pushDecoder<T>(decoder: { push(chunk: Uint8Array): T }, chunk: Uint8Array): T {
+function pushDecoder<T>(
+	decoder: { push(chunk: Uint8Array): T },
+	chunk: Uint8Array,
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+): T {
 	try {
 		return decoder.push(chunk);
 	} catch {
+		// Neither throw site runs the stream's own cancel(): a rejected pull()
+		// errors the stream without it, and the preamble loop has no stream yet.
+		// Without this the upstream decryption stream stays open on malformed
+		// input, which a peer controls.
+		reader.cancel().catch(() => {});
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
 }
@@ -549,7 +558,7 @@ export async function decodeBHttpRequestStream(
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
-		const events = pushDecoder(decoder, value);
+		const events = pushDecoder(decoder, value, reader);
 		for (const event of events) {
 			if (event.type === "request-preamble") {
 				preamble = event;
@@ -589,7 +598,7 @@ export async function decodeBHttpRequestStream(
 					return;
 				}
 
-				const events = pushDecoder(decoder, value);
+				const events = pushDecoder(decoder, value, reader);
 				let enqueuedContent = false;
 				for (const event of events) {
 					if (event.type === "content") {
@@ -650,7 +659,7 @@ export async function decodeBHttpResponseStream(
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
-		const events = pushDecoder(decoder, value);
+		const events = pushDecoder(decoder, value, reader);
 		for (const event of events) {
 			if (event.type === "response-preamble") {
 				preamble = event;
@@ -688,7 +697,7 @@ export async function decodeBHttpResponseStream(
 					return;
 				}
 
-				const events = pushDecoder(decoder, value);
+				const events = pushDecoder(decoder, value, reader);
 				let enqueuedContent = false;
 				for (const event of events) {
 					if (event.type === "content") {

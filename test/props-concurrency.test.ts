@@ -21,7 +21,7 @@ import {
 	sealResponseChunk,
 } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
-import { AeadId, generateKeyConfig, KdfId } from "../src/keyConfig.js";
+import { generateKeyConfig } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
 import {
 	collectStream,
@@ -41,9 +41,7 @@ const aeadKey = new Uint8Array(realAead.Nk).fill(0xa5);
 const baseNonce = new Uint8Array(realAead.Nn).fill(0x3c);
 
 const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-const serverKeyConfig = await generateKeyConfig(suite, 1, [
-	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-]);
+const serverKeyConfig = await generateKeyConfig(suite, 1);
 const client = new ChunkedOHTTPClient(suite, {
 	keyId: serverKeyConfig.keyId,
 	kemId: serverKeyConfig.kemId,

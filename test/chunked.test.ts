@@ -25,14 +25,13 @@ import {
 } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
-	AeadId,
 	generateKeyConfig,
 	importKeyConfig,
-	KdfId,
 	parseKeyConfig,
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
+import { decodeBHttpRequestStream } from "../src/streaming.js";
 import { concat } from "../src/utils.js";
 import { hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import chunkedVectors from "./vectors/chunked-ohttp-08.json";
@@ -122,9 +121,7 @@ describe("chunked OHTTP round-trip", () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
 		// Server generates key config
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		// Client
 		const client = new ChunkedOHTTPClient(suite, {
@@ -164,9 +161,7 @@ describe("chunked OHTTP round-trip", () => {
 	it("handles empty request and response", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -202,9 +197,7 @@ describe("chunked OHTTP round-trip", () => {
 	it("handles large request requiring multiple chunks", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		// Use small chunk size to force multiple chunks
 		const client = new ChunkedOHTTPClient(
@@ -254,9 +247,7 @@ describe("chunked OHTTP streaming API", () => {
 	it("allows incremental request construction", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -294,9 +285,7 @@ describe("chunked OHTTP streaming API", () => {
 	it("allows incremental response construction", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -349,9 +338,7 @@ describe("chunk sequence guard", () => {
 	/** Every context that tracks final-chunk state, each already past its final chunk. */
 	async function finishedContexts() {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
 			kemId: serverKeyConfig.kemId,
@@ -435,9 +422,7 @@ describe("draft-08 Appendix A test vectors", () => {
 	/** Gateway side of the draft's exchange, rebuilt from its private key. */
 	function draftKeyConfig() {
 		const config = parseKeyConfig(hex(vector.keyConfig));
-		return importKeyConfig(suite(), vector.keyId, config.publicKey, hex(vector.skR), [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		return importKeyConfig(suite(), vector.keyId, config.publicKey, hex(vector.skR));
 	}
 
 	it("parses the draft's key config correctly", () => {
@@ -505,7 +490,7 @@ describe("draft-08 Appendix A test vectors", () => {
 		const ctx = await server.createRequestContext(hex(vector.encapsulatedRequest).subarray(0, 39));
 
 		const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
-			keyConfig.suite,
+			keyConfig.suites[0],
 			ctx[kRecipientContext],
 			hex(vector.enc),
 			hex(vector.responseNonce),
@@ -540,9 +525,7 @@ describe("chunk size options", () => {
 		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
 	async function keyConfigs() {
-		const priv = await generateKeyConfig(suite(), 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const priv = await generateKeyConfig(suite(), 1);
 		return {
 			priv,
 			pub: {
@@ -602,9 +585,7 @@ describe("chunked OHTTP error handling", () => {
 	it("rejects corrupted chunk ciphertext", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -627,9 +608,7 @@ describe("chunked OHTTP error handling", () => {
 	it("rejects response with wrong AAD on final chunk", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -667,9 +646,7 @@ describe("chunked OHTTP error handling", () => {
 	it("supports custom labels", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const customRequestLabel = "custom/request";
 		const customResponseLabel = "custom/response";
@@ -786,9 +763,7 @@ describe("varint edge cases", () => {
 describe("draft-08 chunk validation (regression)", () => {
 	const newPair = async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const keyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const keyConfig = await generateKeyConfig(suite, 1);
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: keyConfig.keyId,
 			kemId: keyConfig.kemId,
@@ -826,9 +801,7 @@ describe("draft-08 chunk validation (regression)", () => {
 describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 	it("encapsulates and decapsulates HTTP Request with body", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01);
 
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -894,9 +867,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 				KDF_HKDF_SHA256,
 				AEAD_ChaCha20Poly1305,
 			);
-			const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-			]);
+			const serverKeyConfig = await generateKeyConfig(suite, 0x01);
 
 			const responseCrypto = { kdf: NobleKDF_HKDF_SHA256, aead: NobleAEAD_ChaCha20Poly1305 };
 			const client = new ChunkedOHTTPClient(
@@ -942,9 +913,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 	it("encapsulates and decapsulates HTTP Request without body", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01);
 
 		const client = new ChunkedOHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -988,9 +957,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 	it("handles large request body", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01);
 
 		// Use small chunk size to test chunking
 		const client = new ChunkedOHTTPClient(
@@ -1033,9 +1000,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 	it("streams large body with integrity", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01);
 
 		// Small chunk size to force many OHTTP chunks
 		const client = new ChunkedOHTTPClient(
@@ -1123,9 +1088,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 
 	it("handles body with patterned data", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const serverKeyConfig = await generateKeyConfig(suite, 0x01, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 0x01);
 
 		const client = new ChunkedOHTTPClient(
 			suite,
@@ -1236,9 +1199,7 @@ describe("chunked OHTTP tolerates fragmented reads (regression)", () => {
 				KDF_HKDF_SHA256,
 				AEAD_AES_128_GCM,
 			);
-			const keyConfig = await generateKeyConfig(suite, 0x01, [
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-			]);
+			const keyConfig = await generateKeyConfig(suite, 0x01);
 			// Small maxChunkSize so the bodies span many frames, including a
 			// final frame likely to straddle a read boundary.
 			const client = new ChunkedOHTTPClient(
@@ -1312,9 +1273,7 @@ describe("received frame size limits (DoS regression)", () => {
 
 	it("the decrypt stream rejects an oversized declared frame length", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const keyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const keyConfig = await generateKeyConfig(suite, 1);
 		const client = new ChunkedOHTTPClient(suite, keyConfig);
 		const server = new ChunkedOHTTPServer([keyConfig], { maxFrameSize: 4096 });
 
@@ -1336,9 +1295,7 @@ describe("received frame size limits (DoS regression)", () => {
 
 	it("the decrypt stream bounds the final chunk, which has no declared length", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const keyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const keyConfig = await generateKeyConfig(suite, 1);
 		const client = new ChunkedOHTTPClient(suite, keyConfig);
 		const server = new ChunkedOHTTPServer([keyConfig], { maxFrameSize: 4096 });
 
@@ -1369,9 +1326,7 @@ describe("received frame size limits (DoS regression)", () => {
 
 	it("a chunk size above the default frame cap still round-trips when both sides set it", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const keyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const keyConfig = await generateKeyConfig(suite, 1);
 		// maxChunkSize alone must lift the receive cap with it, tag included.
 		const maxChunkSize = 2 * 1024 * 1024;
 		const client = new ChunkedOHTTPClient(suite, keyConfig, { maxChunkSize });
@@ -1457,5 +1412,25 @@ describe("chunked bhttp framing errors", () => {
 				}),
 			),
 		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }));
+	});
+});
+
+describe("streaming bhttp decode", () => {
+	it("cancels the source when the inner bhttp is malformed", async () => {
+		let cancelled = false;
+		const source = new ReadableStream<Uint8Array>({
+			start(controller) {
+				// Framing indicator 4, which bhttp does not define.
+				controller.enqueue(new Uint8Array([0x04, 0x00]));
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+
+		await expect(decodeBHttpRequestStream(source)).rejects.toThrow(/INVALID_MESSAGE/);
+		// A rejected read leaves the decrypting stream upstream of this one open
+		// unless the reader cancels it.
+		expect(cancelled).toBe(true);
 	});
 });

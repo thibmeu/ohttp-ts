@@ -7,16 +7,14 @@
 // automatically. The library encodes Request/Response objects internally.
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
+import { KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 // Follows RFC 9458 Oblivious HTTP + RFC 9292 Binary HTTP
 
 async function setup() {
 	// [ Gateway ] creates key configuration
 	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-	const keyConfig = await KeyConfig.generate(suite, 0x01, [
-		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-	]);
+	const keyConfig = await KeyConfig.generate(suite, 0x01);
 	const gateway = new OHTTPServer([keyConfig]);
 
 	// [ Client ] fetches gateway's public key configuration

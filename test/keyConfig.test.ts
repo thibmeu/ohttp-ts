@@ -127,32 +127,41 @@ describe("KeyConfig generation", () => {
 	it("generates a valid KeyConfig", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const config = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const config = await generateKeyConfig(suite, 1);
 
 		expect(config.keyId).toBe(1);
 		expect(config.kemId).toBe(KemId.X25519_HKDF_SHA256);
 		expect(config.publicKey.length).toBe(32);
 		expect(config.keyPair).toBeDefined();
-		expect(config.suite).toBe(suite);
+		expect(config.suites).toEqual([suite]);
 	});
 
 	it("generates a non-extractable private key unless asked", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-		const algorithms = [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }];
 
-		const sealed = await generateKeyConfig(suite, 1, algorithms);
+		const sealed = await generateKeyConfig(suite, 1);
 		expect(sealed.keyPair.privateKey.extractable).toBe(false);
 		await expect(suite.SerializePrivateKey(sealed.keyPair.privateKey)).rejects.toThrow();
 
-		const exportable = await generateKeyConfig(suite, 1, algorithms, true);
+		const exportable = await generateKeyConfig(suite, 1, true);
 		expect(exportable.keyPair.privateKey.extractable).toBe(true);
 
 		const { encapsulatedSecret, ctx } = await suite.SetupSender(sealed.keyPair.publicKey, {});
 		const ciphertext = await ctx.Seal(new Uint8Array([1, 2, 3]));
 		const recipient = await suite.SetupRecipient(sealed.keyPair, encapsulatedSecret, {});
 		expect(await recipient.Open(ciphertext)).toEqual(new Uint8Array([1, 2, 3]));
+	});
+
+	it("rejects a keyId that is not a whole number in range", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+		// Number(process.env.KEY_ID) on an unset variable. NaN fails both range
+		// comparisons, so a bare `keyId < 0 || keyId > 255` waves it through.
+		await expect(generateKeyConfig(suite, Number.NaN)).rejects.toThrow(/INVALID_KEY_CONFIG/);
+		await expect(generateKeyConfig(suite, 1.5)).rejects.toThrow(/INVALID_KEY_CONFIG/);
+		await expect(deriveKeyConfig(suite, new Uint8Array(32), Number.NaN)).rejects.toThrow(
+			/INVALID_KEY_CONFIG/,
+		);
 	});
 
 	it("rejects invalid keyId", async () => {
@@ -173,13 +182,9 @@ describe("KeyConfig derivation (deterministic)", () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 		const seed = new Uint8Array(32).fill(0x42);
 
-		const config1 = await deriveKeyConfig(suite, seed, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const config1 = await deriveKeyConfig(suite, seed, 1);
 
-		const config2 = await deriveKeyConfig(suite, seed, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const config2 = await deriveKeyConfig(suite, seed, 1);
 
 		// Same seed should produce same public key
 		expect(config1.publicKey).toEqual(config2.publicKey);
@@ -190,13 +195,9 @@ describe("KeyConfig derivation (deterministic)", () => {
 		const seed1 = new Uint8Array(32).fill(0x42);
 		const seed2 = new Uint8Array(32).fill(0x43);
 
-		const config1 = await deriveKeyConfig(suite, seed1, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const config1 = await deriveKeyConfig(suite, seed1, 1);
 
-		const config2 = await deriveKeyConfig(suite, seed2, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const config2 = await deriveKeyConfig(suite, seed2, 1);
 
 		expect(config1.publicKey).not.toEqual(config2.publicKey);
 	});
@@ -205,11 +206,7 @@ describe("KeyConfig derivation (deterministic)", () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 		const shortSeed = new Uint8Array(16);
 
-		await expect(
-			deriveKeyConfig(suite, shortSeed, 1, [
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-			]),
-		).rejects.toThrow(OHTTPError);
+		await expect(deriveKeyConfig(suite, shortSeed, 1)).rejects.toThrow(OHTTPError);
 	});
 });
 
@@ -315,25 +312,6 @@ describe("KeyConfig construction", () => {
 		expect(config.symmetricAlgorithms).toEqual([
 			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
 		]);
-	});
-
-	it("rejects an algorithm list the suite cannot honour", async () => {
-		// The server decrypts with `suite`, so advertising ChaCha20-Poly1305 here
-		// buys a client a request the gateway accepts and then fails to open.
-		await expect(
-			generateKeyConfig(suite(), 1, [
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-			]),
-		).rejects.toThrow(/INVALID_KEY_CONFIG/);
-
-		await expect(
-			generateKeyConfig(suite(), 1, [
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-			]),
-		).rejects.toThrow(/INVALID_KEY_CONFIG/);
-
-		await expect(generateKeyConfig(suite(), 1, [])).rejects.toThrow(/INVALID_KEY_CONFIG/);
 	});
 });
 

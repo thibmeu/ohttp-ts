@@ -3,6 +3,7 @@ import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
 import { kAead, kAeadKey, kAeadNonce, kEnc, kSenderContext, MediaType } from "./constants.js";
 import {
 	AEAD_TAG_SIZE,
+	assertResponseCrypto,
 	buildRequestHeader,
 	buildRequestInfo,
 	CHUNKED_REQUEST_LABEL,
@@ -205,6 +206,7 @@ export class OHTTPClient {
 	 * @param options - Optional configuration
 	 */
 	constructor(suite: CipherSuite, keyConfig: KeyConfig, options: OHTTPClientOptions = {}) {
+		assertResponseCrypto([suite], options.responseCrypto);
 		this.suite = suite;
 		this.keyConfig = keyConfig;
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
@@ -355,6 +357,7 @@ export class ChunkedOHTTPClient {
 	 * @param options - Optional configuration
 	 */
 	constructor(suite: CipherSuite, keyConfig: KeyConfig, options: ChunkedOHTTPClientOptions = {}) {
+		assertResponseCrypto([suite], options.responseCrypto);
 		this.suite = suite;
 		this.keyConfig = keyConfig;
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;

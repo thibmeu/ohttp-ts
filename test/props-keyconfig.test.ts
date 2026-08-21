@@ -308,9 +308,7 @@ describe("list tolerance", () => {
 
 	/** A usable config, plus the same bytes with the KEM id set to one we lack. */
 	async function pair() {
-		const priv = await generateKeyConfig(suite(), 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const priv = await generateKeyConfig(suite(), 1);
 		const good = serializeKeyConfig(priv);
 		const other = new Uint8Array(good);
 		new DataView(other.buffer).setUint16(1, 0xffff);
@@ -364,9 +362,7 @@ describe("list tolerance", () => {
 	});
 
 	it("skips a config whose every pair is unimplemented", async () => {
-		const priv = await generateKeyConfig(suite(), 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const priv = await generateKeyConfig(suite(), 1);
 		const good = serializeKeyConfig(priv);
 		const other = new Uint8Array(good);
 		new DataView(other.buffer).setUint16(other.length - 2, 0xffff);
