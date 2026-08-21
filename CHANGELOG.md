@@ -18,6 +18,7 @@ Breaking for gateways: `KeyConfigWithPrivate.suite` becomes `suites`, the three 
 - `serializeKeyConfig` rejects a `keyId` outside 0-255, a public key that is not `Npk` long, and an algorithm list that is empty or names something this library cannot decrypt with. `setUint8` wrote 256 as key 0, and an empty list produced bytes `parseKeyConfig` refuses.
 - Private keys are no longer extractable. `generateKeyConfig` takes a trailing `extractable` for when the library holds the only copy; `deriveKeyConfig` and `importKeyConfig` never export, since the caller already has the seed or the key bytes. `SerializePrivateKey` on any of them now throws.
 - The three constructors reject a non-integer `keyId`, including the `NaN` from `Number(process.env.KEY_ID)` on an unset variable.
+- Both clients import the gateway public key once instead of on every request. `DeserializePublicKey` is a WebCrypto `importKey`, so it was an extra await per request for a key that cannot change under a live client: about 6% of a 1KB `encapsulate`. A failed import is not cached, so the client retries rather than staying broken. Mutating `keyConfig.publicKey` after construction no longer takes effect.
 - Malformed inner binary HTTP reports `InvalidMessage` on every path. The buffered ones said `DecryptionFailed` after decryption had already succeeded, and the streaming decoder let bhttp-ts's own error escape.
 - A malformed bhttp stream now cancels the stream it was reading. A rejected `pull()` errors a stream without running its `cancel()`.
 

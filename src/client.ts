@@ -1,4 +1,4 @@
-import type { AEAD as AeadImpl, CipherSuite, SenderContext } from "hpke";
+import type { AEAD as AeadImpl, CipherSuite, Key, SenderContext } from "hpke";
 import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
 import { kAead, kAeadKey, kAeadNonce, kEnc, kSenderContext, MediaType } from "./constants.js";
 import {
@@ -192,6 +192,9 @@ export interface ChunkedHttpClientContext {
 export class OHTTPClient {
 	private readonly suite: CipherSuite;
 	private readonly keyConfig: KeyConfig;
+	/** Imported once: `DeserializePublicKey` is a WebCrypto `importKey`, and the
+	 * key config cannot change under a live client */
+	private importedPublicKey: Promise<Key> | undefined;
 	private readonly kdfId: KdfId;
 	private readonly aeadId: AeadId;
 	private readonly requestLabel: string;
@@ -236,8 +239,15 @@ export class OHTTPClient {
 	 * @returns The encapsulated request bytes and context for decrypting the response
 	 */
 	async encapsulate(request: Uint8Array): Promise<EncapsulatedRequest> {
-		// Deserialize the public key
-		const publicKey = await this.suite.DeserializePublicKey(this.keyConfig.publicKey);
+		this.importedPublicKey ??= this.suite
+			.DeserializePublicKey(this.keyConfig.publicKey)
+			.catch((err: unknown) => {
+				// Only success is worth keeping: caching the rejection would poison
+				// the client for the rest of its life over one failed import.
+				this.importedPublicKey = undefined;
+				throw err;
+			});
+		const publicKey = await this.importedPublicKey;
 
 		// Encapsulate the request
 		const ctx = await encapsulateRequest(
@@ -341,6 +351,9 @@ export class OHTTPClient {
 export class ChunkedOHTTPClient {
 	private readonly suite: CipherSuite;
 	private readonly keyConfig: KeyConfig;
+	/** Imported once: `DeserializePublicKey` is a WebCrypto `importKey`, and the
+	 * key config cannot change under a live client */
+	private importedPublicKey: Promise<Key> | undefined;
 	private readonly kdfId: KdfId;
 	private readonly aeadId: AeadId;
 	private readonly requestLabel: string;
@@ -392,8 +405,15 @@ export class ChunkedOHTTPClient {
 	 * 3. For final chunk: frameChunk(await ctx.sealFinalChunk(data), true)
 	 */
 	async createRequestContext(): Promise<ChunkedRequestContext> {
-		// Deserialize the public key
-		const publicKey = await this.suite.DeserializePublicKey(this.keyConfig.publicKey);
+		this.importedPublicKey ??= this.suite
+			.DeserializePublicKey(this.keyConfig.publicKey)
+			.catch((err: unknown) => {
+				// Only success is worth keeping: caching the rejection would poison
+				// the client for the rest of its life over one failed import.
+				this.importedPublicKey = undefined;
+				throw err;
+			});
+		const publicKey = await this.importedPublicKey;
 
 		// Build info string
 		const info = buildRequestInfo(
