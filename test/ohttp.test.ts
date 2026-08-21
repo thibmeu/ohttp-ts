@@ -596,7 +596,7 @@ describe("OHTTP Request/Response API", () => {
 		await expect(context.decapsulateResponse(badResponse)).rejects.toThrow(OHTTPError);
 	});
 
-	it("wraps bhttp decode errors as opaque DecryptionFailed", async () => {
+	it("reports malformed inner bhttp as InvalidMessage", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
 		const serverKeyConfig = await generateKeyConfig(suite, 1, [
@@ -615,8 +615,8 @@ describe("OHTTP Request/Response API", () => {
 		const invalidBinaryHttp = new Uint8Array([0xff, 0xff, 0xff]); // Invalid binary HTTP
 		const { encapsulatedRequest } = await client.encapsulate(invalidBinaryHttp);
 
-		// Server decrypts successfully but bhttp decode fails
-		// Error should be opaque DecryptionFailed
+		// Server decrypts successfully but bhttp decode fails, which is a framing
+		// error rather than a crypto one
 		try {
 			// Build a proper OHTTP request
 			const ohttpRequest = new Request("https://relay.example.com/", {
@@ -628,7 +628,7 @@ describe("OHTTP Request/Response API", () => {
 			expect.fail("Should have thrown");
 		} catch (e) {
 			expect(e).toBeInstanceOf(OHTTPError);
-			expect((e as OHTTPError).code).toBe(OHTTPErrorCode.DecryptionFailed);
+			expect((e as OHTTPError).code).toBe(OHTTPErrorCode.InvalidMessage);
 		}
 	});
 });

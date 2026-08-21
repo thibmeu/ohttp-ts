@@ -313,8 +313,9 @@ export class OHTTPClient {
 				try {
 					return bhttpDecoder().decodeResponse(binaryResponse);
 				} catch {
-					// Wrap bhttp errors as opaque DecryptionFailed to prevent info leak
-					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+					// Decryption already succeeded, so this is the gateway's framing bug.
+					// Matches the streaming path, which reports InvalidMessage.
+					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
 			},
 		};

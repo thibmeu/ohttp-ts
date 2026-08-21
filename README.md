@@ -262,6 +262,25 @@ gateway may use a different implementation for the same algorithm.
 - **Replay protection** is out of scope ([RFC 9458 Section 6.5](https://www.rfc-editor.org/rfc/rfc9458.html#name-replay-attacks))
 - **Decryption errors are opaque** to prevent oracle attacks
 
+### Gateway error handling
+
+Every failure is an `OHTTPError` carrying a code: `UnknownKeyId`,
+`UnsupportedCipherSuite`, `DecryptionFailed`, `InvalidMessage`, and the chunked
+sequence codes. Keep that detail for your own logs and answer the relay with a
+plain 400, as [RFC 9458 Section
+4.3](https://www.rfc-editor.org/rfc/rfc9458.html#name-request-decapsulation)
+requires of any decapsulation failure:
+
+```typescript
+try {
+  const { request, context } = await gateway.decapsulateRequest(ohttpRequest);
+  return await context.encapsulateResponse(await fetch(request));
+} catch (err) {
+  if (isOHTTPError(err)) return new Response(null, { status: 400 });
+  throw err;
+}
+```
+
 ## License
 
 MIT

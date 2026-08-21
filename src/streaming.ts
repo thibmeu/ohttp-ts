@@ -509,6 +509,21 @@ export interface DecodedBHttpResponse {
 }
 
 /**
+ * Feed a bhttp decoder, reporting its parse errors as this library's own
+ *
+ * The bytes have already been decrypted and authenticated, so malformed
+ * framing is the peer's encoding bug, not a decryption failure. Without this
+ * the bhttp library's error escapes an API that documents {@link OHTTPError}.
+ */
+function pushDecoder<T>(decoder: { push(chunk: Uint8Array): T }, chunk: Uint8Array): T {
+	try {
+		return decoder.push(chunk);
+	} catch {
+		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+	}
+}
+
+/**
  * Decode a BHTTP request from a stream of plaintext bytes.
  *
  * Returns a promise that resolves once the preamble (method, headers) is parsed.
@@ -534,7 +549,7 @@ export async function decodeBHttpRequestStream(
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
-		const events = decoder.push(value);
+		const events = pushDecoder(decoder, value);
 		for (const event of events) {
 			if (event.type === "request-preamble") {
 				preamble = event;
@@ -574,7 +589,7 @@ export async function decodeBHttpRequestStream(
 					return;
 				}
 
-				const events = decoder.push(value);
+				const events = pushDecoder(decoder, value);
 				let enqueuedContent = false;
 				for (const event of events) {
 					if (event.type === "content") {
@@ -635,7 +650,7 @@ export async function decodeBHttpResponseStream(
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
-		const events = decoder.push(value);
+		const events = pushDecoder(decoder, value);
 		for (const event of events) {
 			if (event.type === "response-preamble") {
 				preamble = event;
@@ -673,7 +688,7 @@ export async function decodeBHttpResponseStream(
 					return;
 				}
 
-				const events = decoder.push(value);
+				const events = pushDecoder(decoder, value);
 				let enqueuedContent = false;
 				for (const event of events) {
 					if (event.type === "content") {
