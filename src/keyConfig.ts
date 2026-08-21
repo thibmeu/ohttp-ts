@@ -444,6 +444,7 @@ export async function generateKeyConfig(
 	suite: CipherSuite,
 	keyId: number,
 	symmetricAlgorithms?: readonly SymmetricAlgorithm[],
+	extractable = false,
 ): Promise<KeyConfigWithPrivate> {
 	if (keyId < 0 || keyId > 255) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
@@ -457,7 +458,7 @@ export async function generateKeyConfig(
 
 	const algorithms = resolveSymmetricAlgorithms(suite, symmetricAlgorithms);
 
-	const keyPair = await suite.GenerateKeyPair(true);
+	const keyPair = await suite.GenerateKeyPair(extractable);
 	const publicKey = await suite.SerializePublicKey(keyPair.publicKey);
 
 	return {
@@ -497,7 +498,7 @@ export async function deriveKeyConfig(
 
 	const algorithms = resolveSymmetricAlgorithms(suite, symmetricAlgorithms);
 
-	const keyPair = await suite.DeriveKeyPair(seed, true);
+	const keyPair = await suite.DeriveKeyPair(seed, false);
 	const publicKey = await suite.SerializePublicKey(keyPair.publicKey);
 
 	return {
@@ -542,7 +543,7 @@ export async function importKeyConfig(
 	const algorithms = resolveSymmetricAlgorithms(suite, symmetricAlgorithms);
 
 	const publicKey = await suite.DeserializePublicKey(publicKeyBytes);
-	const privateKey = await suite.DeserializePrivateKey(privateKeyBytes, true);
+	const privateKey = await suite.DeserializePrivateKey(privateKeyBytes, false);
 
 	const keyPair: KeyPair = { publicKey, privateKey };
 

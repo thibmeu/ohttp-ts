@@ -138,6 +138,23 @@ describe("KeyConfig generation", () => {
 		expect(config.suite).toBe(suite);
 	});
 
+	it("generates a non-extractable private key unless asked", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const algorithms = [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }];
+
+		const sealed = await generateKeyConfig(suite, 1, algorithms);
+		expect(sealed.keyPair.privateKey.extractable).toBe(false);
+		await expect(suite.SerializePrivateKey(sealed.keyPair.privateKey)).rejects.toThrow();
+
+		const exportable = await generateKeyConfig(suite, 1, algorithms, true);
+		expect(exportable.keyPair.privateKey.extractable).toBe(true);
+
+		const { encapsulatedSecret, ctx } = await suite.SetupSender(sealed.keyPair.publicKey, {});
+		const ciphertext = await ctx.Seal(new Uint8Array([1, 2, 3]));
+		const recipient = await suite.SetupRecipient(sealed.keyPair, encapsulatedSecret, {});
+		expect(await recipient.Open(ciphertext)).toEqual(new Uint8Array([1, 2, 3]));
+	});
+
 	it("rejects invalid keyId", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
