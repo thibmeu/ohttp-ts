@@ -30,6 +30,7 @@ import {
 	generateKeyConfig,
 	importKeyConfig,
 	KdfId,
+	KemId,
 	parseKeyConfig,
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
@@ -1631,6 +1632,80 @@ describe("cancelling a peer that keeps sending", () => {
 
 		await expect(server.decapsulate(encapsulatedRequest)).rejects.toThrow(
 			/UNSUPPORTED_CIPHER_SUITE/,
+		);
+	});
+});
+
+describe("chunked server request guards", () => {
+	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	/** keyId + kemId + kdfId + aeadId + `encLength` zero bytes. */
+	function header(keyId: number, kemId: number, encLength: number): Uint8Array {
+		const bytes = new Uint8Array(7 + encLength);
+		bytes[0] = keyId;
+		bytes[1] = kemId >> 8;
+		bytes[2] = kemId & 0xff;
+		bytes[4] = KdfId.HKDF_SHA256;
+		bytes[6] = AeadId.AES_128_GCM;
+		return bytes;
+	}
+
+	async function serverWithKeyId1() {
+		return new ChunkedOHTTPServer([await generateKeyConfig(suite, 1)]);
+	}
+
+	it("rejects a header naming an unknown key id", async () => {
+		const server = await serverWithKeyId1();
+		await expect(
+			server.createRequestContext(header(9, KemId.X25519_HKDF_SHA256, 32)),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.UnknownKeyId }));
+	});
+
+	it("rejects a header naming a different KEM than the key config", async () => {
+		const server = await serverWithKeyId1();
+		await expect(
+			server.createRequestContext(header(1, KemId.P256_HKDF_SHA256, 65)),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }));
+	});
+
+	it("rejects a header truncated before the enc", async () => {
+		const server = await serverWithKeyId1();
+		await expect(
+			server.createRequestContext(header(1, KemId.X25519_HKDF_SHA256, 31)),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }));
+	});
+
+	it("rejects a request without the chunked content type", async () => {
+		const server = await serverWithKeyId1();
+		const request = new Request("https://example.com", {
+			method: "POST",
+			headers: { "content-type": MediaType.REQUEST },
+			body: header(1, KemId.X25519_HKDF_SHA256, 32),
+		});
+		await expect(server.decapsulateRequest(request)).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }),
+		);
+	});
+
+	// The reader loop fills to 7 bytes, then to 7 + Nenc; a stream that ends in
+	// either window must not leave a half-parsed header behind.
+	it.each([3, 20])("rejects a body that ends after %i header bytes", async (prefix) => {
+		const server = await serverWithKeyId1();
+		const bytes = header(1, KemId.X25519_HKDF_SHA256, 32).slice(0, prefix);
+		const request = new Request("https://example.com", {
+			method: "POST",
+			headers: { "content-type": MediaType.CHUNKED_REQUEST },
+			body: new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(bytes);
+					controller.close();
+				},
+			}),
+			// @ts-expect-error duplex is required for a streaming body but missing from lib.dom
+			duplex: "half",
+		});
+		await expect(server.decapsulateRequest(request)).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }),
 		);
 	});
 });
