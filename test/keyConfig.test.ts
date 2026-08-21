@@ -269,10 +269,11 @@ describe("adversarial key config parsing", () => {
 	});
 
 	it("reports trailing bytes as structural damage even when no algorithm is supported", () => {
-		const unsupported = serializeKeyConfig({
-			...baseConfig,
-			symmetricAlgorithms: [{ kdfId: 0xffff as KdfId, aeadId: 0xffff as AeadId }],
-		});
+		// Patched after serialization: the serializer will not emit an algorithm
+		// it does not implement.
+		const unsupported = serializeKeyConfig(baseConfig);
+		new DataView(unsupported.buffer).setUint16(unsupported.length - 4, 0xffff);
+		new DataView(unsupported.buffer).setUint16(unsupported.length - 2, 0xffff);
 		expect(() => parseKeyConfig(unsupported)).toThrow(/UNSUPPORTED_CIPHER_SUITE/);
 
 		// With trailing bytes it must not report "unsupported", or parseKeyConfigs
@@ -284,5 +285,60 @@ describe("adversarial key config parsing", () => {
 		new DataView(blob.buffer).setUint16(0, damaged.length);
 		blob.set(damaged, 2);
 		expect(() => parseKeyConfigs(blob)).toThrow(/INVALID_KEY_CONFIG/);
+	});
+});
+
+describe("KeyConfig construction", () => {
+	const suite = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	it("advertises the suite's own algorithms by default", async () => {
+		const config = await generateKeyConfig(suite(), 1);
+
+		expect(config.symmetricAlgorithms).toEqual([
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+		]);
+	});
+
+	it("rejects an algorithm list the suite cannot honour", async () => {
+		// The server decrypts with `suite`, so advertising ChaCha20-Poly1305 here
+		// buys a client a request the gateway accepts and then fails to open.
+		await expect(
+			generateKeyConfig(suite(), 1, [
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+			]),
+		).rejects.toThrow(/INVALID_KEY_CONFIG/);
+
+		await expect(
+			generateKeyConfig(suite(), 1, [
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+			]),
+		).rejects.toThrow(/INVALID_KEY_CONFIG/);
+
+		await expect(generateKeyConfig(suite(), 1, [])).rejects.toThrow(/INVALID_KEY_CONFIG/);
+	});
+});
+
+describe("serializeKeyConfig validation", () => {
+	const base: KeyConfig = {
+		keyId: 1,
+		kemId: KemId.X25519_HKDF_SHA256,
+		publicKey: new Uint8Array(32).fill(0xab),
+		symmetricAlgorithms: [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }],
+	};
+
+	it("rejects a keyId outside one byte", () => {
+		// setUint8 would write 256 as 0, publishing a config under a key the
+		// gateway never registered.
+		expect(() => serializeKeyConfig({ ...base, keyId: 256 })).toThrow(/INVALID_KEY_CONFIG/);
+		expect(() => serializeKeyConfig({ ...base, keyId: -1 })).toThrow(/INVALID_KEY_CONFIG/);
+		expect(() => serializeKeyConfig({ ...base, keyId: 1.5 })).toThrow(/INVALID_KEY_CONFIG/);
+	});
+
+	it("rejects a public key that is not Npk for the KEM", () => {
+		expect(() => serializeKeyConfig({ ...base, publicKey: new Uint8Array(31) })).toThrow(
+			/INVALID_KEY_CONFIG/,
+		);
 	});
 });

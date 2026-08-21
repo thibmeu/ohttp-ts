@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `KeyConfig.generate`, `.derive`, and `.import` take `symmetricAlgorithms` as an optional argument, defaulting to the suite's own (KDF, AEAD) pair. A server decrypts every request with the single `suite` its key config carries, so any other pair in the list is one the gateway advertises, accepts in a request header, and then fails to open. A supplied list that is not exactly that pair is rejected with `InvalidKeyConfig`.
+- Both servers reject a key config list that is empty or repeats a key identifier. Lookup is by identifier alone, so a duplicate shadows every later config sharing it and a botched rotation surfaced as `UnsupportedCipherSuite` on live requests. One consequence of these two changes: a key configuration cannot advertise several AEADs under one identifier, as RFC 9458 Appendix A does, because a server decrypts with the single suite its config carries. That configuration never worked here; it now fails at construction rather than on the first request naming the second AEAD.
+- `serializeKeyConfig` rejects a `keyId` outside 0-255 and a public key whose length is not `Npk` for the KEM. `setUint8` wrote 256 as key 0, publishing a config under a key the gateway never registered, and a short public key shifted every field after it.
+
 ## [0.4.2] - 2026-08-20
 
 ### Added

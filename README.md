@@ -29,13 +29,13 @@ import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_12
 
 ```typescript
 import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM } from "hpke";
-import { KeyConfig, OHTTPClient, OHTTPServer, KdfId, AeadId } from "ohttp-ts";
+import { KeyConfig, OHTTPClient, OHTTPServer } from "ohttp-ts";
 
 // Gateway: generate key configuration
 const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-const keyConfig = await KeyConfig.generate(suite, 0x01, [
-  { kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-]);
+// The config advertises the suite's own (KDF, AEAD) pair; that is the only pair
+// the gateway can decrypt with, so there is nothing to pass.
+const keyConfig = await KeyConfig.generate(suite, 0x01);
 const gateway = new OHTTPServer([keyConfig]);
 
 // Client: fetch and parse gateway's public key
