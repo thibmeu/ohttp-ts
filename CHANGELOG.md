@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `KeyConfig.generate`, `.derive`, and `.import` take `symmetricAlgorithms` as an optional argument, defaulting to the suite's own (KDF, AEAD) pair. A server decrypts every request with the single `suite` its key config carries, so any other pair in the list is one the gateway advertises, accepts in a request header, and then fails to open. A supplied list that is not exactly that pair is rejected with `InvalidKeyConfig`.
 - Both servers reject a key config list that is empty or repeats a key identifier. Lookup is by identifier alone, so a duplicate shadows every later config sharing it and a botched rotation surfaced as `UnsupportedCipherSuite` on live requests. One consequence of these two changes: a key configuration cannot advertise several AEADs under one identifier, as RFC 9458 Appendix A does, because a server decrypts with the single suite its config carries. That configuration never worked here; it now fails at construction rather than on the first request naming the second AEAD.
 - `serializeKeyConfig` rejects a `keyId` outside 0-255 and a public key whose length is not `Npk` for the KEM. `setUint8` wrote 256 as key 0, publishing a config under a key the gateway never registered, and a short public key shifted every field after it.
+- Malformed inner binary HTTP reports `InvalidMessage` on every path, buffered and streaming, client and gateway. The buffered paths called it `DecryptionFailed`, which was misleading twice over: decryption had already succeeded, and the peer that wrote the plaintext learns nothing from the distinction, while a gateway operator reading logs can no longer tell a real decryption failure from a client encoding bug. The streaming decoder also let the bhttp library's own error escape an API that documents `OHTTPError`.
+
+### Documentation
+
+- The README shows the one line that collapses every `OHTTPError` into the 400 an OHTTP gateway owes a relay (RFC 9458 Section 4.3).
 
 ## [0.4.2] - 2026-08-20
 

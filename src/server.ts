@@ -251,8 +251,11 @@ export class OHTTPServer {
 		try {
 			innerRequest = bhttpDecoder().decodeRequest(binaryRequest);
 		} catch {
-			// Wrap bhttp errors as opaque DecryptionFailed to prevent info leak
-			throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+			// Decryption already succeeded, so this is the client's framing bug, not
+			// a crypto failure. Reporting DecryptionFailed here would make the real
+			// ones unreadable in gateway logs, and the client learns nothing it did
+			// not already know: it encoded the plaintext.
+			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
 		// Create HTTP context

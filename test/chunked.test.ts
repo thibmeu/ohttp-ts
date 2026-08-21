@@ -12,7 +12,7 @@ import {
 import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
-import { CHUNKED_REQUEST_LABEL, kRecipientContext } from "../src/constants.js";
+import { CHUNKED_REQUEST_LABEL, kRecipientContext, MediaType } from "../src/constants.js";
 import {
 	AEAD_TAG_SIZE,
 	buildRequestInfo,
@@ -1428,5 +1428,34 @@ describe("non-minimal varint framing", () => {
 	it("rejects an 8-byte varint declaring a value above quicvarint's MAX", () => {
 		const frame = new Uint8Array([0xc0, 0, 0, 0, 0x80, 0, 0, 0]);
 		expect(() => parseFramedChunk(frame)).toThrow(/INVALID_MESSAGE/);
+	});
+});
+
+describe("chunked bhttp framing errors", () => {
+	it("reports malformed inner bhttp as InvalidMessage, like the buffered server", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+
+		// Valid encapsulation, plaintext opening with framing indicator 4, which is
+		// not one of the four bhttp defines. The decoder throws its own error there,
+		// and it used to escape decapsulateRequest as a non-OHTTPError.
+		const { encapsulatedRequest } = await client.encapsulate(new Uint8Array([0x04, 0x00]));
+
+		await expect(
+			server.decapsulateRequest(
+				new Request("https://gateway.example.com/", {
+					method: "POST",
+					headers: { "Content-Type": MediaType.CHUNKED_REQUEST },
+					body: new Uint8Array(encapsulatedRequest).buffer as ArrayBuffer,
+				}),
+			),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }));
 	});
 });
