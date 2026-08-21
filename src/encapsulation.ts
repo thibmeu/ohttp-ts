@@ -73,9 +73,8 @@ function encodeString(s: string): Uint8Array {
  *
  * An override may swap the implementation but not the algorithm: the factory
  * must produce the same KDF/AEAD the suite negotiated, otherwise resolution
- * throws {@link OHTTPErrorCode.UnsupportedCipherSuite}. A key config serving
- * several suites takes a factory per algorithm, since the request header picks
- * which one a response uses.
+ * throws {@link OHTTPErrorCode.UnsupportedCipherSuite}. A config serving
+ * several suites takes a factory per algorithm: the request picks which.
  */
 export interface ResponseCrypto {
 	/** KDF factory override, or one per KDF served (default: resolved from the suite) */
@@ -111,13 +110,10 @@ function aeadFactory(id: number): AEADFactory | undefined {
 }
 
 /**
- * The override for one algorithm, from a single factory or one per algorithm
+ * The override for `id`, from one factory or one per algorithm served
  *
- * A key config may serve several suites, so the AEAD the response needs is the
- * one the request header selected, not a property of the server. Supplying an
- * override means supplying one for every algorithm this side serves: a factory
- * list with nothing for `id` is a misconfiguration, not a reason to fall back
- * to the built-in and quietly ignore what the caller passed.
+ * No match throws rather than falling back, so a missing entry surfaces instead
+ * of silently ignoring what the caller passed.
  */
 function overrideImpl<T extends { readonly id: number }>(
 	factories: (() => T) | readonly (() => T)[],
@@ -135,15 +131,6 @@ function overrideImpl<T extends { readonly id: number }>(
 	throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 }
 
-/**
- * Resolve the KDF and AEAD implementations used for response encryption.
- *
- * Falls back to hpke's built-in factory for the suite's KDF/AEAD id when no
- * override is supplied. Throws {@link OHTTPErrorCode.UnsupportedCipherSuite}
- * when the suite uses an algorithm with no known factory, or when an override
- * resolves to a different algorithm than the suite negotiated (an override may
- * swap the implementation, not the algorithm).
- */
 /**
  * Resolve the KDF and AEAD implementations used for response encryption.
  *

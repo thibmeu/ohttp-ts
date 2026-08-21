@@ -16,7 +16,10 @@ async function main() {
 		postQuantumOHTTP().then((ok) => ({ name: "Post-Quantum OHTTP (ML-KEM-768)", ok })),
 		chunkedHttpApi().then((ok) => ({ name: "Chunked OHTTP HTTP API", ok })),
 		chunkedHttpLargeBody().then((ok) => ({ name: "Chunked OHTTP Large Body", ok })),
-		chachaResponseOHTTP().then((ok) => ({ name: "OHTTP Two AEADs Under One Key (Appendix A)", ok })),
+		chachaResponseOHTTP().then((ok) => ({
+			name: "OHTTP Two AEADs Under One Key (Appendix A)",
+			ok,
+		})),
 	]);
 
 	console.log("\nExamples:");

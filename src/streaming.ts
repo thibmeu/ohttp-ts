@@ -523,10 +523,8 @@ function pushDecoder<T>(
 	try {
 		return decoder.push(chunk);
 	} catch {
-		// Neither throw site runs the stream's own cancel(): a rejected pull()
-		// errors the stream without it, and the preamble loop has no stream yet.
-		// Without this the upstream decryption stream stays open on malformed
-		// input, which a peer controls.
+		// A rejected pull() errors the stream without running its cancel(), so the
+		// upstream decryption stream would stay open on input a peer controls.
 		reader.cancel().catch(() => {});
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
