@@ -706,6 +706,29 @@ describe("multi-suite key configs (RFC 9458 Appendix A)", () => {
 	});
 });
 
+describe("client public key import", () => {
+	it("retries after a failed import instead of caching the rejection", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+
+		// Shadow the instance method: the first import fails, the rest work.
+		const real = suite.DeserializePublicKey.bind(suite);
+		let failNext = true;
+		(suite as { DeserializePublicKey: typeof real }).DeserializePublicKey = (bytes) => {
+			if (failNext) {
+				failNext = false;
+				return Promise.reject(new Error("importKey failed"));
+			}
+			return real(bytes);
+		};
+
+		const client = new OHTTPClient(suite, parseKeyConfig(serializeKeyConfig(keyConfig)));
+		await expect(client.encapsulate(new Uint8Array([1]))).rejects.toThrow("importKey failed");
+		// A cached rejection would poison the client for the rest of its life.
+		await expect(client.encapsulate(new Uint8Array([1]))).resolves.toBeDefined();
+	});
+});
+
 describe("client bhttp framing errors", () => {
 	it("reports malformed inner bhttp from the gateway as InvalidMessage", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
