@@ -30,6 +30,7 @@
 		"test:browser": "vitest run --config vitest.browser.config.ts",
 		"test:workers": "vitest run --config vitest.workers.config.ts",
 		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
 		"bench": "vitest bench",
 		"bench:browser": "vitest bench --config vitest.browser.config.ts",
 		"bench:concurrency": "vitest bench --run bench/concurrency.bench.ts",
@@ -50,8 +51,7 @@
 		"hpke",
 		"privacy",
 		"encryption",
-		"rfc9458",
-		"cloudflare-workers"
+		"rfc9458"
 	],
 	"author": "Thibault Meunier",
 	"license": "MIT",
@@ -79,6 +79,7 @@
 		"@types/node": "26.2.0",
 		"@vitest/browser": "4.1.10",
 		"@vitest/browser-playwright": "4.1.10",
+		"@vitest/coverage-v8": "4.1.10",
 		"esbuild": "0.28.2",
 		"esbuild-visualizer": "0.7.0",
 		"fast-check": "4.9.0",

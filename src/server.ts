@@ -370,13 +370,8 @@ export class ChunkedOHTTPServer {
 	 * 2. For each chunk: await ctx.openChunk(ciphertext) or ctx.openFinalChunk(ciphertext)
 	 */
 	async createRequestContext(encapsulatedHeader: Uint8Array): Promise<ChunkedServerRequestContext> {
-		// Parse header
-		const { header, offset } = parseRequestHeader(encapsulatedHeader);
-
-		// Verify we have the full header
-		if (encapsulatedHeader.length < offset) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
-		}
+		// parseRequestHeader already rejects anything shorter than 7 + Nenc.
+		const { header } = parseRequestHeader(encapsulatedHeader);
 
 		// Find matching key config
 		const keyConfig = this.keyConfigs.find((k) => k.keyId === header.keyId);
