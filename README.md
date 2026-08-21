@@ -92,6 +92,14 @@ key identifier, as RFC 9458 Appendix A does. Pass the suites it serves, all
 sharing one KEM:
 
 ```typescript
+import {
+  AEAD_AES_128_GCM,
+  AEAD_ChaCha20Poly1305,
+  CipherSuite,
+  KDF_HKDF_SHA256,
+  KEM_DHKEM_X25519_HKDF_SHA256,
+} from "hpke";
+
 const keyConfig = await KeyConfig.generate(
   [
     new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM),
@@ -275,9 +283,13 @@ The override is byte-compatible with the default factory, so a client and
 gateway may use a different implementation for the same algorithm.
 
 A gateway serving several AEADs passes one factory per algorithm, since the
-request decides which a response uses:
+request decides which a response uses. Each factory must produce the algorithm
+it stands in for, so mixing implementations is fine:
 
 ```typescript
+import { AEAD_AES_128_GCM } from "hpke";
+import { AEAD_ChaCha20Poly1305 } from "@panva/hpke-noble";
+
 const gateway = new OHTTPServer([keyConfig], {
   responseCrypto: { aead: [AEAD_AES_128_GCM, AEAD_ChaCha20Poly1305] },
 });

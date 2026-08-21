@@ -702,6 +702,13 @@ export class ChunkedOHTTPClient {
 						}
 						controller.close();
 					},
+
+					// Reached when the pipeline downstream errors, which is how a
+					// malformed message stops the peer's body rather than leaving it
+					// half-read.
+					cancel(reason) {
+						return reader.cancel(reason);
+					},
 				});
 
 				// Decrypt stream

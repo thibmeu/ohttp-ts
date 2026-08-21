@@ -276,6 +276,10 @@ async function assertKeyPairServesSuites(
 /**
  * Serialize a KeyConfig to bytes (RFC 9458 Section 3.1)
  *
+ * Refuses to write anything `parseKeyConfig` would not read back, so it throws
+ * `UnsupportedCipherSuite` for a KEM this library lacks and `InvalidKeyConfig`
+ * for a keyId, public key, or algorithm list that does not fit.
+ *
  * Format:
  * - Key Identifier (1 byte)
  * - HPKE KEM ID (2 bytes)

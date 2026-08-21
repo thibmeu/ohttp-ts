@@ -1,5 +1,6 @@
 import {
 	AEAD_AES_128_GCM as NobleAEAD_AES_128_GCM,
+	AEAD_AES_256_GCM as NobleAEAD_AES_256_GCM,
 	AEAD_ChaCha20Poly1305 as NobleAEAD_ChaCha20Poly1305,
 	KDF_HKDF_SHA256 as NobleKDF_HKDF_SHA256,
 	KEM_DHKEM_X25519_HKDF_SHA256 as NobleKEM_X25519,
@@ -285,17 +286,34 @@ describe("RFC 9458 Appendix A test vectors", () => {
 		throw new Error("No test vector found");
 	}
 
-	/** Server side of the RFC's exchange, rebuilt from the gateway private key. */
+	/**
+	 * Server side of the RFC's exchange, rebuilt from the gateway private key.
+	 *
+	 * The RFC's config advertises AES-128-GCM and ChaCha20-Poly1305 under one key
+	 * identifier, so the gateway takes a suite for each.
+	 */
 	async function rfcServer() {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const chacha = new CipherSuite(
+			KEM_DHKEM_X25519_HKDF_SHA256,
+			KDF_HKDF_SHA256,
+			AEAD_ChaCha20Poly1305,
+		);
 		const keyConfig = await importKeyConfig(
-			suite,
+			[suite, chacha],
 			vector.keyId,
 			hex(vector.publicKey),
 			hex(vector.privateKey),
 		);
 		return { suite, keyConfig };
 	}
+
+	it("publishes the RFC's key config byte for byte", async () => {
+		const { keyConfig } = await rfcServer();
+
+		// Both pairs, in the RFC's order, from the suites the gateway serves.
+		expect(toHex(serializeKeyConfig(keyConfig))).toBe(vector.keyConfig);
+	});
 
 	it("parses the RFC key config correctly", () => {
 		const config = parseKeyConfig(hex(vector.keyConfig));
@@ -638,8 +656,9 @@ describe("multi-suite key configs (RFC 9458 Appendix A)", () => {
 		await expect(generateKeyConfig([aes128(), p256], 1)).rejects.toThrow(/INVALID_KEY_CONFIG/);
 
 		// Same KEM id, different implementation, so the key pair is not portable
-		// between them. The id alone does not catch this.
-		const noble = new CipherSuite(NobleKEM_X25519, NobleKDF_HKDF_SHA256, NobleAEAD_AES_128_GCM);
+		// between them. The id alone does not catch this, and the pair has to
+		// differ from the first suite's or the duplicate check fires instead.
+		const noble = new CipherSuite(NobleKEM_X25519, NobleKDF_HKDF_SHA256, NobleAEAD_AES_256_GCM);
 		await expect(generateKeyConfig([aes128(), noble], 1)).rejects.toThrow(/INVALID_KEY_CONFIG/);
 	});
 
@@ -714,7 +733,9 @@ describe("client public key import", () => {
 		// Shadow the instance method: the first import fails, the rest work.
 		const real = suite.DeserializePublicKey.bind(suite);
 		let failNext = true;
+		let imports = 0;
 		(suite as { DeserializePublicKey: typeof real }).DeserializePublicKey = (bytes) => {
+			imports += 1;
 			if (failNext) {
 				failNext = false;
 				return Promise.reject(new Error("importKey failed"));
@@ -726,6 +747,11 @@ describe("client public key import", () => {
 		await expect(client.encapsulate(new Uint8Array([1]))).rejects.toThrow("importKey failed");
 		// A cached rejection would poison the client for the rest of its life.
 		await expect(client.encapsulate(new Uint8Array([1]))).resolves.toBeDefined();
+
+		// And the successful import is kept: this is the 6% the memo buys.
+		await client.encapsulate(new Uint8Array([1]));
+		await client.encapsulate(new Uint8Array([1]));
+		expect(imports).toBe(2);
 	});
 });
 
