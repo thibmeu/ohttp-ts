@@ -33,8 +33,6 @@ import { KeyConfig, OHTTPClient, OHTTPServer } from "ohttp-ts";
 
 // Gateway: generate key configuration
 const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-// The config advertises the suite's own (KDF, AEAD) pair; that is the only pair
-// the gateway can decrypt with, so there is nothing to pass.
 const keyConfig = await KeyConfig.generate(suite, 0x01);
 const gateway = new OHTTPServer([keyConfig]);
 
@@ -89,10 +87,9 @@ Do not reach for `configs[0]`: it picks by the gateway's order, not by what the
 client implements, and hands you a config for the wrong KEM as readily as the
 right one.
 
-On the gateway side, one key configuration can advertise several `(KDF, AEAD)`
-pairs under a single key identifier, as RFC 9458 Appendix A does. Pass the
-suites it should serve, all sharing one KEM, and the advertised algorithms are
-derived from them:
+One key configuration can advertise several `(KDF, AEAD)` pairs under a single
+key identifier, as RFC 9458 Appendix A does. Pass the suites it serves, all
+sharing one KEM:
 
 ```typescript
 const keyConfig = await KeyConfig.generate(
@@ -105,10 +102,9 @@ const keyConfig = await KeyConfig.generate(
 const gateway = new OHTTPServer([keyConfig]);
 ```
 
-One key pair covers every suite, since it belongs to the KEM they share. Each
-request header names the pair it used and the gateway decrypts with the matching
-suite. A config can only advertise what its suites can open, so the gateway
-cannot publish a pair it will then reject.
+One key pair covers every suite, since it belongs to the KEM they share, and the
+advertised pairs are derived from the suites. The request header says which pair
+it used.
 
 ### Protocol Flow
 
@@ -232,7 +228,9 @@ For the low-level bytes API, see [`examples/chunked.example.ts`](examples/chunke
 
 ## Post-Quantum Support
 
-For post-quantum key encapsulation (ML-KEM), use `@panva/hpke-noble`:
+For post-quantum key encapsulation (ML-KEM), use `@panva/hpke-noble`. hpke's own
+ML-KEM goes through WebCrypto, which browsers, Cloudflare Workers, and Bun do
+not implement:
 
 ```bash
 npm install @panva/hpke-noble
@@ -260,7 +258,7 @@ default these primitives are resolved from the suite using hpke's built-in
 
 Pass non-WebCrypto factories via the `responseCrypto` option (the same pattern
 as swapping the KEM above) when the default doesn't fit.
-Bellow is an example to set ChaCha20-Poly1305 implementation:
+Below is an example that sets a ChaCha20-Poly1305 implementation:
 
 ```typescript
 import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
@@ -276,9 +274,8 @@ const client = new OHTTPClient(suite, clientKeyConfig, { responseCrypto });
 The override is byte-compatible with the default factory, so a client and
 gateway may use a different implementation for the same algorithm.
 
-A gateway serving several AEADs under one key identifier passes one factory per
-algorithm, since which one a response uses is decided by the request header, not
-by the server:
+A gateway serving several AEADs passes one factory per algorithm, since the
+request decides which a response uses:
 
 ```typescript
 const gateway = new OHTTPServer([keyConfig], {
@@ -286,9 +283,8 @@ const gateway = new OHTTPServer([keyConfig], {
 });
 ```
 
-An override with no factory for an algorithm this side serves throws
-`UnsupportedCipherSuite` rather than falling back, so a missing entry surfaces
-instead of quietly ignoring what you passed.
+An override with no factory for an algorithm you serve throws
+`UnsupportedCipherSuite` rather than falling back.
 
 ## Security Considerations
 

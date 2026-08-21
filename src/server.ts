@@ -181,17 +181,11 @@ export interface ChunkedHttpServerContext {
 /**
  * Reject a key config list a server cannot serve unambiguously
  *
- * Lookup is by key identifier alone, so a duplicate id shadows every later
- * config sharing it: requests for the shadowed key fail with
- * `UnsupportedCipherSuite` or `DecryptionFailed` rather than falling through to
- * it. A botched rotation should fail at construction instead.
- *
- * The advertised KEM and algorithms are re-derived from each config's suites
- * here as well. The constructors in `keyConfig.ts` keep the two in step, but a
- * `KeyConfig` is a plain object and `{ ...config, symmetricAlgorithms }` walks
- * past them, which is how a gateway ends up publishing a pair it cannot open.
- * `publicKey` is not checked against `keyPair`, since that needs an await the
- * constructor does not have; a config assembled by hand can still lie there.
+ * Lookup is by key identifier alone, so a duplicate shadows every later config
+ * sharing it, and a botched rotation should fail here rather than on live
+ * requests. The KEM and algorithms are re-derived too, since a plain
+ * `{ ...config, symmetricAlgorithms }` walks past the constructors. `publicKey`
+ * is not checked against `keyPair`: that needs an await this does not have.
  */
 function validateKeyConfigs(keyConfigs: readonly KeyConfigWithPrivate[]): void {
 	if (keyConfigs.length === 0) {
@@ -232,8 +226,7 @@ export class OHTTPServer {
 		for (const config of keyConfigs) {
 			assertResponseCrypto(config.suites, options.responseCrypto);
 		}
-		// Copied: validation happens here, and a caller holding the array could
-		// otherwise push an unchecked config into the lookup table afterwards.
+		// Copied: validation runs once, so a caller must not push in later.
 		this.keyConfigs = [...keyConfigs];
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
@@ -351,8 +344,7 @@ export class ChunkedOHTTPServer {
 		for (const config of keyConfigs) {
 			assertResponseCrypto(config.suites, options.responseCrypto);
 		}
-		// Copied: validation happens here, and a caller holding the array could
-		// otherwise push an unchecked config into the lookup table afterwards.
+		// Copied: validation runs once, so a caller must not push in later.
 		this.keyConfigs = [...keyConfigs];
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;

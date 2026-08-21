@@ -134,12 +134,7 @@ export interface KeyConfig {
 export interface KeyConfigWithPrivate extends KeyConfig {
 	/** HPKE key pair, valid for every suite in {@link suites} */
 	readonly keyPair: KeyPair;
-	/**
-	 * HPKE cipher suites this key can decrypt with, one per advertised
-	 * (KDF, AEAD) pair and all sharing {@link KeyConfig.kemId}
-	 *
-	 * {@link selectSuite} picks the one a request header names.
-	 */
+	/** One suite per advertised (KDF, AEAD) pair; {@link selectSuite} picks one */
 	readonly suites: readonly CipherSuite[];
 }
 
@@ -171,17 +166,11 @@ export function getEncLength(kemId: number): number {
 }
 
 /**
- * Normalize and check the suites a key configuration will decrypt with
- *
- * Every suite must share one KEM implementation, since the config advertises a
- * single KEM and one key pair, and no two may claim the same (KDF, AEAD) pair,
- * since the request header names that pair to pick between them.
+ * Normalize the suites of one key config: one shared KEM, no repeated pair
  *
  * @internal
- *
  * @throws OHTTPError InvalidKeyConfig for an empty list, mixed KEMs, or a
- * repeated pair; UnsupportedCipherSuite for a KDF or AEAD this library cannot
- * serialize
+ * repeated pair; UnsupportedCipherSuite for a KDF or AEAD it cannot serialize
  */
 export function resolveSuites(
 	suites: CipherSuite | readonly CipherSuite[],
@@ -240,9 +229,8 @@ export function sameAlgorithms(
 /**
  * Pick the suite a request header names (RFC 9458 Section 4.3)
  *
- * The gateway equivalent of {@link selectKeyConfig}: a key configuration may
- * advertise several (KDF, AEAD) pairs under one key identifier, as RFC 9458
- * Appendix A does, and the header decides which one this request used.
+ * The gateway side of {@link selectKeyConfig}. One config may advertise several
+ * pairs, as RFC 9458 Appendix A does, and the header says which was used.
  *
  * @throws OHTTPError UnsupportedCipherSuite if the config offers no such pair
  */
@@ -261,13 +249,9 @@ export function selectSuite(
 /**
  * Check that one public key really serves every suite in a config
  *
- * Two backends can share a KEM id - hpke's WebCrypto X25519 and
- * `@panva/hpke-noble`'s - while their keys are not interchangeable, and
- * `suite.KEM` is a fresh object on every access, so neither the id nor object
- * identity settles it. Serializing the public key under each suite does: a
- * suite that cannot take this key throws, and one that reads it differently
- * produces different bytes. Otherwise the config advertises a pair whose
- * requests fail at `SetupRecipient`.
+ * Two backends can share a KEM id while their keys are not interchangeable, and
+ * `suite.KEM` is a fresh object per access, so neither the id nor identity
+ * settles it. Serializing under each suite does.
  *
  * @throws OHTTPError InvalidKeyConfig if any suite disagrees
  */
@@ -540,9 +524,7 @@ export function selectKeyConfig(suite: CipherSuite, configs: readonly KeyConfig[
  *
  * @param suites - HPKE cipher suite, or one per (KDF, AEAD) pair to advertise
  * @param keyId - Key identifier (0-255)
- * @param extractable - Whether the private key can be exported (default: false).
- * Pass `true` only where this library holds the only copy and you need to
- * persist it.
+ * @param extractable - Allow exporting the private key (default: false)
  */
 export async function generateKeyConfig(
 	suites: CipherSuite | readonly CipherSuite[],

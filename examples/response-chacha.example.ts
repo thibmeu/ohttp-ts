@@ -2,20 +2,13 @@
 // Licensed under the MIT license
 
 // Example: one key configuration serving AES-128-GCM and ChaCha20-Poly1305,
-// the shape RFC 9458 Appendix A publishes.
+// the shape RFC 9458 Appendix A publishes. One suite per pair, one key pair for
+// all of them, and the request header says which pair it used.
 //
-// A key configuration may advertise several (KDF, AEAD) pairs under one key
-// identifier. The gateway passes one suite per pair, all sharing a KEM, and one
-// key pair covers them: the request header names the pair it used and the
-// gateway decrypts with the matching suite.
-//
-// OHTTP responses are not HPKE: the response key is derived with HKDF over an
-// HPKE-exported secret and then used with a raw AEAD. By default that AEAD is
-// resolved from the suite, using hpke's WebCrypto-backed factory. In browsers
-// and Cloudflare Workers, where WebCrypto lacks ChaCha20-Poly1305, pass a
-// non-WebCrypto factory via `responseCrypto` - exactly how mlkem.example.ts
-// swaps the KEM. A gateway serving two AEADs passes one factory per AEAD, since
-// which one a response uses is decided by the request, not by the server.
+// OHTTP responses are not HPKE: the key comes from HKDF over an HPKE-exported
+// secret and feeds a raw AEAD, resolved from the suite via hpke's WebCrypto
+// factories. Browsers and Cloudflare Workers lack ChaCha20-Poly1305 there, so
+// pass a factory per AEAD served via `responseCrypto`.
 //
 // Install: npm add @panva/hpke-noble
 
@@ -24,9 +17,8 @@ import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_S
 import { KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 export async function chachaResponseOHTTP(): Promise<boolean> {
-	// [ Gateway ] serves DHKEM(X25519) + HKDF-SHA256 with either AEAD. Both
-	// suites take their KEM from the same place, which is what lets one key pair
-	// serve both.
+	// [ Gateway ] serves DHKEM(X25519) + HKDF-SHA256 with either AEAD. Same KEM
+	// both times, which is what lets one key pair serve both.
 	const aesSuite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 	const chachaSuite = new CipherSuite(
 		KEM_DHKEM_X25519_HKDF_SHA256,
@@ -35,9 +27,7 @@ export async function chachaResponseOHTTP(): Promise<boolean> {
 	);
 
 	const keyConfig = await KeyConfig.generate([aesSuite, chachaSuite], 0x01);
-	// One factory per AEAD served. Responses for the ChaCha20 pair go through
-	// @panva/hpke-noble, so the gateway needs no WebCrypto ChaCha20 support;
-	// responses for the AES pair keep the WebCrypto path.
+	// ChaCha20 responses go through @panva/hpke-noble, AES ones keep WebCrypto.
 	const gateway = new OHTTPServer([keyConfig], {
 		responseCrypto: { aead: [AEAD_AES_128_GCM, AEAD_ChaCha20Poly1305] },
 	});
