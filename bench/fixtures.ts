@@ -13,7 +13,7 @@
  */
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
+import { KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 import { randomBytes } from "./util.js";
 
 export const suite = new CipherSuite(
@@ -22,9 +22,7 @@ export const suite = new CipherSuite(
 	AEAD_AES_128_GCM,
 );
 
-export const keyConfig = await KeyConfig.generate(suite, 0x01, [
-	{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-]);
+export const keyConfig = await KeyConfig.generate(suite, 0x01);
 
 export const client = new OHTTPClient(suite, keyConfig);
 export const server = new OHTTPServer([keyConfig]);

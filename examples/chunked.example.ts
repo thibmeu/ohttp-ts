@@ -2,15 +2,13 @@
 // Licensed under the MIT license
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { AeadId, ChunkedOHTTPClient, ChunkedOHTTPServer, KdfId, KeyConfig } from "../src/index.js";
+import { ChunkedOHTTPClient, ChunkedOHTTPServer, KeyConfig } from "../src/index.js";
 
 // Follows draft-ietf-ohai-chunked-ohttp-08
 
 async function setup() {
 	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-	const keyConfig = await KeyConfig.generate(suite, 0x01, [
-		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-	]);
+	const keyConfig = await KeyConfig.generate(suite, 0x01);
 
 	// Use custom chunk size for demonstration
 	const gateway = new ChunkedOHTTPServer([keyConfig], { maxChunkSize: 64 });

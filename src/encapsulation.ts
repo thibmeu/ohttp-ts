@@ -31,6 +31,7 @@ import {
 	KdfId,
 	type KeyConfig,
 	type KeyConfigWithPrivate,
+	selectSuite,
 } from "./keyConfig.js";
 import { asOwnedBytes, concat } from "./utils.js";
 
@@ -72,13 +73,15 @@ function encodeString(s: string): Uint8Array {
  *
  * An override may swap the implementation but not the algorithm: the factory
  * must produce the same KDF/AEAD the suite negotiated, otherwise resolution
- * throws {@link OHTTPErrorCode.UnsupportedCipherSuite}.
+ * throws {@link OHTTPErrorCode.UnsupportedCipherSuite}. A key config serving
+ * several suites takes a factory per algorithm, since the request header picks
+ * which one a response uses.
  */
 export interface ResponseCrypto {
-	/** KDF factory override (must match the suite's KDF; default: resolved from it) */
-	readonly kdf?: KDFFactory;
-	/** AEAD factory override (must match the suite's AEAD; default: resolved from it) */
-	readonly aead?: AEADFactory;
+	/** KDF factory override, or one per KDF served (default: resolved from the suite) */
+	readonly kdf?: KDFFactory | readonly KDFFactory[];
+	/** AEAD factory override, or one per AEAD served (default: resolved from the suite) */
+	readonly aead?: AEADFactory | readonly AEADFactory[];
 }
 
 function kdfFactory(id: number): KDFFactory | undefined {
@@ -108,6 +111,40 @@ function aeadFactory(id: number): AEADFactory | undefined {
 }
 
 /**
+ * The override for one algorithm, from a single factory or one per algorithm
+ *
+ * A key config may serve several suites, so the AEAD the response needs is the
+ * one the request header selected, not a property of the server. Supplying an
+ * override means supplying one for every algorithm this side serves: a factory
+ * list with nothing for `id` is a misconfiguration, not a reason to fall back
+ * to the built-in and quietly ignore what the caller passed.
+ */
+function overrideImpl<T extends { readonly id: number }>(
+	factories: (() => T) | readonly (() => T)[],
+	id: number,
+): T {
+	const list = Array.isArray(factories)
+		? (factories as readonly (() => T)[])
+		: [factories as () => T];
+	for (const factory of list) {
+		const impl = factory();
+		if (impl.id === id) {
+			return impl;
+		}
+	}
+	throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+}
+
+/**
+ * Resolve the KDF and AEAD implementations used for response encryption.
+ *
+ * Falls back to hpke's built-in factory for the suite's KDF/AEAD id when no
+ * override is supplied. Throws {@link OHTTPErrorCode.UnsupportedCipherSuite}
+ * when the suite uses an algorithm with no known factory, or when an override
+ * resolves to a different algorithm than the suite negotiated (an override may
+ * swap the implementation, not the algorithm).
+ */
+/**
  * Resolve the KDF and AEAD implementations used for response encryption.
  *
  * Falls back to hpke's built-in factory for the suite's KDF/AEAD id when no
@@ -120,17 +157,37 @@ function resolveResponseCrypto(
 	suite: CipherSuite,
 	responseCrypto?: ResponseCrypto,
 ): { kdf: KdfImpl; aead: AeadImpl } {
-	const kdfImpl = responseCrypto?.kdf ?? kdfFactory(suite.KDF.id);
-	const aeadImpl = responseCrypto?.aead ?? aeadFactory(suite.AEAD.id);
-	if (!kdfImpl || !aeadImpl) {
-		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-	}
-	const kdf = kdfImpl();
-	const aead = aeadImpl();
-	if (kdf.id !== suite.KDF.id || aead.id !== suite.AEAD.id) {
+	const kdf =
+		responseCrypto?.kdf === undefined
+			? kdfFactory(suite.KDF.id)?.()
+			: overrideImpl(responseCrypto.kdf, suite.KDF.id);
+	const aead =
+		responseCrypto?.aead === undefined
+			? aeadFactory(suite.AEAD.id)?.()
+			: overrideImpl(responseCrypto.aead, suite.AEAD.id);
+	if (!kdf || !aead) {
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
 	return { kdf, aead };
+}
+
+/**
+ * Reject crypto this side cannot resolve for every suite it serves
+ *
+ * The suites and the override are both known at construction, so a gateway that
+ * adds an AEAD and forgets its factory should fail there rather than on the
+ * first request picking the new pair, after it has already decrypted.
+ *
+ * @internal
+ * @throws OHTTPError UnsupportedCipherSuite
+ */
+export function assertResponseCrypto(
+	suites: readonly CipherSuite[],
+	responseCrypto?: ResponseCrypto,
+): void {
+	for (const suite of suites) {
+		resolveResponseCrypto(suite, responseCrypto);
+	}
 }
 
 /**
@@ -348,13 +405,9 @@ export async function decapsulateRequest(
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
 
-	// Verify we support the requested cipher suite
-	const supportedAlgo = keyConfig.symmetricAlgorithms.find(
-		(a) => a.kdfId === header.kdfId && a.aeadId === header.aeadId,
-	);
-	if (supportedAlgo === undefined) {
-		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-	}
+	// Pick the suite the header names. The advertised algorithms are derived from
+	// the config's suites, so a pair on the list always has a suite behind it.
+	const suite = selectSuite(keyConfig, header.kdfId, header.aeadId);
 
 	// Build info string
 	const info = buildRequestInfo(header.keyId, header.kemId, header.kdfId, header.aeadId, label);
@@ -365,7 +418,7 @@ export async function decapsulateRequest(
 	// Setup recipient context
 	let recipientContext: RecipientContext;
 	try {
-		recipientContext = await keyConfig.suite.SetupRecipient(keyConfig.keyPair, header.enc, {
+		recipientContext = await suite.SetupRecipient(keyConfig.keyPair, header.enc, {
 			info,
 		});
 	} catch {
@@ -384,7 +437,7 @@ export async function decapsulateRequest(
 		request,
 		recipientContext,
 		enc: header.enc,
-		suite: keyConfig.suite,
+		suite,
 		keyConfig,
 	};
 }

@@ -10,7 +10,7 @@
 
 import { AEAD_AES_128_GCM, KDF_HKDF_SHA256, KEM_ML_KEM_768 } from "@panva/hpke-noble";
 import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
+import { KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 // Follows RFC 9458 Oblivious HTTP with ML-KEM-768 (FIPS 203)
 
@@ -18,18 +18,14 @@ async function setup() {
 	// [ Gateway ] creates key configuration with ML-KEM-768
 	// ML-KEM-768 provides NIST Level 3 security (128-bit post-quantum)
 	const suite = new CipherSuite(KEM_ML_KEM_768, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-	const keyConfig = await KeyConfig.generate(suite, 0x01, [
-		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-	]);
+	const keyConfig = await KeyConfig.generate(suite, 0x01);
 	// A real gateway publishes several keys during a migration, so serve both.
 	const legacySuite = new CipherSuite(
 		KEM_DHKEM_X25519_HKDF_SHA256,
 		KDF_HKDF_SHA256,
 		AEAD_AES_128_GCM,
 	);
-	const legacyKeyConfig = await KeyConfig.generate(legacySuite, 0x02, [
-		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-	]);
+	const legacyKeyConfig = await KeyConfig.generate(legacySuite, 0x02);
 	const gateway = new OHTTPServer([keyConfig, legacyKeyConfig]);
 
 	// [ Client ] fetches gateway's application/ohttp-keys blob

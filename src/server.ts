@@ -1,9 +1,18 @@
-import type { AEAD as AeadImpl, RecipientContext } from "hpke";
+import type { AEAD as AeadImpl, CipherSuite, RecipientContext } from "hpke";
 import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
 import type { StreamingRequestInit } from "./client.js";
-import { kAead, kAeadKey, kAeadNonce, kEnc, kRecipientContext, MediaType } from "./constants.js";
+import {
+	kAead,
+	kAeadKey,
+	kAeadNonce,
+	kEnc,
+	kRecipientContext,
+	kSuite,
+	MediaType,
+} from "./constants.js";
 import {
 	AEAD_TAG_SIZE,
+	assertResponseCrypto,
 	buildRequestInfo,
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
@@ -20,7 +29,14 @@ import {
 	sealResponseChunk,
 } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import type { KeyConfigWithPrivate } from "./keyConfig.js";
+import {
+	isValidKeyId,
+	type KeyConfigWithPrivate,
+	resolveSuites,
+	sameAlgorithms,
+	selectSuite,
+	symmetricAlgorithmsOf,
+} from "./keyConfig.js";
 import {
 	collectStream,
 	createChunkerTransform,
@@ -122,6 +138,8 @@ export interface ChunkedServerRequestContext {
 	readonly [kRecipientContext]: RecipientContext;
 	/** Encapsulated secret for response key derivation */
 	readonly [kEnc]: Uint8Array;
+	/** The suite the request header selected */
+	readonly [kSuite]: CipherSuite;
 }
 
 /**
@@ -167,6 +185,13 @@ export interface ChunkedHttpServerContext {
  * config sharing it: requests for the shadowed key fail with
  * `UnsupportedCipherSuite` or `DecryptionFailed` rather than falling through to
  * it. A botched rotation should fail at construction instead.
+ *
+ * The advertised KEM and algorithms are re-derived from each config's suites
+ * here as well. The constructors in `keyConfig.ts` keep the two in step, but a
+ * `KeyConfig` is a plain object and `{ ...config, symmetricAlgorithms }` walks
+ * past them, which is how a gateway ends up publishing a pair it cannot open.
+ * `publicKey` is not checked against `keyPair`, since that needs an await the
+ * constructor does not have; a config assembled by hand can still lie there.
  */
 function validateKeyConfigs(keyConfigs: readonly KeyConfigWithPrivate[]): void {
 	if (keyConfigs.length === 0) {
@@ -174,6 +199,16 @@ function validateKeyConfigs(keyConfigs: readonly KeyConfigWithPrivate[]): void {
 	}
 	if (new Set(keyConfigs.map((k) => k.keyId)).size !== keyConfigs.length) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+	for (const config of keyConfigs) {
+		const suites = resolveSuites(config.suites);
+		if (
+			!isValidKeyId(config.keyId) ||
+			config.kemId !== suites[0].KEM.id ||
+			!sameAlgorithms(config.symmetricAlgorithms, symmetricAlgorithmsOf(suites))
+		) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+		}
 	}
 }
 
@@ -194,7 +229,12 @@ export class OHTTPServer {
 	 */
 	constructor(keyConfigs: readonly KeyConfigWithPrivate[], options: OHTTPServerOptions = {}) {
 		validateKeyConfigs(keyConfigs);
-		this.keyConfigs = keyConfigs;
+		for (const config of keyConfigs) {
+			assertResponseCrypto(config.suites, options.responseCrypto);
+		}
+		// Copied: validation happens here, and a caller holding the array could
+		// otherwise push an unchecked config into the lookup table afterwards.
+		this.keyConfigs = [...keyConfigs];
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
@@ -308,7 +348,12 @@ export class ChunkedOHTTPServer {
 		options: ChunkedOHTTPServerOptions = {},
 	) {
 		validateKeyConfigs(keyConfigs);
-		this.keyConfigs = keyConfigs;
+		for (const config of keyConfigs) {
+			assertResponseCrypto(config.suites, options.responseCrypto);
+		}
+		// Copied: validation happens here, and a caller holding the array could
+		// otherwise push an unchecked config into the lookup table afterwards.
+		this.keyConfigs = [...keyConfigs];
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
@@ -344,13 +389,8 @@ export class ChunkedOHTTPServer {
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 		}
 
-		// Verify symmetric algorithms
-		const supportedAlgo = keyConfig.symmetricAlgorithms.find(
-			(a) => a.kdfId === header.kdfId && a.aeadId === header.aeadId,
-		);
-		if (supportedAlgo === undefined) {
-			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-		}
+		// Pick the suite the header names, as the buffered path does
+		const suite = selectSuite(keyConfig, header.kdfId, header.aeadId);
 
 		// Build info string
 		const info = buildRequestInfo(
@@ -364,14 +404,13 @@ export class ChunkedOHTTPServer {
 		// Setup recipient context
 		let recipientContext: RecipientContext;
 		try {
-			recipientContext = await keyConfig.suite.SetupRecipient(keyConfig.keyPair, header.enc, {
+			recipientContext = await suite.SetupRecipient(keyConfig.keyPair, header.enc, {
 				info,
 			});
 		} catch {
 			throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 		}
 
-		const suite = keyConfig.suite;
 		const enc = header.enc;
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;
@@ -382,6 +421,7 @@ export class ChunkedOHTTPServer {
 			keyConfig,
 			[kRecipientContext]: recipientContext,
 			[kEnc]: enc,
+			[kSuite]: suite,
 
 			async openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				if (requestFinished) {
@@ -618,7 +658,7 @@ export class ChunkedOHTTPServer {
 			duplex: "half",
 		} as StreamingRequestInit);
 
-		const suite = requestCtx.keyConfig.suite;
+		const suite = requestCtx[kSuite];
 		const maxChunkSize = this.maxChunkSize;
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;

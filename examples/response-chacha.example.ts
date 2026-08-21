@@ -1,61 +1,83 @@
 // Copyright (c) 2024
 // Licensed under the MIT license
 
-// Example: OHTTP with a ChaCha20-Poly1305 response.
+// Example: one key configuration serving AES-128-GCM and ChaCha20-Poly1305,
+// the shape RFC 9458 Appendix A publishes.
+//
+// A key configuration may advertise several (KDF, AEAD) pairs under one key
+// identifier. The gateway passes one suite per pair, all sharing a KEM, and one
+// key pair covers them: the request header names the pair it used and the
+// gateway decrypts with the matching suite.
 //
 // OHTTP responses are not HPKE: the response key is derived with HKDF over an
 // HPKE-exported secret and then used with a raw AEAD. By default that AEAD is
 // resolved from the suite, using hpke's WebCrypto-backed factory. In browsers
 // and Cloudflare Workers, where WebCrypto lacks ChaCha20-Poly1305, pass a
-// non-WebCrypto factory via `responseCrypto` — exactly how mlkem.example.ts
-// swaps the KEM.
+// non-WebCrypto factory via `responseCrypto` - exactly how mlkem.example.ts
+// swaps the KEM. A gateway serving two AEADs passes one factory per AEAD, since
+// which one a response uses is decided by the request, not by the server.
 //
 // Install: npm add @panva/hpke-noble
 
-import { AEAD_ChaCha20Poly1305, KDF_HKDF_SHA256 } from "@panva/hpke-noble";
-import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { AeadId, KdfId, KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
+import { AEAD_ChaCha20Poly1305 } from "@panva/hpke-noble";
+import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
+import { KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
 
 export async function chachaResponseOHTTP(): Promise<boolean> {
-	// [ Everybody ] agree on DHKEM(X25519), HKDF-SHA256, ChaCha20-Poly1305.
-	const suite = new CipherSuite(
+	// [ Gateway ] serves DHKEM(X25519) + HKDF-SHA256 with either AEAD. Both
+	// suites take their KEM from the same place, which is what lets one key pair
+	// serve both.
+	const aesSuite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+	const chachaSuite = new CipherSuite(
 		KEM_DHKEM_X25519_HKDF_SHA256,
 		KDF_HKDF_SHA256,
 		AEAD_ChaCha20Poly1305,
 	);
 
-	// Route response HKDF + AEAD through @panva/hpke-noble so it works without
-	// WebCrypto ChaCha20 support. Partial overrides are allowed; here we set both.
-	const responseCrypto = { kdf: KDF_HKDF_SHA256, aead: AEAD_ChaCha20Poly1305 };
+	const keyConfig = await KeyConfig.generate([aesSuite, chachaSuite], 0x01);
+	// One factory per AEAD served. Responses for the ChaCha20 pair go through
+	// @panva/hpke-noble, so the gateway needs no WebCrypto ChaCha20 support;
+	// responses for the AES pair keep the WebCrypto path.
+	const gateway = new OHTTPServer([keyConfig], {
+		responseCrypto: { aead: [AEAD_AES_128_GCM, AEAD_ChaCha20Poly1305] },
+	});
 
-	// [ Gateway ] creates a key configuration and a server.
-	const keyConfig = await KeyConfig.generate(suite, 0x01, [
-		{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-	]);
-	const gateway = new OHTTPServer([keyConfig], { responseCrypto });
+	// [ Clients ] fetch the same published configuration and each pick a pair.
+	const published = KeyConfig.parse(KeyConfig.serialize(keyConfig));
+	const clients = [
+		new OHTTPClient(aesSuite, published),
+		new OHTTPClient(chachaSuite, published, {
+			responseCrypto: { aead: AEAD_ChaCha20Poly1305 },
+		}),
+	];
 
-	// [ Client ] fetches the public key configuration and creates a client.
-	const publicKeyConfig = KeyConfig.serialize(keyConfig);
-	const client = new OHTTPClient(suite, KeyConfig.parse(publicKeyConfig), { responseCrypto });
-
-	// Online protocol (RFC 9458 Figure 1)
 	const request = new TextEncoder().encode(
 		"GET /resource HTTP/1.1\r\nHost: target.example\r\n\r\n",
 	);
-	const { encapsulatedRequest, context } = await client.encapsulate(request);
+	const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello");
 
-	const { request: decryptedRequest, context: serverContext } =
-		await gateway.decapsulate(encapsulatedRequest);
+	for (const client of clients) {
+		// Online protocol (RFC 9458 Figure 1), once per advertised pair.
+		const { encapsulatedRequest, context } = await client.encapsulate(request);
 
-	const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello over ChaCha20");
-	const encapsulatedResponse = await serverContext.encryptResponse(response);
+		const { request: decryptedRequest, context: serverContext } =
+			await gateway.decapsulate(encapsulatedRequest);
 
-	const decryptedResponse = await context.decryptResponse(encapsulatedResponse);
+		const encapsulatedResponse = await serverContext.encryptResponse(response);
+		const decryptedResponse = await context.decryptResponse(encapsulatedResponse);
 
-	const requestMatch =
-		new TextDecoder().decode(decryptedRequest) === new TextDecoder().decode(request);
-	const responseMatch =
-		new TextDecoder().decode(decryptedResponse) === new TextDecoder().decode(response);
+		const requestMatch =
+			new TextDecoder().decode(decryptedRequest) === new TextDecoder().decode(request);
+		const responseMatch =
+			new TextDecoder().decode(decryptedResponse) === new TextDecoder().decode(response);
+		if (!requestMatch || !responseMatch) {
+			return false;
+		}
+	}
 
-	return requestMatch && responseMatch;
+	console.log(
+		"Published pairs under key 0x01:",
+		published.symmetricAlgorithms.map((a) => `kdf ${a.kdfId} / aead ${a.aeadId}`).join(", "),
+	);
+	return true;
 }

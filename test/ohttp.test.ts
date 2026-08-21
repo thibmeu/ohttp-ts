@@ -2,6 +2,7 @@ import {
 	AEAD_AES_128_GCM as NobleAEAD_AES_128_GCM,
 	AEAD_ChaCha20Poly1305 as NobleAEAD_ChaCha20Poly1305,
 	KDF_HKDF_SHA256 as NobleKDF_HKDF_SHA256,
+	KEM_DHKEM_X25519_HKDF_SHA256 as NobleKEM_X25519,
 } from "@panva/hpke-noble";
 import {
 	AEAD_AES_128_GCM,
@@ -9,6 +10,7 @@ import {
 	AEAD_ChaCha20Poly1305,
 	CipherSuite,
 	KDF_HKDF_SHA256,
+	KEM_DHKEM_P256_HKDF_SHA256,
 	KEM_DHKEM_X25519_HKDF_SHA256,
 } from "hpke";
 import { describe, expect, it } from "vitest";
@@ -26,6 +28,7 @@ import {
 	generateKeyConfig,
 	importKeyConfig,
 	KdfId,
+	KemId,
 	parseKeyConfig,
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
@@ -39,9 +42,7 @@ describe("OHTTP round-trip", () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
 		// Server generates key config
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		// Client creates OHTTP client with server's public config
 		const clientKeyConfig = {
@@ -87,9 +88,7 @@ describe("OHTTP round-trip", () => {
 				AEAD_ChaCha20Poly1305,
 			);
 
-			const serverKeyConfig = await generateKeyConfig(suite, 1, [
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-			]);
+			const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 			const client = new OHTTPClient(suite, {
 				keyId: serverKeyConfig.keyId,
@@ -122,9 +121,7 @@ describe("OHTTP round-trip", () => {
 				AEAD_ChaCha20Poly1305,
 			);
 
-			const serverKeyConfig = await generateKeyConfig(suite, 1, [
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-			]);
+			const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 			const responseCrypto = { kdf: NobleKDF_HKDF_SHA256, aead: NobleAEAD_ChaCha20Poly1305 };
 			const client = new OHTTPClient(
@@ -155,9 +152,7 @@ describe("OHTTP round-trip", () => {
 		// otherwise a default server and an overridden client could not interop.
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new OHTTPClient(
 			suite,
@@ -184,43 +179,36 @@ describe("OHTTP round-trip", () => {
 
 	it("rejects a responseCrypto override whose algorithm differs from the suite", async () => {
 		// An override may swap the implementation, not the algorithm. Here the
-		// suite negotiated AES-128-GCM but the override AEAD is AES-256-GCM.
+		// suite negotiated AES-128-GCM but the override AEAD is AES-256-GCM, and
+		// both sides know that before a single request goes out.
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
+		const responseCrypto = { aead: AEAD_AES_256_GCM };
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
-
-		const client = new OHTTPClient(suite, {
-			keyId: serverKeyConfig.keyId,
-			kemId: serverKeyConfig.kemId,
-			publicKey: serverKeyConfig.publicKey,
-			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
-		});
-		const server = new OHTTPServer([serverKeyConfig], {
-			responseCrypto: { aead: AEAD_AES_256_GCM },
-		});
-
-		const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
-		const { encapsulatedRequest } = await client.encapsulate(request);
-		const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
-
-		const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello");
-		await expect(serverContext.encryptResponse(response)).rejects.toMatchObject({
-			code: OHTTPErrorCode.UnsupportedCipherSuite,
-		});
+		expect(() => new OHTTPServer([serverKeyConfig], { responseCrypto })).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }),
+		);
+		expect(
+			() =>
+				new OHTTPClient(
+					suite,
+					{
+						keyId: serverKeyConfig.keyId,
+						kemId: serverKeyConfig.kemId,
+						publicKey: serverKeyConfig.publicKey,
+						symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+					},
+					{ responseCrypto },
+				),
+		).toThrow(expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }));
 	});
 
 	it("supports multiple key configs for key rotation", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
 		// Generate two key configs
-		const oldKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
-		const newKeyConfig = await generateKeyConfig(suite, 2, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const oldKeyConfig = await generateKeyConfig(suite, 1);
+		const newKeyConfig = await generateKeyConfig(suite, 2);
 
 		// Server supports both keys
 		const server = new OHTTPServer([oldKeyConfig, newKeyConfig]);
@@ -257,14 +245,10 @@ describe("OHTTP round-trip", () => {
 	it("rejects unknown key ID", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		// Client uses a different key ID
-		const fakeKeyConfig = await generateKeyConfig(suite, 99, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const fakeKeyConfig = await generateKeyConfig(suite, 99);
 
 		const client = new OHTTPClient(suite, {
 			keyId: fakeKeyConfig.keyId,
@@ -286,13 +270,9 @@ describe("OHTTP round-trip", () => {
 		const seed = new Uint8Array(32);
 		seed.fill(0x42);
 
-		const config1 = await deriveKeyConfig(suite, seed, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const config1 = await deriveKeyConfig(suite, seed, 1);
 
-		const config2 = await deriveKeyConfig(suite, seed, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const config2 = await deriveKeyConfig(suite, seed, 1);
 
 		// Same seed produces same keys
 		expect(toHex(config1.publicKey)).toBe(toHex(config2.publicKey));
@@ -372,9 +352,7 @@ describe("Interoperability with chris-wood/ohttp-js", () => {
 		const seed = fromHex(vector.seed);
 		if (!seed) throw new Error("Invalid seed");
 
-		const keyConfig = await deriveKeyConfig(suite, seed, vector.keyId, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const keyConfig = await deriveKeyConfig(suite, seed, vector.keyId);
 
 		const server = new OHTTPServer([keyConfig]);
 
@@ -390,9 +368,7 @@ describe("OHTTP error handling", () => {
 	it("produces opaque decryption errors", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const server = new OHTTPServer([serverKeyConfig]);
 
@@ -428,9 +404,7 @@ describe("OHTTP error handling", () => {
 		);
 
 		// Server only supports AES-GCM
-		const serverKeyConfig = await generateKeyConfig(aesGcmSuite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(aesGcmSuite, 1);
 
 		// Client tries to use ChaCha20-Poly1305
 		expect(() => {
@@ -451,9 +425,7 @@ describe("OHTTP error handling", () => {
 	it("rejects request with truncated header", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const server = new OHTTPServer([serverKeyConfig]);
 
@@ -466,9 +438,7 @@ describe("OHTTP error handling", () => {
 	it("rejects response with wrong nonce length", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new OHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -492,9 +462,7 @@ describe("OHTTP Request/Response API", () => {
 	it("round-trips HTTP Request/Response", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new OHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -555,9 +523,7 @@ describe("OHTTP Request/Response API", () => {
 	it("rejects request with wrong content-type", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const server = new OHTTPServer([serverKeyConfig]);
 
@@ -574,9 +540,7 @@ describe("OHTTP Request/Response API", () => {
 	it("rejects response with wrong content-type", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const client = new OHTTPClient(suite, {
 			keyId: serverKeyConfig.keyId,
@@ -599,9 +563,7 @@ describe("OHTTP Request/Response API", () => {
 	it("reports malformed inner bhttp as InvalidMessage", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-		const serverKeyConfig = await generateKeyConfig(suite, 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-		]);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
 
 		const server = new OHTTPServer([serverKeyConfig]);
 		const client = new OHTTPClient(suite, {
@@ -630,6 +592,148 @@ describe("OHTTP Request/Response API", () => {
 			expect(e).toBeInstanceOf(OHTTPError);
 			expect((e as OHTTPError).code).toBe(OHTTPErrorCode.InvalidMessage);
 		}
+	});
+});
+
+describe("multi-suite key configs (RFC 9458 Appendix A)", () => {
+	const kdf = KDF_HKDF_SHA256;
+	const aes128 = () => new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, kdf, AEAD_AES_128_GCM);
+	const aes256 = () => new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, kdf, AEAD_AES_256_GCM);
+
+	it("serves two AEADs under one key identifier", async () => {
+		const keyConfig = await generateKeyConfig([aes128(), aes256()], 1);
+
+		expect(keyConfig.symmetricAlgorithms).toEqual([
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_256_GCM },
+		]);
+
+		const server = new OHTTPServer([keyConfig]);
+		// What the gateway publishes: one config, both pairs.
+		const published = parseKeyConfig(serializeKeyConfig(keyConfig));
+		const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
+		const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello");
+
+		// Each client picks a different pair from the same published config, and
+		// the gateway follows the request header to the matching suite.
+		for (const suite of [aes128(), aes256()]) {
+			const client = new OHTTPClient(suite, published);
+			const { encapsulatedRequest, context } = await client.encapsulate(request);
+			const { request: decrypted, context: serverContext } =
+				await server.decapsulate(encapsulatedRequest);
+
+			expect(decrypted).toEqual(request);
+			await expect(
+				context.decryptResponse(await serverContext.encryptResponse(response)),
+			).resolves.toEqual(response);
+		}
+	});
+
+	it("rejects suites that disagree on the KEM or repeat a pair", async () => {
+		await expect(generateKeyConfig([aes128(), aes128()], 1)).rejects.toThrow(/INVALID_KEY_CONFIG/);
+		await expect(generateKeyConfig([], 1)).rejects.toThrow(/INVALID_KEY_CONFIG/);
+
+		// Different KEM: one key pair cannot serve both.
+		const p256 = new CipherSuite(KEM_DHKEM_P256_HKDF_SHA256, kdf, AEAD_AES_128_GCM);
+		await expect(generateKeyConfig([aes128(), p256], 1)).rejects.toThrow(/INVALID_KEY_CONFIG/);
+
+		// Same KEM id, different implementation, so the key pair is not portable
+		// between them. The id alone does not catch this.
+		const noble = new CipherSuite(NobleKEM_X25519, NobleKDF_HKDF_SHA256, NobleAEAD_AES_128_GCM);
+		await expect(generateKeyConfig([aes128(), noble], 1)).rejects.toThrow(/INVALID_KEY_CONFIG/);
+	});
+
+	it("serves a response with the AEAD the request selected", async () => {
+		// responseCrypto is fixed at construction while the suite is per request,
+		// so a gateway serving two AEADs supplies a factory for each.
+		const keyConfig = await generateKeyConfig([aes128(), aes256()], 1);
+		const gateway = new OHTTPServer([keyConfig], {
+			responseCrypto: { aead: [AEAD_AES_128_GCM, AEAD_AES_256_GCM] },
+		});
+		const published = parseKeyConfig(serializeKeyConfig(keyConfig));
+		const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello");
+
+		for (const suite of [aes128(), aes256()]) {
+			const client = new OHTTPClient(suite, published);
+			const { encapsulatedRequest, context } = await client.encapsulate(new Uint8Array([1]));
+			const { context: serverContext } = await gateway.decapsulate(encapsulatedRequest);
+
+			await expect(
+				context.decryptResponse(await serverContext.encryptResponse(response)),
+			).resolves.toEqual(response);
+		}
+	});
+
+	it("rejects an override with no factory for a served algorithm", async () => {
+		// A gateway that adds an AEAD and forgets its factory would otherwise
+		// serve one pair and fail the other after the request had decrypted.
+		const keyConfig = await generateKeyConfig([aes128(), aes256()], 1);
+
+		expect(
+			() => new OHTTPServer([keyConfig], { responseCrypto: { aead: AEAD_AES_256_GCM } }),
+		).toThrow(expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }));
+		expect(
+			() =>
+				new OHTTPServer([keyConfig], {
+					responseCrypto: { aead: [AEAD_AES_128_GCM, AEAD_AES_256_GCM] },
+				}),
+		).not.toThrow();
+	});
+
+	it("rejects a config whose advertised algorithms outrun its suites", async () => {
+		// The constructors keep the two in step; a spread does not, and the server
+		// is the last place to catch it before the lie reaches a client.
+		const keyConfig = await generateKeyConfig(aes128(), 1);
+		const lying = {
+			...keyConfig,
+			symmetricAlgorithms: [
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_256_GCM },
+			],
+		};
+
+		expect(() => new OHTTPServer([lying])).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
+		);
+		expect(() => new OHTTPServer([{ ...keyConfig, kemId: KemId.ML_KEM_768 }])).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
+		);
+		// A keyId the wire format cannot carry: the header is one byte, so this
+		// config would answer UnknownKeyId to every request.
+		expect(() => new OHTTPServer([{ ...keyConfig, keyId: 256 }])).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
+		);
+	});
+});
+
+describe("client bhttp framing errors", () => {
+	it("reports malformed inner bhttp from the gateway as InvalidMessage", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
+		const server = new OHTTPServer([serverKeyConfig]);
+		const client = new OHTTPClient(suite, {
+			keyId: serverKeyConfig.keyId,
+			kemId: serverKeyConfig.kemId,
+			publicKey: serverKeyConfig.publicKey,
+			symmetricAlgorithms: serverKeyConfig.symmetricAlgorithms,
+		});
+
+		const { init, context } = await client.encapsulateRequest(
+			new Request("https://target.example.com/", { method: "GET" }),
+		);
+		const { context: serverContext } = await server.decapsulate(
+			new Uint8Array(await new Request("https://relay.example.com/", init).arrayBuffer()),
+		);
+
+		// Framing indicator 4, which bhttp does not define: the gateway sealed a
+		// response the client can decrypt but cannot parse.
+		const encrypted = await serverContext.encryptResponse(new Uint8Array([0x04, 0x00]));
+
+		await expect(
+			context.decapsulateResponse(
+				new Response(encrypted, { headers: { "Content-Type": MediaType.RESPONSE } }),
+			),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }));
 	});
 });
 

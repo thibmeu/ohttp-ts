@@ -89,6 +89,27 @@ Do not reach for `configs[0]`: it picks by the gateway's order, not by what the
 client implements, and hands you a config for the wrong KEM as readily as the
 right one.
 
+On the gateway side, one key configuration can advertise several `(KDF, AEAD)`
+pairs under a single key identifier, as RFC 9458 Appendix A does. Pass the
+suites it should serve, all sharing one KEM, and the advertised algorithms are
+derived from them:
+
+```typescript
+const keyConfig = await KeyConfig.generate(
+  [
+    new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM),
+    new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_ChaCha20Poly1305),
+  ],
+  0x01,
+);
+const gateway = new OHTTPServer([keyConfig]);
+```
+
+One key pair covers every suite, since it belongs to the KEM they share. Each
+request header names the pair it used and the gateway decrypts with the matching
+suite. A config can only advertise what its suites can open, so the gateway
+cannot publish a pair it will then reject.
+
 ### Protocol Flow
 
 ```
@@ -255,6 +276,20 @@ const client = new OHTTPClient(suite, clientKeyConfig, { responseCrypto });
 The override is byte-compatible with the default factory, so a client and
 gateway may use a different implementation for the same algorithm.
 
+A gateway serving several AEADs under one key identifier passes one factory per
+algorithm, since which one a response uses is decided by the request header, not
+by the server:
+
+```typescript
+const gateway = new OHTTPServer([keyConfig], {
+  responseCrypto: { aead: [AEAD_AES_128_GCM, AEAD_ChaCha20Poly1305] },
+});
+```
+
+An override with no factory for an algorithm this side serves throws
+`UnsupportedCipherSuite` rather than falling back, so a missing entry surfaces
+instead of quietly ignoring what you passed.
+
 ## Security Considerations
 
 **Not audited.** Use at your own risk.
@@ -264,14 +299,16 @@ gateway may use a different implementation for the same algorithm.
 
 ### Gateway error handling
 
-Every failure is an `OHTTPError` carrying a code: `UnknownKeyId`,
-`UnsupportedCipherSuite`, `DecryptionFailed`, `InvalidMessage`, and the chunked
-sequence codes. Keep that detail for your own logs and answer the relay with a
-plain 400, as [RFC 9458 Section
-4.3](https://www.rfc-editor.org/rfc/rfc9458.html#name-request-decapsulation)
+Every failure is an `OHTTPError` carrying a code: `InvalidKeyConfig`,
+`UnknownKeyId`, `UnsupportedCipherSuite`, `DecryptionFailed`,
+`EncryptionFailed`, `InvalidMessage`, and the two chunked sequence codes. Keep
+that detail for your own logs and answer the relay with a plain 400, as
+[RFC 9458 Section 4.3](https://www.rfc-editor.org/rfc/rfc9458.html#name-request-decapsulation)
 requires of any decapsulation failure:
 
 ```typescript
+import { isOHTTPError } from "ohttp-ts";
+
 try {
   const { request, context } = await gateway.decapsulateRequest(ohttpRequest);
   return await context.encapsulateResponse(await fetch(request));
