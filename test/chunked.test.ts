@@ -4,6 +4,7 @@ import {
 } from "@panva/hpke-noble";
 import {
 	AEAD_AES_128_GCM,
+	AEAD_AES_256_GCM,
 	AEAD_ChaCha20Poly1305,
 	CipherSuite,
 	KDF_HKDF_SHA256,
@@ -25,8 +26,10 @@ import {
 } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
+	AeadId,
 	generateKeyConfig,
 	importKeyConfig,
+	KdfId,
 	parseKeyConfig,
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
@@ -1432,5 +1435,202 @@ describe("streaming bhttp decode", () => {
 		// A rejected read leaves the decrypting stream upstream of this one open
 		// unless the reader cancels it.
 		expect(cancelled).toBe(true);
+	});
+});
+
+describe("chunked multi-suite key configs (RFC 9458 Appendix A)", () => {
+	const aes128 = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+	const aes256 = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_256_GCM);
+
+	it("follows the request header to the suite the client used", async () => {
+		const keyConfig = await generateKeyConfig([aes128(), aes256()], 1);
+		const server = new ChunkedOHTTPServer([keyConfig], {
+			responseCrypto: { aead: [AEAD_AES_128_GCM, AEAD_AES_256_GCM] },
+		});
+		const published = parseKeyConfig(serializeKeyConfig(keyConfig));
+		const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
+		const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello");
+
+		for (const suite of [aes128(), aes256()]) {
+			const client = new ChunkedOHTTPClient(suite, published);
+			const { encapsulatedRequest, createResponseContext } = await client.encapsulate(request);
+			const { request: decrypted, createResponseContext: serverResponse } =
+				await server.decapsulate(encapsulatedRequest);
+
+			expect(decrypted).toEqual(request);
+			const encapsulatedResponse = await server.encapsulateResponse(
+				await serverResponse(),
+				response,
+			);
+			await expect(
+				client.decapsulateResponse(createResponseContext, encapsulatedResponse),
+			).resolves.toEqual(response);
+		}
+	});
+
+	it("rejects a header naming a pair the config does not advertise", async () => {
+		// The AES-256 client's header reaches a gateway serving AES-128 only.
+		const served = await generateKeyConfig(aes128(), 1);
+		const wider = await generateKeyConfig([aes128(), aes256()], 1);
+		const server = new ChunkedOHTTPServer([served]);
+		const client = new ChunkedOHTTPClient(
+			aes256(),
+			parseKeyConfig(serializeKeyConfig({ ...wider, publicKey: served.publicKey })),
+		);
+
+		const { encapsulatedRequest } = await client.encapsulate(new Uint8Array([1]));
+		await expect(server.decapsulate(encapsulatedRequest)).rejects.toThrow(
+			/UNSUPPORTED_CIPHER_SUITE/,
+		);
+	});
+
+	it("rejects a responseCrypto override that misses a served algorithm", async () => {
+		const keyConfig = await generateKeyConfig([aes128(), aes256()], 1);
+
+		expect(
+			() => new ChunkedOHTTPServer([keyConfig], { responseCrypto: { aead: AEAD_AES_256_GCM } }),
+		).toThrow(/UNSUPPORTED_CIPHER_SUITE/);
+		expect(
+			() =>
+				new ChunkedOHTTPClient(aes128(), parseKeyConfig(serializeKeyConfig(keyConfig)), {
+					responseCrypto: { aead: AEAD_AES_256_GCM },
+				}),
+		).toThrow(/UNSUPPORTED_CIPHER_SUITE/);
+	});
+});
+
+describe("cancelling a peer that keeps sending", () => {
+	const suite = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	/** A body that keeps offering frames, slowly, until someone cancels it. */
+	function chattyBody(parts: readonly Uint8Array[]) {
+		let sent = 0;
+		let cancelled = false;
+		const body = new ReadableStream<Uint8Array>({
+			async pull(controller) {
+				const part = parts[sent];
+				if (part === undefined) {
+					// Never close: a body that drains would be cancelled too late to
+					// observe, and the assertion would pass for the wrong reason.
+					await new Promise(() => {});
+					return;
+				}
+				// Slow enough that the reader is still mid-body when the gateway
+				// gives up on it.
+				await new Promise((resolve) => setTimeout(resolve, 2));
+				sent += 1;
+				controller.enqueue(part);
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+		return {
+			body,
+			get sent() {
+				return sent;
+			},
+			get cancelled() {
+				return cancelled;
+			},
+		};
+	}
+
+	// Framing indicator 4, which bhttp does not define.
+	const badBhttp = new Uint8Array([0x04, 0x00]);
+
+	async function flush() {
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+
+	it("cancels the request body when the inner bhttp is malformed", async () => {
+		const serverKeyConfig = await generateKeyConfig(suite(), 1);
+		const client = new ChunkedOHTTPClient(
+			suite(),
+			parseKeyConfig(serializeKeyConfig(serverKeyConfig)),
+		);
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+
+		const ctx = await client.createRequestContext();
+		const parts = [ctx.header, frameChunk(await ctx.sealChunk(badBhttp), false)];
+		for (let i = 0; i < 50; i++) {
+			parts.push(frameChunk(await ctx.sealChunk(new Uint8Array([0x00])), false));
+		}
+		const source = chattyBody(parts);
+
+		await expect(
+			server.decapsulateRequest(
+				new Request("https://gateway.example.com/", {
+					method: "POST",
+					headers: { "Content-Type": MediaType.CHUNKED_REQUEST },
+					body: source.body,
+					duplex: "half",
+				} as RequestInit & { duplex: "half" }),
+			),
+		).rejects.toThrow(/INVALID_MESSAGE/);
+		await flush();
+
+		// Without the cancel the gateway just stops reading, leaving the peer to
+		// hold a body nobody will ever take.
+		expect(source.cancelled).toBe(true);
+		expect(source.sent).toBeLessThan(parts.length);
+	});
+
+	it("cancels the response body when the inner bhttp is malformed", async () => {
+		const serverKeyConfig = await generateKeyConfig(suite(), 1);
+		const client = new ChunkedOHTTPClient(
+			suite(),
+			parseKeyConfig(serializeKeyConfig(serverKeyConfig)),
+		);
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+
+		const { init, context } = await client.encapsulateRequest(
+			new Request("https://target.example.com/", { method: "GET" }),
+		);
+		const encapsulatedRequest = new Uint8Array(
+			await new Request("https://gateway.example.com/", init).arrayBuffer(),
+		);
+		const { createResponseContext } = await server.decapsulate(encapsulatedRequest);
+		const responseCtx = await createResponseContext();
+
+		const parts = [
+			responseCtx.responseNonce,
+			frameChunk(await responseCtx.sealChunk(badBhttp), false),
+		];
+		for (let i = 0; i < 50; i++) {
+			parts.push(frameChunk(await responseCtx.sealChunk(new Uint8Array([0x00])), false));
+		}
+		const source = chattyBody(parts);
+
+		await expect(
+			context.decapsulateResponse(
+				new Response(source.body, { headers: { "Content-Type": MediaType.CHUNKED_RESPONSE } }),
+			),
+		).rejects.toThrow(/INVALID_MESSAGE/);
+		await flush();
+
+		expect(source.cancelled).toBe(true);
+		expect(source.sent).toBeLessThan(parts.length);
+	});
+
+	it("keeps the suites it validated when the caller changes theirs", async () => {
+		const aes128 = suite();
+		const aes256 = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_256_GCM);
+		const keyConfig = await generateKeyConfig(aes128, 1);
+		const server = new ChunkedOHTTPServer([keyConfig]);
+
+		(keyConfig.suites as CipherSuite[]).push(aes256);
+		const client = new ChunkedOHTTPClient(aes256, {
+			...parseKeyConfig(serializeKeyConfig(keyConfig)),
+			symmetricAlgorithms: [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_256_GCM }],
+		});
+		const { encapsulatedRequest } = await client.encapsulate(new Uint8Array([1]));
+
+		await expect(server.decapsulate(encapsulatedRequest)).rejects.toThrow(
+			/UNSUPPORTED_CIPHER_SUITE/,
+		);
 	});
 });

@@ -186,15 +186,22 @@ export interface ChunkedHttpServerContext {
  * requests. The KEM and algorithms are re-derived too, since a plain
  * `{ ...config, symmetricAlgorithms }` walks past the constructors. `publicKey`
  * is not checked against `keyPair`: that needs an await this does not have.
+ *
+ * Returns the configs to store, with their own suite lists.
+ *
+ * @throws OHTTPError InvalidKeyConfig, or UnsupportedCipherSuite when a suite
+ * names an algorithm the wire format cannot carry
  */
-function validateKeyConfigs(keyConfigs: readonly KeyConfigWithPrivate[]): void {
+function validateKeyConfigs(
+	keyConfigs: readonly KeyConfigWithPrivate[],
+): readonly KeyConfigWithPrivate[] {
 	if (keyConfigs.length === 0) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
 	if (new Set(keyConfigs.map((k) => k.keyId)).size !== keyConfigs.length) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
-	for (const config of keyConfigs) {
+	return keyConfigs.map((config) => {
 		const suites = resolveSuites(config.suites);
 		if (
 			!isValidKeyId(config.keyId) ||
@@ -203,7 +210,8 @@ function validateKeyConfigs(keyConfigs: readonly KeyConfigWithPrivate[]): void {
 		) {
 			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 		}
-	}
+		return { ...config, suites };
+	});
 }
 
 /**
@@ -222,12 +230,12 @@ export class OHTTPServer {
 	 * @param options - Optional configuration
 	 */
 	constructor(keyConfigs: readonly KeyConfigWithPrivate[], options: OHTTPServerOptions = {}) {
-		validateKeyConfigs(keyConfigs);
-		for (const config of keyConfigs) {
+		// Validation runs once, so the server keeps its own array and its own suite
+		// lists rather than whatever the caller may change afterwards.
+		this.keyConfigs = validateKeyConfigs(keyConfigs);
+		for (const config of this.keyConfigs) {
 			assertResponseCrypto(config.suites, options.responseCrypto);
 		}
-		// Copied: validation runs once, so a caller must not push in later.
-		this.keyConfigs = [...keyConfigs];
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
@@ -340,12 +348,12 @@ export class ChunkedOHTTPServer {
 		keyConfigs: readonly KeyConfigWithPrivate[],
 		options: ChunkedOHTTPServerOptions = {},
 	) {
-		validateKeyConfigs(keyConfigs);
-		for (const config of keyConfigs) {
+		// Validation runs once, so the server keeps its own array and its own suite
+		// lists rather than whatever the caller may change afterwards.
+		this.keyConfigs = validateKeyConfigs(keyConfigs);
+		for (const config of this.keyConfigs) {
 			assertResponseCrypto(config.suites, options.responseCrypto);
 		}
-		// Copied: validation runs once, so a caller must not push in later.
-		this.keyConfigs = [...keyConfigs];
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
@@ -629,6 +637,12 @@ export class ChunkedOHTTPServer {
 					reader.releaseLock();
 				}
 				controller.close();
+			},
+
+			// Reached when the pipeline downstream errors, which is how a malformed
+			// message stops the peer's body rather than leaving it half-read.
+			cancel(reason) {
+				return reader.cancel(reason);
 			},
 		});
 

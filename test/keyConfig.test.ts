@@ -1,4 +1,10 @@
-import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
+import {
+	AEAD_AES_128_GCM,
+	AEAD_EXPORT_ONLY,
+	CipherSuite,
+	KDF_HKDF_SHA256,
+	KEM_DHKEM_X25519_HKDF_SHA256,
+} from "hpke";
 import { describe, expect, it } from "vitest";
 import { OHTTPError } from "../src/errors.js";
 import {
@@ -315,6 +321,19 @@ describe("KeyConfig construction", () => {
 	});
 });
 
+describe("suite validation", () => {
+	it("rejects a suite whose KDF or AEAD has no place in a key config", async () => {
+		// Export-only HPKE has AEAD id 0xffff, which the wire format cannot name.
+		const exportOnly = new CipherSuite(
+			KEM_DHKEM_X25519_HKDF_SHA256,
+			KDF_HKDF_SHA256,
+			AEAD_EXPORT_ONLY,
+		);
+
+		await expect(generateKeyConfig(exportOnly, 1)).rejects.toThrow(/UNSUPPORTED_CIPHER_SUITE/);
+	});
+});
+
 describe("serializeKeyConfig validation", () => {
 	const base: KeyConfig = {
 		keyId: 1,
@@ -329,6 +348,26 @@ describe("serializeKeyConfig validation", () => {
 		expect(() => serializeKeyConfig({ ...base, keyId: 256 })).toThrow(/INVALID_KEY_CONFIG/);
 		expect(() => serializeKeyConfig({ ...base, keyId: -1 })).toThrow(/INVALID_KEY_CONFIG/);
 		expect(() => serializeKeyConfig({ ...base, keyId: 1.5 })).toThrow(/INVALID_KEY_CONFIG/);
+	});
+
+	it("rejects an algorithm list it would not parse back", () => {
+		// parseKeyConfig rejects a zero-length list, and drops pairs it does not
+		// implement, so writing either produces bytes this library cannot read.
+		expect(() => serializeKeyConfig({ ...base, symmetricAlgorithms: [] })).toThrow(
+			/INVALID_KEY_CONFIG/,
+		);
+		expect(() =>
+			serializeKeyConfig({
+				...base,
+				symmetricAlgorithms: [{ kdfId: 0xffff as KdfId, aeadId: AeadId.AES_128_GCM }],
+			}),
+		).toThrow(/INVALID_KEY_CONFIG/);
+		expect(() =>
+			serializeKeyConfig({
+				...base,
+				symmetricAlgorithms: [{ kdfId: KdfId.HKDF_SHA256, aeadId: 0xffff as AeadId }],
+			}),
+		).toThrow(/INVALID_KEY_CONFIG/);
 	});
 
 	it("rejects a public key that is not Npk for the KEM", () => {

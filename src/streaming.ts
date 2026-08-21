@@ -523,8 +523,9 @@ function pushDecoder<T>(
 	try {
 		return decoder.push(chunk);
 	} catch {
-		// A rejected pull() errors the stream without running its cancel(), so the
-		// upstream decryption stream would stay open on input a peer controls.
+		// A rejected pull() errors the stream without running its own cancel(), so
+		// nothing else tells the source to release. Reading stops either way; this
+		// is what carries the stop up the chain to the peer's body.
 		reader.cancel().catch(() => {});
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
