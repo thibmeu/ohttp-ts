@@ -161,6 +161,23 @@ export interface ChunkedHttpServerContext {
 }
 
 /**
+ * Reject a key config list a server cannot serve unambiguously
+ *
+ * Lookup is by key identifier alone, so a duplicate id shadows every later
+ * config sharing it: requests for the shadowed key fail with
+ * `UnsupportedCipherSuite` or `DecryptionFailed` rather than falling through to
+ * it. A botched rotation should fail at construction instead.
+ */
+function validateKeyConfigs(keyConfigs: readonly KeyConfigWithPrivate[]): void {
+	if (keyConfigs.length === 0) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+	if (new Set(keyConfigs.map((k) => k.keyId)).size !== keyConfigs.length) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+}
+
+/**
  * OHTTP Server (Gateway) for decapsulating requests
  */
 export class OHTTPServer {
@@ -172,10 +189,11 @@ export class OHTTPServer {
 	/**
 	 * Create an OHTTP server
 	 *
-	 * @param keyConfigs - Array of key configurations with private keys
+	 * @param keyConfigs - Non-empty array of key configurations with private keys and distinct key identifiers
 	 * @param options - Optional configuration
 	 */
 	constructor(keyConfigs: readonly KeyConfigWithPrivate[], options: OHTTPServerOptions = {}) {
+		validateKeyConfigs(keyConfigs);
 		this.keyConfigs = keyConfigs;
 		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
@@ -279,13 +297,14 @@ export class ChunkedOHTTPServer {
 	/**
 	 * Create a chunked OHTTP server
 	 *
-	 * @param keyConfigs - Array of key configurations with private keys
+	 * @param keyConfigs - Non-empty array of key configurations with private keys and distinct key identifiers
 	 * @param options - Optional configuration
 	 */
 	constructor(
 		keyConfigs: readonly KeyConfigWithPrivate[],
 		options: ChunkedOHTTPServerOptions = {},
 	) {
+		validateKeyConfigs(keyConfigs);
 		this.keyConfigs = keyConfigs;
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;

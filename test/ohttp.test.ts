@@ -29,7 +29,7 @@ import {
 	parseKeyConfig,
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
-import { OHTTPServer } from "../src/server.js";
+import { ChunkedOHTTPServer, OHTTPServer } from "../src/server.js";
 import { fromHex, hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import ohttpJsVectors from "./vectors/ohttp-js.json";
 import rfc9458Vectors from "./vectors/rfc9458.json";
@@ -313,10 +313,6 @@ describe("RFC 9458 Appendix A test vectors", () => {
 			vector.keyId,
 			hex(vector.publicKey),
 			hex(vector.privateKey),
-			[
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-			],
 		);
 		return { suite, keyConfig };
 	}
@@ -634,5 +630,29 @@ describe("OHTTP Request/Response API", () => {
 			expect(e).toBeInstanceOf(OHTTPError);
 			expect((e as OHTTPError).code).toBe(OHTTPErrorCode.DecryptionFailed);
 		}
+	});
+});
+
+describe("server key config list", () => {
+	const suite = () =>
+		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	it("rejects duplicate key identifiers", async () => {
+		// Lookup is by keyId, so the second config would never be reached.
+		const first = await generateKeyConfig(suite(), 1);
+		const second = await generateKeyConfig(suite(), 1);
+
+		expect(() => new OHTTPServer([first, second])).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
+		);
+		expect(() => new ChunkedOHTTPServer([first, second])).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
+		);
+	});
+
+	it("rejects an empty list", () => {
+		expect(() => new OHTTPServer([])).toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
+		);
 	});
 });

@@ -157,6 +157,41 @@ export function getEncLength(kemId: number): number {
 }
 
 /**
+ * The only symmetric algorithm list a key configuration can honestly advertise
+ *
+ * A {@link KeyConfigWithPrivate} decrypts every request with its one `suite`,
+ * so an extra (KDF, AEAD) pair names a suite the gateway accepts in the header
+ * and then fails to open. `symmetricAlgorithms` is therefore optional, and a
+ * supplied list must be exactly the suite's own pair.
+ *
+ * @throws OHTTPError InvalidKeyConfig if the list is anything else,
+ * UnsupportedCipherSuite if the suite names a KDF or AEAD this library cannot
+ * serialize
+ */
+function resolveSymmetricAlgorithms(
+	suite: CipherSuite,
+	provided: readonly SymmetricAlgorithm[] | undefined,
+): readonly SymmetricAlgorithm[] {
+	const kdfId = suite.KDF.id;
+	const aeadId = suite.AEAD.id;
+	if (!isValidKdfId(kdfId) || !isValidAeadId(aeadId)) {
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+	}
+	if (provided !== undefined) {
+		const only = provided[0];
+		if (
+			provided.length !== 1 ||
+			only === undefined ||
+			only.kdfId !== kdfId ||
+			only.aeadId !== aeadId
+		) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+		}
+	}
+	return [{ kdfId, aeadId }];
+}
+
+/**
  * Serialize a KeyConfig to bytes (RFC 9458 Section 3.1)
  *
  * Format:
@@ -167,6 +202,22 @@ export function getEncLength(kemId: number): number {
  * - Symmetric Algorithms (4 bytes each: KDF ID + AEAD ID)
  */
 export function serializeKeyConfig(config: KeyConfig): Uint8Array<ArrayBuffer> {
+	if (!Number.isInteger(config.keyId) || config.keyId < 0 || config.keyId > 255) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+	if (config.publicKey.length !== getPublicKeyLength(config.kemId)) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+	// A config with no pairs, or one naming an algorithm this library does not
+	// implement, is bytes its own parser refuses.
+	if (config.symmetricAlgorithms.length === 0) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+	for (const algo of config.symmetricAlgorithms) {
+		if (!isValidKdfId(algo.kdfId) || !isValidAeadId(algo.aeadId)) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+		}
+	}
 	const symAlgosLen = config.symmetricAlgorithms.length * 4;
 	// keyId(1) + kemId(2) + publicKey + symAlgosLen(2) + symAlgos
 	const totalLen = 1 + 2 + config.publicKey.length + 2 + symAlgosLen;
@@ -392,7 +443,7 @@ export function selectKeyConfig(suite: CipherSuite, configs: readonly KeyConfig[
 export async function generateKeyConfig(
 	suite: CipherSuite,
 	keyId: number,
-	symmetricAlgorithms: readonly SymmetricAlgorithm[],
+	symmetricAlgorithms?: readonly SymmetricAlgorithm[],
 ): Promise<KeyConfigWithPrivate> {
 	if (keyId < 0 || keyId > 255) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
@@ -404,6 +455,8 @@ export async function generateKeyConfig(
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
 
+	const algorithms = resolveSymmetricAlgorithms(suite, symmetricAlgorithms);
+
 	const keyPair = await suite.GenerateKeyPair(true);
 	const publicKey = await suite.SerializePublicKey(keyPair.publicKey);
 
@@ -411,7 +464,7 @@ export async function generateKeyConfig(
 		keyId,
 		kemId,
 		publicKey,
-		symmetricAlgorithms,
+		symmetricAlgorithms: algorithms,
 		keyPair,
 		suite,
 	};
@@ -426,7 +479,7 @@ export async function deriveKeyConfig(
 	suite: CipherSuite,
 	seed: Uint8Array,
 	keyId: number,
-	symmetricAlgorithms: readonly SymmetricAlgorithm[],
+	symmetricAlgorithms?: readonly SymmetricAlgorithm[],
 ): Promise<KeyConfigWithPrivate> {
 	if (keyId < 0 || keyId > 255) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
@@ -442,6 +495,8 @@ export async function deriveKeyConfig(
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
 
+	const algorithms = resolveSymmetricAlgorithms(suite, symmetricAlgorithms);
+
 	const keyPair = await suite.DeriveKeyPair(seed, true);
 	const publicKey = await suite.SerializePublicKey(keyPair.publicKey);
 
@@ -449,7 +504,7 @@ export async function deriveKeyConfig(
 		keyId,
 		kemId,
 		publicKey,
-		symmetricAlgorithms,
+		symmetricAlgorithms: algorithms,
 		keyPair,
 		suite,
 	};
@@ -472,7 +527,7 @@ export async function importKeyConfig(
 	keyId: number,
 	publicKeyBytes: Uint8Array,
 	privateKeyBytes: Uint8Array,
-	symmetricAlgorithms: readonly SymmetricAlgorithm[],
+	symmetricAlgorithms?: readonly SymmetricAlgorithm[],
 ): Promise<KeyConfigWithPrivate> {
 	if (keyId < 0 || keyId > 255) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
@@ -484,6 +539,8 @@ export async function importKeyConfig(
 		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 	}
 
+	const algorithms = resolveSymmetricAlgorithms(suite, symmetricAlgorithms);
+
 	const publicKey = await suite.DeserializePublicKey(publicKeyBytes);
 	const privateKey = await suite.DeserializePrivateKey(privateKeyBytes, true);
 
@@ -493,7 +550,7 @@ export async function importKeyConfig(
 		keyId,
 		kemId,
 		publicKey: publicKeyBytes,
-		symmetricAlgorithms,
+		symmetricAlgorithms: algorithms,
 		keyPair,
 		suite,
 	};

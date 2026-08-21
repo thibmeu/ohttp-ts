@@ -214,8 +214,14 @@ describe("canonical acceptance: parseKeyConfig", () => {
 		fc
 			.tuple(configArb, fc.uint8Array({ minLength: 1, maxLength: 4 }))
 			.map(([config, extra]) => appendBytes(serializeKeyConfig(config), extra)),
-		// Zero declared symmetric algorithms (serializeKeyConfig itself does not reject this).
-		configArb.map((config) => serializeKeyConfig({ ...config, symmetricAlgorithms: [] })),
+		// Zero declared symmetric algorithms, built by hand: serializeKeyConfig
+		// refuses to emit a config its own parser would reject.
+		configArb.map((config) => {
+			const { symLenOffset, algosOffset } = fieldOffsets(config);
+			const bytes = serializeKeyConfig(config).slice(0, algosOffset);
+			new DataView(bytes.buffer).setUint16(symLenOffset, 0);
+			return bytes;
+		}),
 		// Unknown kdfId in the first algorithm slot.
 		fc
 			.tuple(
@@ -340,11 +346,16 @@ describe("list tolerance", () => {
 	// RFC 9458 Section 3.1 has the client pick a mutually supported pair from the
 	// list, so an unimplemented pair costs its own slot, not the whole config.
 	it("drops an unimplemented pair but keeps the config's usable ones", async () => {
-		const priv = await generateKeyConfig(suite(), 1, [
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
-			{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
-		]);
-		const bytes = serializeKeyConfig(priv);
+		// generateKeyConfig only advertises the suite's own pair, so the second one
+		// is grafted on here to build the two-pair config this parses.
+		const priv = await generateKeyConfig(suite(), 1);
+		const bytes = serializeKeyConfig({
+			...priv,
+			symmetricAlgorithms: [
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM },
+				{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.ChaCha20Poly1305 },
+			],
+		});
 		new DataView(bytes.buffer).setUint16(bytes.length - 2, 0xffff);
 
 		expect(parseKeyConfig(bytes).symmetricAlgorithms).toEqual([
@@ -386,12 +397,14 @@ describe("selectKeyConfig", () => {
 	const suite = () =>
 		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
-	// Spoofing `kemId` leaves a 32-byte X25519 public key where ML-KEM-768 wants
-	// 1184, which is the point: a length-compatible mismatch is the case that
-	// slips past HPKE deserialization and onto the wire.
+	// Both overrides are grafted on after generation, which now refuses to
+	// advertise anything but the suite's own pair. Spoofing `kemId` leaves a
+	// 32-byte X25519 public key where ML-KEM-768 wants 1184, which is the point:
+	// a length-compatible mismatch is the case that slips past HPKE
+	// deserialization and onto the wire.
 	async function config(keyId: number, algos: readonly SymmetricAlgorithm[], kemId?: KemId) {
-		const priv = await generateKeyConfig(suite(), keyId, algos);
-		return kemId === undefined ? priv : { ...priv, kemId };
+		const priv = await generateKeyConfig(suite(), keyId);
+		return { ...priv, symmetricAlgorithms: algos, ...(kemId === undefined ? {} : { kemId }) };
 	}
 
 	it("skips a config the suite's KEM cannot use", async () => {
