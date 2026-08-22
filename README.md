@@ -313,18 +313,17 @@ const gateway = new OHTTPServer([keyConfig], {
 An override with no factory for an algorithm you serve throws
 `UnsupportedCipherSuite` rather than falling back.
 
-## Testing
-
-The test suite includes the RFC 9458 and chunked OHTTP draft vectors, plus
-interoperability vectors from `ohttp-js`. Fast-check properties exercise wire
-formats, round trips, fragmentation, chunk ordering, malformed input, and
-concurrent operations. CI runs the suite in Node.js, browsers, and Cloudflare
-Workers, while Bun runs the examples. Allocation and crypto-overlap benchmarks
-cover the main buffered and streaming paths.
-
 ## Security considerations
 
 **Not audited.** Use at your own risk.
+
+Security-sensitive behavior is tested against the RFC 9458 and chunked OHTTP
+draft vectors, plus interoperability vectors from `ohttp-js`.
+[fast-check](https://fast-check.dev/) properties exercise wire formats, round
+trips, fragmentation, chunk ordering, malformed input, and concurrent
+operations. CI runs the suite in Node.js, browsers, and Cloudflare Workers,
+while Bun runs the examples. Allocation and crypto-overlap benchmarks cover the
+main buffered and streaming paths.
 
 The chunked API deliberately exposes one resource setting: `maxMessageSize`.
 Plaintext chunks use the draft's 16 KiB size, and the ciphertext bound is
