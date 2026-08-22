@@ -6,28 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-Breaking for gateways: `KeyConfigWithPrivate.suite` becomes `suites`, the three key config constructors drop their `symmetricAlgorithms` argument, generated private keys are no longer extractable, and malformed inner binary HTTP reports `InvalidMessage` where the buffered paths reported `DecryptionFailed`. `parseFramedChunk` returns a view into its input rather than a copy.
+### Breaking changes
 
-### Changed
+- `KeyConfigWithPrivate.suite` is now `suites`. A gateway can serve several
+  `(KDF, AEAD)` pairs under one key identifier, as shown in RFC 9458 Appendix A.
+  `KeyConfig.selectSuite` selects the suite named by each request.
+- `generateKeyConfig`, `deriveKeyConfig`, and `importKeyConfig` no longer accept
+  `symmetricAlgorithms`; they derive the wire-format list from their suites.
+- Generated private keys are non-extractable by default. Only
+  `generateKeyConfig` has an `extractable` option. Derived and imported keys are
+  always non-extractable because the caller already has their source material.
+- Chunked endpoints no longer expose `maxChunkSize` or `maxFrameSize`. They use
+  the draft's 16 KiB chunk size and accept one resource setting,
+  `maxMessageSize`, which defaults to 1 GiB.
+- Malformed inner Binary HTTP now reports `InvalidMessage` on every API path,
+  rather than `DecryptionFailed` on buffered paths or a bhttp-ts error on
+  streaming paths.
+- `parseFramedChunk` returns a view into its input instead of copying the
+  ciphertext. Its input is typed `Uint8Array<ArrayBuffer>` and must not be
+  mutated while the view is in use.
+- Gateways keep their own copy of each key configuration. Mutating a config or
+  its suite list after server construction no longer changes the server, and a
+  config returned from decapsulation is not object-identical to the input.
 
-- `KeyConfigWithPrivate` carries `suites`, not one `suite`, so a gateway can serve the RFC 9458 Appendix A shape: several `(KDF, AEAD)` pairs under one key identifier, decrypted with the suite the request header names. `KeyConfig.selectSuite` does that lookup.
-- The `symmetricAlgorithms` argument is gone from the three constructors, since it is derived from the suites. The field on `KeyConfig` stays: that one is the wire format.
-- `responseCrypto.kdf` and `.aead` take a list as well as one factory. The suite is picked per request while `responseCrypto` is fixed at construction, so a gateway serving two AEADs needs a factory for each. Clients and servers now check the override against every suite they serve when they are built, instead of failing on the first request that picks the uncovered pair, after it has already decrypted.
-- The key config a gateway reads back from `decapsulate()` or a chunked request context is the server's own copy, so `===` against the object it was given no longer holds, and pushing a suite into that object after construction does not reach the gateway.
-- Suites in a config are checked against the public key, not just their KEM id. `hpke`'s WebCrypto X25519 and `@panva/hpke-noble`'s share an id but not a key type.
-- Both servers reject an empty key config list, a repeated key identifier, or a `keyId` outside the one byte the header carries. Lookup is by identifier, so a duplicate shadowed the configs after it, and an out-of-range id answered `UnknownKeyId` to every request while `serializeKeyConfig` refused to publish it.
-- `serializeKeyConfig` rejects a `keyId` outside 0-255, a public key that is not `Npk` long, and an algorithm list that is empty or names something this library cannot decrypt with. `setUint8` wrote 256 as key 0, and an empty list produced bytes `parseKeyConfig` refuses.
-- Private keys are no longer extractable. `generateKeyConfig` takes a trailing `extractable` for when the library holds the only copy; `deriveKeyConfig` and `importKeyConfig` never export, since the caller already has the seed or the key bytes. `SerializePrivateKey` on any of them now throws.
-- The three constructors reject a non-integer `keyId`, including the `NaN` from `Number(process.env.KEY_ID)` on an unset variable.
-- Both clients import the gateway public key once instead of on every request. `DeserializePublicKey` is a WebCrypto `importKey`, so it was an extra await per request for a key that cannot change under a live client: about 6% of a 1KB `encapsulate`. A failed import is not cached, so the client retries rather than staying broken. Mutating `keyConfig.publicKey` after construction no longer takes effect.
-- Malformed inner binary HTTP reports `InvalidMessage` on every path. The buffered ones said `DecryptionFailed` after decryption had already succeeded, and the streaming decoder let bhttp-ts's own error escape.
-- A malformed bhttp stream now cancels the stream it was reading, and the cancel reaches the peer's body: a rejected `pull()` errors a stream without running its `cancel()`, and the stream over the request or response body had no `cancel()` to run.
-- `parseFramedChunk` returns the ciphertext as a view into the buffer it was given, not a copy, matching the rest of the byte path. Its `data` argument is typed `Uint8Array<ArrayBuffer>` for that, and the caller must not mutate the buffer while it holds the view.
-- Cancelling a decoded request or response body passes the reason to the peer's body and settles on it. Both bridges dropped the reason and the promise. Up to four AEAD calls outlive the cancel, since WebCrypto has nothing to abort; they are observed, so nothing is unhandled.
+### Added
 
-### Documentation
+- `responseCrypto.kdf` and `responseCrypto.aead` accept one factory or a list of
+  factories, so a multi-suite gateway can provide each algorithm it serves.
+  Clients and servers validate coverage at construction time.
+- High-level chunked streaming operations accept an `AbortSignal`.
 
-- The README covers the 400 a gateway owes the relay for any `OHTTPError`, and one key config serving several AEADs.
+### Security
+
+- Chunked requests and responses enforce the 16 KiB plaintext bound, its
+  derived ciphertext bound, at most 2^32 chunks, and `maxMessageSize`. The same
+  accounting applies to buffered streams and manual chunk contexts.
+- Updated to `bhttp-ts` 0.5.2. Its streaming decoder limits Binary HTTP metadata
+  to 64 KiB by default and rejects oversized declared fields before buffering
+  their payload.
+- Chunk counters are claimed before asynchronous AEAD work, preventing
+  concurrent calls from reusing an `(AEAD key, nonce)` pair or shifting later
+  counters.
+- Servers reject empty key lists, duplicate or out-of-range key identifiers,
+  suites incompatible with their public key, and configs whose algorithms they
+  cannot serve. Key config constructors reject non-integer identifiers.
+- Key config serialization checks public-key length, supported algorithms, and
+  every 8-bit and 16-bit wire length instead of allowing integer truncation.
+- Malformed Binary HTTP cancels the peer body. Consumer cancellation and
+  operation aborts propagate their original reason, including aborts after the
+  request header or response nonce has been parsed. WebCrypto calls already in
+  flight are observed until they settle because WebCrypto cannot abort them.
+
+### Performance
+
+- Clients import the gateway public key once and retry only if that import
+  fails. This removes an unchanged WebCrypto `importKey` from every request and
+  improves 1 KiB encapsulation by about 6%.
+- Complete chunked output is collected into one allocation. Framing and
+  parsing use views where ownership permits, avoiding copies on the byte path.
+
+### Testing and documentation
+
+- The suite combines RFC 9458, chunked OHTTP draft, and `ohttp-js`
+  interoperability vectors with fast-check properties for framing, round
+  trips, fragmentation, ordering, malformed input, and concurrency. CI covers
+  Node.js, browsers, Cloudflare Workers, and Bun examples.
+- The README now has complete client and gateway examples, resource-limit and
+  cancellation guidance, multi-suite configuration, gateway error handling,
+  and the project's testing and security posture.
 
 ## [0.4.2] - 2026-08-20
 
