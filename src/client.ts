@@ -528,14 +528,15 @@ export class ChunkedOHTTPClient {
 
 		// Chunk + seal through the same pipelined transforms as the streaming API
 		// (the seals run in a concurrent window), then prepend the header.
-		const sealed = await collectStream(
+		const encapsulatedRequest = await collectStream(
 			streamOfBytes(request)
 				.pipeThrough(createChunkerTransform(this.maxChunkSize))
 				.pipeThrough(createRequestEncryptTransform(ctx[kSenderContext])),
+			ctx.header,
 		);
 
 		return {
-			encapsulatedRequest: concat(ctx.header, sealed),
+			encapsulatedRequest,
 			responseNonceLength: getResponseNonceLength(this.suite),
 			createResponseContext: (nonce: Uint8Array) => ctx.createResponseContext(nonce),
 		};

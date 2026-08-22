@@ -33,11 +33,16 @@ export function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
 	});
 }
 
-/** Collect a stream of byte chunks into one contiguous buffer. */
+/**
+ * Collect a stream of byte chunks into one contiguous buffer, optionally
+ * prefixed. Passing `prefix` here rather than concatenating afterwards keeps
+ * the whole payload to a single copy.
+ */
 export async function collectStream(
 	stream: ReadableStream<Uint8Array>,
+	prefix?: Uint8Array,
 ): Promise<Uint8Array<ArrayBuffer>> {
-	const parts: Uint8Array[] = [];
+	const parts: Uint8Array[] = prefix === undefined ? [] : [prefix];
 	const reader = stream.getReader();
 	for (;;) {
 		const { done, value } = await reader.read();

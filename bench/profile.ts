@@ -17,7 +17,7 @@
 
 import { Session } from "node:inspector/promises";
 import { AEAD_AES_128_GCM } from "hpke";
-import { client, server } from "./fixtures.js";
+import { chunkedClient, chunkedServer, client, server } from "./fixtures.js";
 import { randomBytes, streamDecrypt, streamEncrypt } from "./util.js";
 
 interface CallFrame {
@@ -124,6 +124,30 @@ async function main(): Promise<void> {
 		await finalRes.arrayBuffer();
 	};
 
+	const chunkedEnc1MB = (await chunkedClient.encapsulate(_1MB)).encapsulatedRequest;
+
+	// Chunked (draft-ietf-ohai-chunked-ohttp): same payloads, 16KB chunks, framed.
+	const chunkedRoundTrip = async (p: Uint8Array): Promise<void> => {
+		const { encapsulatedRequest, createResponseContext } = await chunkedClient.encapsulate(p);
+		const { createResponseContext: srvCreateResponse } =
+			await chunkedServer.decapsulate(encapsulatedRequest);
+		const rctx = await srvCreateResponse();
+		const encRes = await chunkedServer.encapsulateResponse(rctx, p);
+		await chunkedClient.decapsulateResponse(createResponseContext, encRes);
+	};
+
+	// Chunked high-level API: streaming bhttp encode/decode both ways.
+	const chunkedHlRoundTrip = async (): Promise<void> => {
+		const { init, context } = await chunkedClient.encapsulateRequest(makeRequest(1_024));
+		const { request: inner, context: sctx } = await chunkedServer.decapsulateRequest(
+			new Request(relayUrl, init as RequestInit),
+		);
+		await inner.arrayBuffer();
+		const encRes = await sctx.encapsulateResponse(makeResponse(1_024));
+		const finalRes = await context.decapsulateResponse(encRes);
+		await finalRes.arrayBuffer();
+	};
+
 	const roundTrip = async (p: Uint8Array): Promise<void> => {
 		const { encapsulatedRequest, context } = await client.encapsulate(p);
 		const { context: sctx } = await server.decapsulate(encapsulatedRequest);
@@ -147,6 +171,11 @@ async function main(): Promise<void> {
 		["round-trip 1KB (setup-dominated)", 4000, () => roundTrip(_1KB)],
 		["encapsulateRequest 1MB", 1500, () => client.encapsulate(_1MB)],
 		["decapsulateRequest 1MB", 1500, () => server.decapsulate(enc1MB.encapsulatedRequest)],
+		// chunked equivalents of the four above
+		["chunked HL round-trip 1KB+headers", 1000, chunkedHlRoundTrip],
+		["chunked round-trip 1KB (setup-dominated)", 2000, () => chunkedRoundTrip(_1KB)],
+		["chunked encapsulateRequest 1MB", 500, () => chunkedClient.encapsulate(_1MB)],
+		["chunked decapsulateRequest 1MB", 500, () => chunkedServer.decapsulate(chunkedEnc1MB)],
 		[
 			"stream encrypt 512KB / 16KB chunks",
 			400,
