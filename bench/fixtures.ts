@@ -13,7 +13,13 @@
  */
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
+import {
+	ChunkedOHTTPClient,
+	ChunkedOHTTPServer,
+	KeyConfig,
+	OHTTPClient,
+	OHTTPServer,
+} from "../src/index.js";
 import { randomBytes } from "./util.js";
 
 export const suite = new CipherSuite(
@@ -48,3 +54,7 @@ export async function makeFixture(bytes: number): Promise<Fixture> {
 	const encryptedResponse = await serverCtx.encryptResponse(payload);
 	return { payload, encapsulatedRequest, clientCtx, serverCtx, encryptedResponse };
 }
+
+/** Chunked (draft-ietf-ohai-chunked-ohttp) pair, same suite/key, default 16KB chunks. */
+export const chunkedClient = new ChunkedOHTTPClient(suite, keyConfig);
+export const chunkedServer = new ChunkedOHTTPServer([keyConfig]);

@@ -538,7 +538,7 @@ export class ChunkedOHTTPServer {
 	): Promise<Uint8Array<ArrayBuffer>> {
 		// Chunk + seal through the pipelined response transform (seals run in a
 		// concurrent window), prefixed with the response nonce.
-		const sealed = await collectStream(
+		return collectStream(
 			streamOfBytes(response)
 				.pipeThrough(createChunkerTransform(this.maxChunkSize))
 				.pipeThrough(
@@ -548,9 +548,8 @@ export class ChunkedOHTTPServer {
 						responseContext[kAeadNonce],
 					),
 				),
+			responseContext.responseNonce,
 		);
-
-		return concat(responseContext.responseNonce, sealed);
 	}
 
 	/**

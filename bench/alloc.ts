@@ -23,7 +23,7 @@
  */
 
 import { AEAD_AES_128_GCM } from "hpke";
-import { client, makeFixture, server } from "./fixtures.js";
+import { chunkedClient, chunkedServer, client, makeFixture, server } from "./fixtures.js";
 import { randomBytes, streamDecrypt, streamEncrypt } from "./util.js";
 
 declare const gc: (() => void) | undefined;
@@ -87,6 +87,17 @@ async function main(): Promise<void> {
 	const _512KB = randomBytes(512 * 1024);
 	const framed16 = await streamEncrypt(aead, skey, snonce, _512KB, 16_384);
 
+	// Chunked equivalents (16KB chunks, framed): same payloads, same shapes.
+	const chunkedEnc1KB = (await chunkedClient.encapsulate(f1k.payload)).encapsulatedRequest;
+	const chunkedEnc1MB = (await chunkedClient.encapsulate(f1m.payload)).encapsulatedRequest;
+	const chunkedRoundTrip = async (payload: Uint8Array): Promise<void> => {
+		const { encapsulatedRequest, createResponseContext } = await chunkedClient.encapsulate(payload);
+		const { createResponseContext: srvCreateResponse } =
+			await chunkedServer.decapsulate(encapsulatedRequest);
+		const encRes = await chunkedServer.encapsulateResponse(await srvCreateResponse(), payload);
+		await chunkedClient.decapsulateResponse(createResponseContext, encRes);
+	};
+
 	// Few iters for large payloads so a mid-loop GC stays unlikely (see header).
 	const cases: Array<[string, number, () => Promise<unknown>]> = [
 		["encapsulateRequest 1KB", 100, () => client.encapsulate(f1k.payload)],
@@ -97,6 +108,12 @@ async function main(): Promise<void> {
 		["decryptResponse 1MB", 5, () => f1m.clientCtx.decryptResponse(f1m.encryptedResponse)],
 		["round-trip 1KB", 100, () => roundTrip(f1k.payload)],
 		["round-trip 1MB", 5, () => roundTrip(f1m.payload)],
+		["chunked encapsulateRequest 1KB", 100, () => chunkedClient.encapsulate(f1k.payload)],
+		["chunked encapsulateRequest 1MB", 5, () => chunkedClient.encapsulate(f1m.payload)],
+		["chunked decapsulateRequest 1KB", 100, () => chunkedServer.decapsulate(chunkedEnc1KB)],
+		["chunked decapsulateRequest 1MB", 5, () => chunkedServer.decapsulate(chunkedEnc1MB)],
+		["chunked round-trip 1KB", 100, () => chunkedRoundTrip(f1k.payload)],
+		["chunked round-trip 1MB", 5, () => chunkedRoundTrip(f1m.payload)],
 		[
 			"stream encrypt 512KB / 16KB chunks",
 			5,
