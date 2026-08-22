@@ -612,6 +612,7 @@ export class ChunkedOHTTPServer {
 		while (buffer.length < headerSize) {
 			const { done, value } = await reader.read();
 			if (done) {
+				if (signal.aborted) throw signal.reason;
 				throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 			}
 			buffer = concat(buffer, value);
@@ -642,7 +643,10 @@ export class ChunkedOHTTPServer {
 				try {
 					while (true) {
 						const { done, value } = await reader.read();
-						if (done) break;
+						if (done) {
+							if (signal.aborted) throw signal.reason;
+							break;
+						}
 						controller.enqueue(value);
 					}
 				} finally {
