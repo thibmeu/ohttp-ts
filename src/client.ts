@@ -724,7 +724,10 @@ export class ChunkedOHTTPClient {
 						try {
 							while (true) {
 								const { done, value } = await reader.read();
-								if (done) break;
+								if (done) {
+									if (signal?.aborted) throw signal.reason;
+									break;
+								}
 								controller.enqueue(value);
 							}
 						} finally {

@@ -791,6 +791,36 @@ describe("draft-08 chunk validation (regression)", () => {
 });
 
 describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
+	function streamThenWait(bytes: Uint8Array) {
+		let markWaiting!: () => void;
+		let release!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			markWaiting = resolve;
+		});
+		const blocked = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let sent = false;
+
+		return {
+			waiting,
+			stream: new ReadableStream<Uint8Array>({
+				pull(controller) {
+					if (!sent) {
+						sent = true;
+						controller.enqueue(bytes);
+						return;
+					}
+					markWaiting();
+					return blocked;
+				},
+				cancel() {
+					release();
+				},
+			}),
+		};
+	}
+
 	it("propagates an operation abort reason while reading a request", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 		const keyConfig = await generateKeyConfig(suite, 1);
@@ -807,6 +837,70 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		await expect(
 			server.decapsulateRequest(relayRequest, { signal: controller.signal }),
 		).rejects.toBe(reason);
+	});
+
+	it("propagates an abort while reading the rest of the request header", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, keyConfig);
+		const server = new ChunkedOHTTPServer([keyConfig]);
+		const header = (await client.createRequestContext()).header;
+		const source = streamThenWait(header.subarray(0, 7));
+		const request = new Request("https://gateway.example/", {
+			method: "POST",
+			headers: { "Content-Type": MediaType.CHUNKED_REQUEST },
+			body: source.stream,
+			duplex: "half",
+		} as RequestInit & { duplex: "half" });
+		const controller = new AbortController();
+		const reason = new Error("header read stopped");
+
+		const result = server.decapsulateRequest(request, { signal: controller.signal });
+		await source.waiting;
+		controller.abort(reason);
+
+		await expect(result).rejects.toBe(reason);
+	});
+
+	it("propagates an abort after the request header is parsed", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, keyConfig);
+		const server = new ChunkedOHTTPServer([keyConfig]);
+		const source = streamThenWait((await client.createRequestContext()).header);
+		const request = new Request("https://gateway.example/", {
+			method: "POST",
+			headers: { "Content-Type": MediaType.CHUNKED_REQUEST },
+			body: source.stream,
+			duplex: "half",
+		} as RequestInit & { duplex: "half" });
+		const controller = new AbortController();
+		const reason = new Error("request body stopped");
+
+		const result = server.decapsulateRequest(request, { signal: controller.signal });
+		await source.waiting;
+		controller.abort(reason);
+
+		await expect(result).rejects.toBe(reason);
+	});
+
+	it("propagates an abort after the response nonce is parsed", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, keyConfig);
+		const { context } = await client.encapsulateRequest(new Request("https://example.com/"));
+		const source = streamThenWait(new Uint8Array(16));
+		const response = new Response(source.stream, {
+			headers: { "Content-Type": MediaType.CHUNKED_RESPONSE },
+		});
+		const controller = new AbortController();
+		const reason = new Error("response body stopped");
+
+		const result = context.decapsulateResponse(response, { signal: controller.signal });
+		await source.waiting;
+		controller.abort(reason);
+
+		await expect(result).rejects.toBe(reason);
 	});
 
 	it("encapsulates and decapsulates HTTP Request with body", async () => {
