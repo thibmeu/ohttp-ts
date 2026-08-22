@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-Breaking for gateways: `KeyConfigWithPrivate.suite` becomes `suites`, the three key config constructors drop their `symmetricAlgorithms` argument, generated private keys are no longer extractable, and malformed inner binary HTTP reports `InvalidMessage` where the buffered paths reported `DecryptionFailed`.
+Breaking for gateways: `KeyConfigWithPrivate.suite` becomes `suites`, the three key config constructors drop their `symmetricAlgorithms` argument, generated private keys are no longer extractable, and malformed inner binary HTTP reports `InvalidMessage` where the buffered paths reported `DecryptionFailed`. `parseFramedChunk` returns a view into its input rather than a copy.
 
 ### Changed
 
@@ -22,6 +22,8 @@ Breaking for gateways: `KeyConfigWithPrivate.suite` becomes `suites`, the three 
 - Both clients import the gateway public key once instead of on every request. `DeserializePublicKey` is a WebCrypto `importKey`, so it was an extra await per request for a key that cannot change under a live client: about 6% of a 1KB `encapsulate`. A failed import is not cached, so the client retries rather than staying broken. Mutating `keyConfig.publicKey` after construction no longer takes effect.
 - Malformed inner binary HTTP reports `InvalidMessage` on every path. The buffered ones said `DecryptionFailed` after decryption had already succeeded, and the streaming decoder let bhttp-ts's own error escape.
 - A malformed bhttp stream now cancels the stream it was reading, and the cancel reaches the peer's body: a rejected `pull()` errors a stream without running its `cancel()`, and the stream over the request or response body had no `cancel()` to run.
+- `parseFramedChunk` returns the ciphertext as a view into the buffer it was given, not a copy, matching the rest of the byte path. Its `data` argument is typed `Uint8Array<ArrayBuffer>` for that, and the caller must not mutate the buffer while it holds the view.
+- Cancelling a decoded request or response body passes the reason to the peer's body and settles on it. Both bridges dropped the reason and the promise. Up to four AEAD calls outlive the cancel, since WebCrypto has nothing to abort; they are observed, so nothing is unhandled.
 
 ### Documentation
 

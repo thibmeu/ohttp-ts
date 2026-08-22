@@ -68,7 +68,8 @@ const EMPTY = new Uint8Array(0);
 const AEAD_PIPELINE_DEPTH = 4;
 
 /** Settled result of an in-flight AEAD call: rejections are captured at issue
- * time so an abandoned window never surfaces an unhandled rejection. */
+ * time so an abandoned window never surfaces an unhandled rejection, including
+ * a window abandoned by a cancel. */
 type SettledChunk = { ok: true; value: Uint8Array } | { ok: false; error: unknown };
 
 function settle(p: Promise<Uint8Array>): Promise<SettledChunk> {
@@ -617,8 +618,8 @@ export async function decodeBHttpRequestStream(
 			}
 		},
 
-		cancel() {
-			reader.cancel();
+		cancel(reason) {
+			return reader.cancel(reason);
 		},
 	});
 
@@ -715,8 +716,8 @@ export async function decodeBHttpResponseStream(
 			}
 		},
 
-		cancel() {
-			reader.cancel();
+		cancel(reason) {
+			return reader.cancel(reason);
 		},
 	});
 

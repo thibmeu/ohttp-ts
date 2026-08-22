@@ -61,6 +61,7 @@ describe("frameChunk / parseFramedChunk round-trip", () => {
 			if (parsed === undefined) return;
 			expect(parsed.isFinal).toBe(false);
 			expect(parsed.ciphertext).toEqual(ct);
+			expect(parsed.ciphertext.buffer).toBe(framed.buffer);
 			expect(parsed.bytesConsumed).toBe(encodeVarint(ct.length).length + ct.length);
 			expect(parsed.bytesConsumed).toBe(framed.length);
 		},
@@ -75,6 +76,7 @@ describe("frameChunk / parseFramedChunk round-trip", () => {
 			if (parsed === undefined) return;
 			expect(parsed.isFinal).toBe(true);
 			expect(parsed.ciphertext).toEqual(ct);
+			expect(parsed.ciphertext.buffer).toBe(framed.buffer);
 			expect(parsed.bytesConsumed).toBe(framed.length);
 		},
 	);

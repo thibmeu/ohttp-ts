@@ -30,9 +30,11 @@ export interface ParsedChunk {
  * Returns undefined if not enough data available.
  * Throws OHTTPError if the varint encoding is malformed, or if the declared
  * frame length exceeds `maxFrameSize`.
+ *
+ * `ciphertext` views `data`; do not mutate `data` while holding it.
  */
 export function parseFramedChunk(
-	data: Uint8Array,
+	data: Uint8Array<ArrayBuffer>,
 	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
 ): ParsedChunk | undefined {
 	if (data.length === 0) {
@@ -52,7 +54,7 @@ export function parseFramedChunk(
 
 	if (length === 0) {
 		// Final chunk - extends to end of stream, so only the cap bounds it
-		const ciphertext = data.slice(varintLength);
+		const ciphertext = data.subarray(varintLength);
 		if (ciphertext.length > maxFrameSize) {
 			throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 		}
@@ -74,7 +76,7 @@ export function parseFramedChunk(
 	}
 
 	return {
-		ciphertext: data.slice(varintLength, totalLength),
+		ciphertext: data.subarray(varintLength, totalLength),
 		isFinal: false,
 		bytesConsumed: totalLength,
 	};

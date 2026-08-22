@@ -35,7 +35,7 @@ import {
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
-import { decodeBHttpRequestStream } from "../src/streaming.js";
+import { decodeBHttpRequestStream, encodeBHttpRequestStream } from "../src/streaming.js";
 import { concat } from "../src/utils.js";
 import { hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import chunkedVectors from "./vectors/chunked-ohttp-08.json";
@@ -1614,6 +1614,60 @@ describe("cancelling a peer that keeps sending", () => {
 		await flush();
 
 		expect(source.cancelled).toBe(true);
+		expect(source.sent).toBeLessThan(parts.length);
+	});
+
+	it("stops reading the peer when the consumer cancels the body", async () => {
+		const serverKeyConfig = await generateKeyConfig(suite(), 1);
+		const client = new ChunkedOHTTPClient(
+			suite(),
+			parseKeyConfig(serializeKeyConfig(serverKeyConfig)),
+		);
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+
+		// One OHTTP frame per bhttp output, so the peer always has more to send.
+		let n = 0;
+		const bhttp = encodeBHttpRequestStream(
+			new Request("https://target.example.com/", {
+				method: "POST",
+				body: new ReadableStream<Uint8Array>({
+					pull(controller) {
+						if (n++ < 50) controller.enqueue(new Uint8Array([0x41]));
+						else controller.close();
+					},
+				}),
+				duplex: "half",
+			} as RequestInit & { duplex: "half" }),
+		);
+
+		const ctx = await client.createRequestContext();
+		const parts = [ctx.header];
+		const bhttpReader = bhttp.getReader();
+		for (;;) {
+			const { done, value } = await bhttpReader.read();
+			if (done) break;
+			parts.push(frameChunk(await ctx.sealChunk(value), false));
+		}
+		const source = chattyBody(parts);
+
+		const { request } = await server.decapsulateRequest(
+			new Request("https://gateway.example.com/", {
+				method: "POST",
+				headers: { "Content-Type": MediaType.CHUNKED_REQUEST },
+				body: source.body,
+				duplex: "half",
+			} as RequestInit & { duplex: "half" }),
+		);
+
+		// Read one chunk, then walk away.
+		const reader = (request.body as ReadableStream<Uint8Array>).getReader();
+		await reader.read();
+		await reader.cancel(new Error("consumer went away"));
+		const sentAtCancel = source.sent;
+		await flush();
+
+		expect(source.cancelled).toBe(true);
+		expect(source.sent).toBeLessThanOrEqual(sentAtCancel + 1);
 		expect(source.sent).toBeLessThan(parts.length);
 	});
 
