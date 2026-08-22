@@ -8,72 +8,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking changes
 
-- `KeyConfigWithPrivate.suite` is now `suites`. A gateway can serve several
-  `(KDF, AEAD)` pairs under one key identifier, as shown in RFC 9458 Appendix A.
-  `KeyConfig.selectSuite` selects the suite named by each request.
-- `generateKeyConfig`, `deriveKeyConfig`, and `importKeyConfig` no longer accept
-  `symmetricAlgorithms`; they derive the wire-format list from their suites.
-- Generated private keys are non-extractable by default. Only
-  `generateKeyConfig` has an `extractable` option. Derived and imported keys are
-  always non-extractable because the caller already has their source material.
-- Chunked endpoints no longer expose `maxChunkSize` or `maxFrameSize`. They use
-  the draft's 16 KiB chunk size and accept one resource setting,
-  `maxMessageSize`, which defaults to 1 GiB.
-- Malformed inner Binary HTTP now reports `InvalidMessage` on every API path,
-  rather than `DecryptionFailed` on buffered paths or a bhttp-ts error on
-  streaming paths.
-- `parseFramedChunk` returns a view into its input instead of copying the
-  ciphertext. Its input is typed `Uint8Array<ArrayBuffer>` and must not be
-  mutated while the view is in use.
-- Gateways keep their own copy of each key configuration. Mutating a config or
-  its suite list after server construction no longer changes the server, and a
-  config returned from decapsulation is not object-identical to the input.
+- `KeyConfigWithPrivate.suite` is now `suites`. A gateway can serve several `(KDF, AEAD)` pairs under one key identifier, as shown in RFC 9458 Appendix A. `KeyConfig.selectSuite` selects the suite named by each request.
+- `generateKeyConfig`, `deriveKeyConfig`, and `importKeyConfig` no longer accept `symmetricAlgorithms`; they derive the wire-format list from their suites.
+- Generated private keys are non-extractable by default. Only `generateKeyConfig` has an `extractable` option. Derived and imported keys are always non-extractable because the caller already has their source material.
+- Chunked endpoints no longer expose `maxChunkSize` or `maxFrameSize`. They use the draft's 16 KiB chunk size and accept one resource setting, `maxMessageSize`, which defaults to 1 GiB.
+- Malformed inner Binary HTTP now reports `InvalidMessage` on every API path, rather than `DecryptionFailed` on buffered paths or a bhttp-ts error on streaming paths.
+- `parseFramedChunk` returns a view into its input instead of copying the ciphertext. Its input is typed `Uint8Array<ArrayBuffer>` and must not be mutated while the view is in use.
+- Gateways keep their own copy of each key configuration. Mutating a config or its suite list after server construction no longer changes the server, and a config returned from decapsulation is not object-identical to the input.
 
 ### Added
 
-- `responseCrypto.kdf` and `responseCrypto.aead` accept one factory or a list of
-  factories, so a multi-suite gateway can provide each algorithm it serves.
-  Clients and servers validate coverage at construction time.
+- `responseCrypto.kdf` and `responseCrypto.aead` accept one factory or a list of factories, so a multi-suite gateway can provide each algorithm it serves. Clients and servers validate coverage at construction time.
 - High-level chunked streaming operations accept an `AbortSignal`.
 
 ### Security
 
-- Chunked requests and responses enforce the 16 KiB plaintext bound, its
-  derived ciphertext bound, at most 2^32 chunks, and `maxMessageSize`. The same
-  accounting applies to buffered streams and manual chunk contexts.
-- Updated to `bhttp-ts` 0.5.2. Its streaming decoder limits Binary HTTP metadata
-  to 64 KiB by default and rejects oversized declared fields before buffering
-  their payload.
-- Chunk counters are claimed before asynchronous AEAD work, preventing
-  concurrent calls from reusing an `(AEAD key, nonce)` pair or shifting later
-  counters.
-- Servers reject empty key lists, duplicate or out-of-range key identifiers,
-  suites incompatible with their public key, and configs whose algorithms they
-  cannot serve. Key config constructors reject non-integer identifiers.
-- Key config serialization checks public-key length, supported algorithms, and
-  every 8-bit and 16-bit wire length instead of allowing integer truncation.
-- Malformed Binary HTTP cancels the peer body. Consumer cancellation and
-  operation aborts propagate their original reason, including aborts after the
-  request header or response nonce has been parsed. WebCrypto calls already in
-  flight are observed until they settle because WebCrypto cannot abort them.
+- Chunked requests and responses enforce the 16 KiB plaintext bound, its derived ciphertext bound, at most 2^32 chunks, and `maxMessageSize`. The same accounting applies to buffered streams and manual chunk contexts.
+- Updated to `bhttp-ts` 0.5.2. Its streaming decoder limits Binary HTTP metadata to 64 KiB by default and rejects oversized declared fields before buffering their payload.
+- Chunk counters are claimed before asynchronous AEAD work, preventing concurrent calls from reusing an `(AEAD key, nonce)` pair or shifting later counters.
+- Servers reject empty key lists, duplicate or out-of-range key identifiers, suites incompatible with their public key, and configs whose algorithms they cannot serve. Key config constructors reject non-integer identifiers.
+- Key config serialization checks public-key length, supported algorithms, and every 8-bit and 16-bit wire length instead of allowing integer truncation.
+- Malformed Binary HTTP cancels the peer body. Consumer cancellation and operation aborts propagate their original reason, including aborts after the request header or response nonce has been parsed. WebCrypto calls already in flight are observed until they settle because WebCrypto cannot abort them.
 
 ### Performance
 
-- Clients import the gateway public key once and retry only if that import
-  fails. This removes an unchanged WebCrypto `importKey` from every request and
-  improves 1 KiB encapsulation by about 6%.
-- Complete chunked output is collected into one allocation. Framing and
-  parsing use views where ownership permits, avoiding copies on the byte path.
+- Clients import the gateway public key once and retry only if that import fails. This removes an unchanged WebCrypto `importKey` from every request and improves 1 KiB encapsulation by about 6%.
+- Complete chunked output is collected into one allocation. Framing and parsing use views where ownership permits, avoiding copies on the byte path.
 
 ### Testing and documentation
 
-- The suite combines RFC 9458, chunked OHTTP draft, and `ohttp-js`
-  interoperability vectors with fast-check properties for framing, round
-  trips, fragmentation, ordering, malformed input, and concurrency. CI covers
-  Node.js, browsers, Cloudflare Workers, and Bun examples.
-- The README now has complete client and gateway examples, resource-limit and
-  cancellation guidance, multi-suite configuration, gateway error handling,
-  and the project's testing and security posture.
+- The suite combines RFC 9458, chunked OHTTP draft, and `ohttp-js` interoperability vectors with fast-check properties for framing, round trips, fragmentation, ordering, malformed input, and concurrency. CI covers Node.js, browsers, Cloudflare Workers, and Bun examples.
+- The README now has complete client and gateway examples, resource-limit and cancellation guidance, multi-suite configuration, gateway error handling, and the project's testing and security posture.
 
 ## [0.4.2] - 2026-08-20
 
