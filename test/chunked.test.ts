@@ -12,6 +12,7 @@ import {
 } from "hpke";
 import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it } from "vitest";
+import { bhttpEncoder } from "../src/bhttp.js";
 import { ChunkedOHTTPClient } from "../src/client.js";
 import { CHUNKED_REQUEST_LABEL, kRecipientContext, MediaType } from "../src/constants.js";
 import {
@@ -34,7 +35,6 @@ import {
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
-import { decodeBHttpRequestStream, encodeBHttpRequestStream } from "../src/streaming.js";
 import { concat } from "../src/utils.js";
 import { hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import chunkedVectors from "./vectors/chunked-ohttp-08.json";
@@ -791,6 +791,91 @@ describe("draft-08 chunk validation (regression)", () => {
 });
 
 describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
+	function finiteBody(totalChunks: number) {
+		let pulls = 0;
+		let cancelled = false;
+		return {
+			stream: new ReadableStream<Uint8Array>({
+				pull(controller) {
+					if (pulls >= totalChunks) {
+						controller.close();
+						return;
+					}
+					pulls++;
+					controller.enqueue(new Uint8Array(64 * 1024));
+				},
+				cancel() {
+					cancelled = true;
+				},
+			}),
+			get pulls() {
+				return pulls;
+			},
+			get cancelled() {
+				return cancelled;
+			},
+		};
+	}
+
+	async function waitForCancellation(source: { readonly cancelled: boolean }): Promise<void> {
+		for (let i = 0; i < 20 && !source.cancelled; i++) {
+			await new Promise<void>((resolve) => setImmediate(resolve));
+		}
+	}
+
+	async function observeReadAhead(): Promise<void> {
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+
+	it("keeps client upload read-ahead bounded and propagates cancellation", async () => {
+		const cipherSuite = new CipherSuite(
+			KEM_DHKEM_X25519_HKDF_SHA256,
+			KDF_HKDF_SHA256,
+			AEAD_AES_128_GCM,
+		);
+		const keyConfig = await generateKeyConfig(cipherSuite, 1);
+		const client = new ChunkedOHTTPClient(cipherSuite, keyConfig);
+		const source = finiteBody(100);
+
+		const { init } = await client.encapsulateRequest(
+			new Request("https://target.example.com/upload", {
+				method: "POST",
+				body: source.stream,
+				duplex: "half",
+			} as RequestInit & { duplex: "half" }),
+		);
+
+		await observeReadAhead();
+		expect(source.pulls).toBeLessThanOrEqual(4);
+		await (init.body as ReadableStream<Uint8Array>).cancel("network stopped");
+		await waitForCancellation(source);
+		expect(source.cancelled).toBe(true);
+	});
+
+	it("keeps server response read-ahead bounded and propagates cancellation", async () => {
+		const cipherSuite = new CipherSuite(
+			KEM_DHKEM_X25519_HKDF_SHA256,
+			KDF_HKDF_SHA256,
+			AEAD_AES_128_GCM,
+		);
+		const keyConfig = await generateKeyConfig(cipherSuite, 1);
+		const client = new ChunkedOHTTPClient(cipherSuite, keyConfig);
+		const server = new ChunkedOHTTPServer([keyConfig]);
+		const { init } = await client.encapsulateRequest(new Request("https://target.example.com/"));
+		const { context } = await server.decapsulateRequest(
+			new Request("https://gateway.example.com/", init),
+		);
+		const source = finiteBody(100);
+
+		const response = await context.encapsulateResponse(new Response(source.stream));
+
+		await observeReadAhead();
+		expect(source.pulls).toBeLessThanOrEqual(4);
+		await response.body?.cancel("network stopped");
+		await waitForCancellation(source);
+		expect(source.cancelled).toBe(true);
+	});
+
 	function streamThenWait(bytes: Uint8Array) {
 		let markWaiting!: () => void;
 		let release!: () => void;
@@ -1513,26 +1598,6 @@ describe("chunked bhttp framing errors", () => {
 	});
 });
 
-describe("streaming bhttp decode", () => {
-	it("cancels the source when the inner bhttp is malformed", async () => {
-		let cancelled = false;
-		const source = new ReadableStream<Uint8Array>({
-			start(controller) {
-				// Framing indicator 4, which bhttp does not define.
-				controller.enqueue(new Uint8Array([0x04, 0x00]));
-			},
-			cancel() {
-				cancelled = true;
-			},
-		});
-
-		await expect(decodeBHttpRequestStream(source)).rejects.toThrow(/INVALID_MESSAGE/);
-		// A rejected read leaves the decrypting stream upstream of this one open
-		// unless the reader cancels it.
-		expect(cancelled).toBe(true);
-	});
-});
-
 describe("chunked multi-suite key configs (RFC 9458 Appendix A)", () => {
 	const aes128 = () =>
 		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
@@ -1721,7 +1786,7 @@ describe("cancelling a peer that keeps sending", () => {
 
 		// One OHTTP frame per bhttp output, so the peer always has more to send.
 		let n = 0;
-		const bhttp = encodeBHttpRequestStream(
+		const bhttp = bhttpEncoder().encodeRequestStream(
 			new Request("https://target.example.com/", {
 				method: "POST",
 				body: new ReadableStream<Uint8Array>({

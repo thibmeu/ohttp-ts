@@ -11,7 +11,15 @@ export default defineConfig({
 		browser: {
 			enabled: true,
 			provider: playwright(),
-			instances: [{ browser: "chromium" }],
+			instances: [
+				{ browser: "chromium" },
+				{
+					browser: "firefox",
+					// Firefox cannot construct a Request with a ReadableStream body.
+					// Chunked OHTTP requires that for the relay request transport.
+					exclude: ["test/chunked.test.ts"],
+				},
+			],
 		},
 	},
 });

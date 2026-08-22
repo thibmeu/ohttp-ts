@@ -25,12 +25,21 @@ client/server pair, from `fixtures.ts`.
 | `npm run bench:concurrency` | `concurrency.bench.ts` | throughput vs in-flight concurrency |
 | `npm run bench:overlap` | `overlap.ts` | `crypto.subtle` calls per op, by kind, plus overlap |
 | `npm run bench:alloc` | `alloc.ts` | arrayBuffers + heap per op |
+| `npm run bench:backpressure` | `backpressure.ts` | upstream read-ahead and memory while the network is stalled |
 | `npm run bench:profile` | `profile.ts` | CPU self-time per function (quick text summary) |
 | `npm run bench:trace` | `trace.ts` | `.cpuprofile` / `.heapprofile` / trace JSON for external tools |
 | `npm run bench:browser` | `*.bench.ts` | the vitest benches under Chromium |
 
 `ohttp.bench.ts` (single-shot ops at 1KB and 1MB) and `streaming.bench.ts` (chunk
 transforms) complete the vitest set.
+
+`backpressure.ts` is a controlled pressure probe for the high-level chunked
+request API. It gives the returned network body to a stalled consumer, then
+counts how much plaintext the library pulled during a one-second observation.
+The source read-ahead is the regression signal; RSS and ArrayBuffer deltas are
+diagnostic because V8's garbage collector makes process memory measurements
+noisy. Override its 32 MiB payload, 64 KiB source reads, and observation window
+with `SIZE`, `CHUNK`, and `OBSERVE_MS`.
 
 ## Reading the numbers
 

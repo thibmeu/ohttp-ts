@@ -7,16 +7,7 @@
 
 import type { AEAD as AeadImpl, RecipientContext, SenderContext } from "hpke";
 import { decode as decodeVarint, encode as encodeVarint } from "quicvarint";
-import {
-	AEAD_TAG_SIZE,
-	type BHttpRequestPreambleEvent,
-	BHttpRequestStreamEncoder,
-	type BHttpResponsePreambleEvent,
-	BHttpResponseStreamEncoder,
-	BHttpStreamDecoder,
-	DEFAULT_MAX_FRAME_SIZE,
-	DEFAULT_MAX_MESSAGE_SIZE,
-} from "./constants.js";
+import { AEAD_TAG_SIZE, DEFAULT_MAX_FRAME_SIZE, DEFAULT_MAX_MESSAGE_SIZE } from "./constants.js";
 import { FINAL_CHUNK_AAD, openResponseChunk, sealResponseChunk } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 import { concat, createChunkBudget } from "./utils.js";
@@ -29,6 +20,75 @@ export function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
 			controller.close();
 		},
 	});
+}
+
+/** Continue an existing reader, optionally emitting already-read bytes first. */
+export function streamFromReader(
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+	prefix: Uint8Array = EMPTY,
+	signal?: AbortSignal,
+	mapError: (error: unknown) => unknown = (error) => error,
+): ReadableStream<Uint8Array> {
+	let first = prefix;
+	let released = false;
+	function release() {
+		if (released) return;
+		released = true;
+		signal?.removeEventListener("abort", abort);
+		reader.releaseLock();
+	}
+	function abort() {
+		void reader
+			.cancel(signal?.reason)
+			.catch(() => {})
+			.finally(release);
+	}
+	if (signal?.aborted) abort();
+	else signal?.addEventListener("abort", abort, { once: true });
+
+	return new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			if (signal?.aborted) throw signal.reason;
+			if (first.length > 0) {
+				controller.enqueue(first);
+				first = EMPTY;
+				return;
+			}
+
+			try {
+				const { done, value } = await reader.read();
+				if (!done) {
+					controller.enqueue(value);
+					return;
+				}
+				if (signal?.aborted) throw signal.reason;
+				release();
+				controller.close();
+			} catch (error) {
+				try {
+					await reader?.cancel(error);
+				} catch {}
+				release();
+				throw mapError(error);
+			}
+		},
+
+		async cancel(reason) {
+			try {
+				await reader.cancel(reason);
+			} finally {
+				release();
+			}
+		},
+	});
+}
+
+/** Preserve demand and cancellation while translating errors from a peer codec. */
+export function mapStreamErrors(
+	stream: ReadableStream<Uint8Array>,
+	mapError: (error: unknown) => unknown,
+): ReadableStream<Uint8Array> {
+	return streamFromReader(stream.getReader(), EMPTY, undefined, mapError);
 }
 
 /**
@@ -514,341 +574,6 @@ export function createChunkerTransform(
 			if (buffer.length > 0) {
 				controller.enqueue(buffer.read(buffer.length));
 			}
-		},
-	});
-}
-
-// ============================================================================
-// BHTTP Streaming Bridges
-// ============================================================================
-
-/**
- * Result of decoding a BHTTP request stream.
- * The preamble (method, headers) is extracted; body streams separately.
- */
-export interface DecodedBHttpRequest {
-	readonly method: string;
-	readonly scheme: string;
-	readonly authority: string;
-	readonly path: string;
-	readonly headers: Headers;
-	/** Stream of body chunks (may be empty for bodyless requests) */
-	readonly body: ReadableStream<Uint8Array>;
-}
-
-/**
- * Result of decoding a BHTTP response stream.
- * The preamble (status, headers) is extracted; body streams separately.
- */
-export interface DecodedBHttpResponse {
-	readonly status: number;
-	readonly headers: Headers;
-	/** Stream of body chunks (may be empty for bodyless responses) */
-	readonly body: ReadableStream<Uint8Array>;
-}
-
-/**
- * Feed a bhttp decoder, reporting its parse errors as this library's own
- *
- * The bytes have already been decrypted and authenticated, so malformed
- * framing is the peer's encoding bug, not a decryption failure. Without this
- * the bhttp library's error escapes an API that documents {@link OHTTPError}.
- */
-function pushDecoder<T>(
-	decoder: { push(chunk: Uint8Array): T },
-	chunk: Uint8Array,
-	reader: ReadableStreamDefaultReader<Uint8Array>,
-): T {
-	try {
-		return decoder.push(chunk);
-	} catch {
-		// A rejected pull() errors the stream without running its own cancel(), so
-		// nothing else tells the source to release. Reading stops either way; this
-		// is what carries the stop up the chain to the peer's body.
-		reader.cancel().catch(() => {});
-		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
-	}
-}
-
-/**
- * Decode a BHTTP request from a stream of plaintext bytes.
- *
- * Returns a promise that resolves once the preamble (method, headers) is parsed.
- * The body is returned as a ReadableStream that yields content chunks.
- *
- * @param source - Stream of decrypted BHTTP bytes
- * @returns Promise resolving to request metadata and body stream
- */
-export async function decodeBHttpRequestStream(
-	source: ReadableStream<Uint8Array>,
-): Promise<DecodedBHttpRequest> {
-	const decoder = new BHttpStreamDecoder();
-	const reader = source.getReader();
-
-	let preamble: BHttpRequestPreambleEvent | undefined;
-	const pendingBodyChunks: Uint8Array[] = [];
-	let sourceExhausted = false;
-
-	// Read until we have the preamble
-	while (preamble === undefined) {
-		const { done, value } = await reader.read();
-		if (done) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
-		}
-
-		const events = pushDecoder(decoder, value, reader);
-		for (const event of events) {
-			if (event.type === "request-preamble") {
-				preamble = event;
-			} else if (event.type === "content") {
-				// Buffer body chunks that arrived with preamble
-				pendingBodyChunks.push(event.data);
-			}
-		}
-	}
-
-	// Create body stream that continues reading from source
-	const body = new ReadableStream<Uint8Array>({
-		start(controller) {
-			// Enqueue any chunks we already received
-			for (const chunk of pendingBodyChunks) {
-				controller.enqueue(chunk);
-			}
-		},
-
-		async pull(controller) {
-			if (sourceExhausted) {
-				return;
-			}
-
-			// Read more from source until we get content or end
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) {
-					sourceExhausted = true;
-					try {
-						decoder.end();
-					} catch {
-						controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
-						return;
-					}
-					controller.close();
-					return;
-				}
-
-				const events = pushDecoder(decoder, value, reader);
-				let enqueuedContent = false;
-				for (const event of events) {
-					if (event.type === "content") {
-						controller.enqueue(event.data);
-						enqueuedContent = true;
-					} else if (event.type === "end") {
-						sourceExhausted = true;
-						controller.close();
-						return;
-					}
-					// Ignore trailers for now
-				}
-				// Yield control after enqueuing all content from this read
-				if (enqueuedContent) {
-					return;
-				}
-			}
-		},
-
-		cancel(reason) {
-			return reader.cancel(reason);
-		},
-	});
-
-	return {
-		method: preamble.method,
-		scheme: preamble.scheme,
-		authority: preamble.authority,
-		path: preamble.path,
-		headers: preamble.headers,
-		body,
-	};
-}
-
-/**
- * Decode a BHTTP response from a stream of plaintext bytes.
- *
- * Returns a promise that resolves once the preamble (status, headers) is parsed.
- * The body is returned as a ReadableStream that yields content chunks.
- *
- * @param source - Stream of decrypted BHTTP bytes
- * @returns Promise resolving to response metadata and body stream
- */
-export async function decodeBHttpResponseStream(
-	source: ReadableStream<Uint8Array>,
-): Promise<DecodedBHttpResponse> {
-	const decoder = new BHttpStreamDecoder();
-	const reader = source.getReader();
-
-	let preamble: BHttpResponsePreambleEvent | undefined;
-	const pendingBodyChunks: Uint8Array[] = [];
-	let sourceExhausted = false;
-
-	// Read until we have the preamble
-	while (preamble === undefined) {
-		const { done, value } = await reader.read();
-		if (done) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
-		}
-
-		const events = pushDecoder(decoder, value, reader);
-		for (const event of events) {
-			if (event.type === "response-preamble") {
-				preamble = event;
-			} else if (event.type === "content") {
-				pendingBodyChunks.push(event.data);
-			}
-			// Ignore informational responses for now
-		}
-	}
-
-	// Create body stream
-	const body = new ReadableStream<Uint8Array>({
-		start(controller) {
-			for (const chunk of pendingBodyChunks) {
-				controller.enqueue(chunk);
-			}
-		},
-
-		async pull(controller) {
-			if (sourceExhausted) {
-				return;
-			}
-
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) {
-					sourceExhausted = true;
-					try {
-						decoder.end();
-					} catch {
-						controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
-						return;
-					}
-					controller.close();
-					return;
-				}
-
-				const events = pushDecoder(decoder, value, reader);
-				let enqueuedContent = false;
-				for (const event of events) {
-					if (event.type === "content") {
-						controller.enqueue(event.data);
-						enqueuedContent = true;
-					} else if (event.type === "end") {
-						sourceExhausted = true;
-						controller.close();
-						return;
-					}
-				}
-				// Yield control after enqueuing all content from this read
-				if (enqueuedContent) {
-					return;
-				}
-			}
-		},
-
-		cancel(reason) {
-			return reader.cancel(reason);
-		},
-	});
-
-	return {
-		status: preamble.status,
-		headers: preamble.headers,
-		body,
-	};
-}
-
-/**
- * Encode an HTTP Request to a BHTTP byte stream.
- *
- * The returned stream yields BHTTP-encoded bytes (indeterminate-length format).
- *
- * @param request - The Request to encode
- * @returns ReadableStream of BHTTP bytes
- */
-export function encodeBHttpRequestStream(request: Request): ReadableStream<Uint8Array> {
-	const url = new URL(request.url);
-	const encoder = new BHttpRequestStreamEncoder();
-
-	return new ReadableStream<Uint8Array>({
-		async start(controller) {
-			// Encode and enqueue preamble
-			const preamble = encoder.encodePreamble(
-				request.method,
-				url.protocol.replace(":", ""),
-				url.host,
-				url.pathname + url.search,
-				request.headers,
-			);
-			controller.enqueue(preamble);
-
-			// Stream body if present
-			const body = request.body;
-			if (body !== null) {
-				const reader = body.getReader();
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-					if (value.length > 0) {
-						// length prefix + data as two enqueues (avoids a full-body copy)
-						const [prefix, data] = encoder.encodeContentChunkParts(value);
-						controller.enqueue(prefix);
-						controller.enqueue(data);
-					}
-				}
-			}
-
-			// Encode end
-			controller.enqueue(encoder.encodeEnd());
-			controller.close();
-		},
-	});
-}
-
-/**
- * Encode an HTTP Response to a BHTTP byte stream.
- *
- * The returned stream yields BHTTP-encoded bytes (indeterminate-length format).
- *
- * @param response - The Response to encode
- * @returns ReadableStream of BHTTP bytes
- */
-export function encodeBHttpResponseStream(response: Response): ReadableStream<Uint8Array> {
-	const encoder = new BHttpResponseStreamEncoder();
-
-	return new ReadableStream<Uint8Array>({
-		async start(controller) {
-			// Encode and enqueue preamble
-			const preamble = encoder.encodePreamble(response.status, response.headers);
-			controller.enqueue(preamble);
-
-			// Stream body if present
-			const body = response.body;
-			if (body !== null) {
-				const reader = body.getReader();
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-					if (value.length > 0) {
-						// length prefix + data as two enqueues (avoids a full-body copy)
-						const [prefix, data] = encoder.encodeContentChunkParts(value);
-						controller.enqueue(prefix);
-						controller.enqueue(data);
-					}
-				}
-			}
-
-			// Encode end
-			controller.enqueue(encoder.encodeEnd());
-			controller.close();
 		},
 	});
 }

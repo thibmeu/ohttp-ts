@@ -36,6 +36,7 @@
 		"bench:concurrency": "vitest bench --run bench/concurrency.bench.ts",
 		"bench:overlap": "tsx bench/overlap.ts",
 		"bench:alloc": "node --expose-gc --import tsx bench/alloc.ts",
+		"bench:backpressure": "node --expose-gc --import tsx bench/backpressure.ts",
 		"bench:profile": "node --import tsx bench/profile.ts",
 		"bench:trace": "node --import tsx bench/trace.ts",
 		"check:package": "publint && attw --pack",
@@ -64,7 +65,7 @@
 	},
 	"homepage": "https://github.com/thibmeu/ohttp-ts#readme",
 	"dependencies": {
-		"bhttp-ts": "0.5.2",
+		"bhttp-ts": "0.5.3",
 		"hpke": "1.1.4",
 		"quicvarint": "0.2.1"
 	},

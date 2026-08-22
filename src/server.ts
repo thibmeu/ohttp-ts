@@ -44,9 +44,9 @@ import {
 	createChunkerTransform,
 	createRequestDecryptTransform,
 	createResponseEncryptTransform,
-	decodeBHttpRequestStream,
-	encodeBHttpResponseStream,
+	mapStreamErrors,
 	type StreamOperationOptions,
+	streamFromReader,
 	streamOfBytes,
 } from "./streaming.js";
 import { asOwnedBytes, concat, createChunkBudget, resolveMaxMessageSize } from "./utils.js";
@@ -632,54 +632,28 @@ export class ChunkedOHTTPServer {
 		);
 
 		// Create a stream from remainder + rest of request body
-		const ciphertextStream = new ReadableStream<Uint8Array>({
-			async start(controller) {
-				// Enqueue any buffered remainder
-				if (remainder.length > 0) {
-					controller.enqueue(remainder);
-				}
-
-				// Continue reading from original stream
-				try {
-					while (true) {
-						const { done, value } = await reader.read();
-						if (done) {
-							if (signal.aborted) throw signal.reason;
-							break;
-						}
-						controller.enqueue(value);
-					}
-				} finally {
-					signal.removeEventListener("abort", abort);
-					reader.releaseLock();
-				}
-				controller.close();
-			},
-
-			// Reached when the pipeline downstream errors, which is how a malformed
-			// message stops the peer's body rather than leaving it half-read.
-			cancel(reason) {
-				return reader.cancel(reason);
-			},
-		});
+		signal.removeEventListener("abort", abort);
+		const ciphertextStream = streamFromReader(reader, remainder, signal);
 
 		// Decrypt stream
 		const plaintextStream = ciphertextStream.pipeThrough(decryptTransform);
 
-		// Decode BHTTP request
-		const decoded = await decodeBHttpRequestStream(plaintextStream);
-
-		// Build Request with streaming body
-		// Note: GET/HEAD requests must not have a body per HTTP semantics
-		const url = `${decoded.scheme}://${decoded.authority}${decoded.path}`;
-		const bodylessMethod =
-			decoded.method.toUpperCase() === "GET" || decoded.method.toUpperCase() === "HEAD";
-		const innerRequest = new Request(url, {
-			method: decoded.method,
-			headers: decoded.headers,
-			body: bodylessMethod ? null : decoded.body,
-			duplex: "half",
-		} as StreamingRequestInit);
+		let decoded: Request;
+		try {
+			decoded = await bhttpDecoder().decodeRequestStream(plaintextStream);
+		} catch {
+			if (signal.aborted) throw signal.reason;
+			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+		}
+		const innerRequest =
+			decoded.body === null
+				? decoded
+				: new Request(decoded, {
+						body: mapStreamErrors(decoded.body, () =>
+							signal.aborted ? signal.reason : new OHTTPError(OHTTPErrorCode.InvalidMessage),
+						),
+						duplex: "half",
+					} as StreamingRequestInit);
 
 		const suite = requestCtx[kSuite];
 		const maxMessageSize = this.maxMessageSize;
@@ -707,7 +681,7 @@ export class ChunkedOHTTPServer {
 				);
 
 				// Encode response to BHTTP stream
-				const bhttpStream = encodeBHttpResponseStream(response);
+				const bhttpStream = bhttpEncoder().encodeResponseStream(response);
 
 				// Create the encryption pipeline
 				const chunkerTransform = createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE);
@@ -725,23 +699,7 @@ export class ChunkedOHTTPServer {
 					.pipeThrough(encryptTransform, signal === undefined ? undefined : { signal });
 
 				// Create output stream that prepends response nonce
-				const finalStream = new ReadableStream<Uint8Array>({
-					async start(controller) {
-						controller.enqueue(responseNonce);
-
-						const streamReader = encryptedStream.getReader();
-						try {
-							while (true) {
-								const { done, value } = await streamReader.read();
-								if (done) break;
-								controller.enqueue(value);
-							}
-						} finally {
-							streamReader.releaseLock();
-						}
-						controller.close();
-					},
-				});
+				const finalStream = streamFromReader(encryptedStream.getReader(), responseNonce);
 
 				return new Response(finalStream, {
 					status: 200,
