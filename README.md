@@ -313,9 +313,24 @@ const gateway = new OHTTPServer([keyConfig], {
 An override with no factory for an algorithm you serve throws
 `UnsupportedCipherSuite` rather than falling back.
 
-## Security Considerations
+## Testing
+
+The test suite includes the RFC 9458 and chunked OHTTP draft vectors, plus
+interoperability vectors from `ohttp-js`. Fast-check properties exercise wire
+formats, round trips, fragmentation, chunk ordering, malformed input, and
+concurrent operations. CI runs the suite in Node.js, browsers, and Cloudflare
+Workers, while Bun runs the examples. Allocation and crypto-overlap benchmarks
+cover the main buffered and streaming paths.
+
+## Security considerations
 
 **Not audited.** Use at your own risk.
+
+The chunked API deliberately exposes one resource setting: `maxMessageSize`.
+Plaintext chunks use the draft's 16 KiB size, and the ciphertext bound is
+derived from it. Streaming operations accept an `AbortSignal`, and the BHTTP
+decoder applies a separate metadata limit. Keeping these related bounds inside
+the library avoids contradictory settings at the client and gateway.
 
 - **Replay protection** is out of scope ([RFC 9458 Section 6.5](https://www.rfc-editor.org/rfc/rfc9458.html#name-replay-attacks))
 - **Decryption errors are opaque** to prevent oracle attacks
