@@ -1,4 +1,5 @@
-import { AEAD_TAG_SIZE, DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_FRAME_SIZE } from "./constants.js";
+import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE } from "./constants.js";
+import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 
 /**
  * Concatenate multiple Uint8Arrays into one
@@ -14,37 +15,30 @@ export function concat(...arrays: Uint8Array[]): Uint8Array<ArrayBuffer> {
 	return result;
 }
 
-/**
- * Resolve the chunk/frame size options shared by the chunked client and server.
- *
- * A `maxChunkSize` of 0 spins `createChunkerTransform` forever and a
- * non-integer silently disables chunking, so both are rejected here. Sizes
- * above the 16384 default are allowed: draft-08 Section 3 makes that a SHOULD
- * for senders "aware of support for larger sizes by the receiving party".
- *
- * The two are independent directions: `maxChunkSize` bounds what this side
- * sends, `maxFrameSize` what it accepts. Defaulting `maxFrameSize` raises it to
- * cover `maxChunkSize`, but passing both is free to set an asymmetric receive
- * bound, so only the one-AEAD-tag floor is enforced.
- */
-export function resolveChunkSizes(options: {
-	readonly maxChunkSize?: number;
-	readonly maxFrameSize?: number;
-}): { maxChunkSize: number; maxFrameSize: number } {
-	const maxChunkSize = options.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
-	if (!Number.isSafeInteger(maxChunkSize) || maxChunkSize < 1) {
-		throw new RangeError(`maxChunkSize must be a positive integer, got ${maxChunkSize}`);
+/** Resolve the per-message plaintext limit shared by chunked endpoints. */
+export function resolveMaxMessageSize(maxMessageSize = DEFAULT_MAX_MESSAGE_SIZE): number {
+	if (!Number.isSafeInteger(maxMessageSize) || maxMessageSize < 0) {
+		throw new RangeError(`maxMessageSize must be a non-negative integer, got ${maxMessageSize}`);
 	}
+	return maxMessageSize;
+}
 
-	const maxFrameSize =
-		options.maxFrameSize ?? Math.max(DEFAULT_MAX_FRAME_SIZE, maxChunkSize + AEAD_TAG_SIZE);
-	if (!Number.isSafeInteger(maxFrameSize) || maxFrameSize < AEAD_TAG_SIZE) {
-		throw new RangeError(
-			`maxFrameSize must be an integer of at least ${AEAD_TAG_SIZE} (one AEAD tag), got ${maxFrameSize}`,
-		);
-	}
-
-	return { maxChunkSize, maxFrameSize };
+/** Account for one direction of one chunked message. */
+export function createChunkBudget(maxMessageSize: number) {
+	let chunks = 0;
+	let bytes = 0;
+	return (size: number, final: boolean): void => {
+		if (
+			chunks >= 2 ** 32 ||
+			size > DEFAULT_MAX_CHUNK_SIZE ||
+			(!final && size === 0) ||
+			bytes + size > maxMessageSize
+		) {
+			throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+		}
+		chunks++;
+		bytes += size;
+	};
 }
 
 /**

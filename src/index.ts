@@ -111,6 +111,7 @@ export type SymmetricAlgorithm = SymmetricAlgorithmType;
 // ============================================================================
 
 export { MediaType } from "./constants.js";
+export type { StreamOperationOptions } from "./streaming.js";
 
 // ============================================================================
 // Labels namespace
@@ -121,6 +122,7 @@ import {
 	CHUNKED_RESPONSE_LABEL,
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
+	DEFAULT_MAX_MESSAGE_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	FINAL_CHUNK_AAD,
@@ -140,8 +142,10 @@ export const Labels = {
 	FINAL_CHUNK_AAD,
 	/** Default maximum chunk size sent (16384 bytes) */
 	DEFAULT_MAX_CHUNK_SIZE,
-	/** Default maximum ciphertext frame accepted (1048576 bytes) */
+	/** Standard maximum ciphertext frame accepted (16384-byte chunk plus tag) */
 	DEFAULT_MAX_FRAME_SIZE,
+	/** Default aggregate plaintext limit for one chunked message (1 GiB) */
+	DEFAULT_MAX_MESSAGE_SIZE,
 } as const;
 
 // ============================================================================

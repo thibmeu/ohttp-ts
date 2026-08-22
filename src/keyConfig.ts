@@ -305,6 +305,9 @@ export function serializeKeyConfig(config: KeyConfig): Uint8Array<ArrayBuffer> {
 		}
 	}
 	const symAlgosLen = config.symmetricAlgorithms.length * 4;
+	if (symAlgosLen > 0xffff) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
 	// keyId(1) + kemId(2) + publicKey + symAlgosLen(2) + symAlgos
 	const totalLen = 1 + 2 + config.publicKey.length + 2 + symAlgosLen;
 	const result = new Uint8Array(totalLen);
@@ -425,6 +428,9 @@ export function serializeKeyConfigs(configs: readonly KeyConfig[]): Uint8Array<A
 	let totalLen = 0;
 	for (const config of configs) {
 		const s = serializeKeyConfig(config);
+		if (s.length > 0xffff) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+		}
 		serialized.push(s);
 		totalLen += 2 + s.length; // 2-byte length prefix + config
 	}
