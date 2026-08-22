@@ -2,6 +2,8 @@ import type { AEAD as AeadImpl, CipherSuite, RecipientContext } from "hpke";
 import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
 import type { StreamingRequestInit } from "./client.js";
 import {
+	DEFAULT_MAX_CHUNK_SIZE,
+	DEFAULT_MAX_FRAME_SIZE,
 	kAead,
 	kAeadKey,
 	kAeadNonce,
@@ -44,9 +46,10 @@ import {
 	createResponseEncryptTransform,
 	decodeBHttpRequestStream,
 	encodeBHttpResponseStream,
+	type StreamOperationOptions,
 	streamOfBytes,
 } from "./streaming.js";
-import { asOwnedBytes, concat, resolveChunkSizes } from "./utils.js";
+import { asOwnedBytes, concat, createChunkBudget, resolveMaxMessageSize } from "./utils.js";
 
 /**
  * Options for OHTTP server
@@ -70,20 +73,11 @@ export interface ChunkedOHTTPServerOptions {
 	readonly responseLabel?: string;
 	/** Crypto factory overrides for response encryption (default: resolved from the suite) */
 	readonly responseCrypto?: ResponseCrypto;
-	/** Maximum chunk size in bytes this side SENDS (default: 16384) */
-	readonly maxChunkSize?: number;
 	/**
-	 * Maximum ciphertext frame in bytes this side ACCEPTS, including the final
-	 * chunk (default: the larger of 1048576 and what this side sends). A peer
-	 * that declares a larger frame, or that opens a final chunk and keeps
-	 * streaming, is rejected with {@link OHTTPErrorCode.ChunkLimitExceeded}
-	 * instead of being buffered.
-	 *
-	 * A frame is ciphertext, so it is {@link AEAD_TAG_SIZE} bytes longer than
-	 * the plaintext chunk it carries: a peer sending `maxChunkSize` chunks needs
-	 * `maxChunkSize + AEAD_TAG_SIZE` here, which is what the default allows for.
+	 * Maximum total plaintext bytes protected in one request or response.
+	 * @default 1073741824
 	 */
-	readonly maxFrameSize?: number;
+	readonly maxMessageSize?: number;
 }
 
 /**
@@ -175,7 +169,7 @@ export interface DecapsulatedChunkedHttpRequest {
  */
 export interface ChunkedHttpServerContext {
 	/** Encrypt a response and return as chunked OHTTP Response */
-	encapsulateResponse(response: Response): Promise<Response>;
+	encapsulateResponse(response: Response, options?: StreamOperationOptions): Promise<Response>;
 }
 
 /**
@@ -335,8 +329,7 @@ export class ChunkedOHTTPServer {
 	private readonly requestLabel: string;
 	private readonly responseLabel: string;
 	private readonly responseCrypto: ResponseCrypto | undefined;
-	readonly maxChunkSize: number;
-	readonly maxFrameSize: number;
+	readonly maxMessageSize: number;
 
 	/**
 	 * Create a chunked OHTTP server
@@ -357,9 +350,7 @@ export class ChunkedOHTTPServer {
 		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.responseCrypto = options.responseCrypto;
-		const sizes = resolveChunkSizes(options);
-		this.maxChunkSize = sizes.maxChunkSize;
-		this.maxFrameSize = sizes.maxFrameSize;
+		this.maxMessageSize = resolveMaxMessageSize(options.maxMessageSize);
 	}
 
 	/**
@@ -409,8 +400,10 @@ export class ChunkedOHTTPServer {
 		const enc = header.enc;
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;
+		const maxMessageSize = this.maxMessageSize;
 
 		let requestFinished = false;
+		const claimRequest = createChunkBudget(maxMessageSize);
 
 		return {
 			keyConfig,
@@ -422,6 +415,10 @@ export class ChunkedOHTTPServer {
 				if (requestFinished) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
+				if (ciphertext.length < AEAD_TAG_SIZE || ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
+					throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+				}
+				claimRequest(ciphertext.length - AEAD_TAG_SIZE, false);
 				try {
 					return asOwnedBytes(await recipientContext.Open(ciphertext));
 				} catch {
@@ -433,6 +430,10 @@ export class ChunkedOHTTPServer {
 				if (requestFinished) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
+				if (ciphertext.length < AEAD_TAG_SIZE || ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
+					throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+				}
+				claimRequest(ciphertext.length - AEAD_TAG_SIZE, true);
 				try {
 					// Unlike the response contexts, the flag is claimed after the await on
 					// purpose: the HPKE context carries its own sequence number, so no two
@@ -466,6 +467,7 @@ export class ChunkedOHTTPServer {
 				// twice at one counter reuses an (AEAD key, nonce) pair.
 				let counter = 0;
 				let responseFinished = false;
+				const claimResponse = createChunkBudget(maxMessageSize);
 				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
 				const maxChunks = 2 ** 32;
 
@@ -482,6 +484,7 @@ export class ChunkedOHTTPServer {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
+						claimResponse(chunk.length, false);
 						return sealResponseChunk(aead, aeadKey, aeadNonce, counter++, chunk, false);
 					},
 
@@ -492,6 +495,7 @@ export class ChunkedOHTTPServer {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
+						claimResponse(chunk.length, true);
 						responseFinished = true;
 						return sealResponseChunk(aead, aeadKey, aeadNonce, counter, chunk, true);
 					},
@@ -516,7 +520,11 @@ export class ChunkedOHTTPServer {
 		// in a concurrent window).
 		const request = await collectStream(
 			streamOfBytes(encapsulatedRequest.subarray(headerOffset)).pipeThrough(
-				createRequestDecryptTransform(ctx[kRecipientContext], this.maxFrameSize),
+				createRequestDecryptTransform(
+					ctx[kRecipientContext],
+					DEFAULT_MAX_FRAME_SIZE,
+					this.maxMessageSize,
+				),
 			),
 		);
 
@@ -540,12 +548,13 @@ export class ChunkedOHTTPServer {
 		// concurrent window), prefixed with the response nonce.
 		return collectStream(
 			streamOfBytes(response)
-				.pipeThrough(createChunkerTransform(this.maxChunkSize))
+				.pipeThrough(createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE))
 				.pipeThrough(
 					createResponseEncryptTransform(
 						responseContext[kAead],
 						responseContext[kAeadKey],
 						responseContext[kAeadNonce],
+						this.maxMessageSize,
 					),
 				),
 			responseContext.responseNonce,
@@ -561,7 +570,10 @@ export class ChunkedOHTTPServer {
 	 * @param request - The chunked OHTTP request from the relay
 	 * @returns The decrypted inner Request (with streaming body) and context for encapsulating the response
 	 */
-	async decapsulateRequest(request: Request): Promise<DecapsulatedChunkedHttpRequest> {
+	async decapsulateRequest(
+		request: Request,
+		options: StreamOperationOptions = {},
+	): Promise<DecapsulatedChunkedHttpRequest> {
 		// Validate content type
 		const contentType = request.headers.get("content-type");
 		if (contentType !== MediaType.CHUNKED_REQUEST) {
@@ -574,6 +586,10 @@ export class ChunkedOHTTPServer {
 		}
 
 		const reader = requestBody.getReader();
+		const signal = options.signal ?? request.signal;
+		const abort = () => void reader.cancel(signal.reason);
+		if (signal.aborted) abort();
+		else signal.addEventListener("abort", abort, { once: true });
 		let buffer = new Uint8Array(0);
 
 		// Read until we have the header (7 bytes + Nenc)
@@ -581,6 +597,7 @@ export class ChunkedOHTTPServer {
 		while (buffer.length < 7) {
 			const { done, value } = await reader.read();
 			if (done) {
+				if (signal.aborted) throw signal.reason;
 				throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 			}
 			buffer = concat(buffer, value);
@@ -609,7 +626,8 @@ export class ChunkedOHTTPServer {
 		// Create decrypt transform
 		const decryptTransform = createRequestDecryptTransform(
 			requestCtx[kRecipientContext],
-			this.maxFrameSize,
+			DEFAULT_MAX_FRAME_SIZE,
+			this.maxMessageSize,
 		);
 
 		// Create a stream from remainder + rest of request body
@@ -628,6 +646,7 @@ export class ChunkedOHTTPServer {
 						controller.enqueue(value);
 					}
 				} finally {
+					signal.removeEventListener("abort", abort);
 					reader.releaseLock();
 				}
 				controller.close();
@@ -659,13 +678,16 @@ export class ChunkedOHTTPServer {
 		} as StreamingRequestInit);
 
 		const suite = requestCtx[kSuite];
-		const maxChunkSize = this.maxChunkSize;
+		const maxMessageSize = this.maxMessageSize;
 		const responseLabel = this.responseLabel;
 		const responseCrypto = this.responseCrypto;
 
 		// Create context for encapsulating response (streaming)
 		const context: ChunkedHttpServerContext = {
-			async encapsulateResponse(response: Response): Promise<Response> {
+			async encapsulateResponse(
+				response: Response,
+				options: StreamOperationOptions = {},
+			): Promise<Response> {
 				// Generate response nonce
 				const nonceLength = getResponseNonceLength(suite);
 				const responseNonce = crypto.getRandomValues(new Uint8Array(nonceLength));
@@ -684,13 +706,19 @@ export class ChunkedOHTTPServer {
 				const bhttpStream = encodeBHttpResponseStream(response);
 
 				// Create the encryption pipeline
-				const chunkerTransform = createChunkerTransform(maxChunkSize);
-				const encryptTransform = createResponseEncryptTransform(aead, aeadKey, aeadNonce);
+				const chunkerTransform = createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE);
+				const encryptTransform = createResponseEncryptTransform(
+					aead,
+					aeadKey,
+					aeadNonce,
+					maxMessageSize,
+				);
 
 				// Pipe through transforms
+				const signal = options.signal;
 				const encryptedStream = bhttpStream
 					.pipeThrough(chunkerTransform)
-					.pipeThrough(encryptTransform);
+					.pipeThrough(encryptTransform, signal === undefined ? undefined : { signal });
 
 				// Create output stream that prepends response nonce
 				const finalStream = new ReadableStream<Uint8Array>({

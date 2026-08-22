@@ -274,7 +274,7 @@ describe("zero-length non-final chunk is rejected", () => {
 			frames.push(frameChunk(await seal(finalPlaintext, true), true));
 
 			const error = await expectOHTTPError(decryptResponseFrames([concat(...frames)]));
-			expect(error.code).toBe(OHTTPErrorCode.DecryptionFailed);
+			expect(error.code).toBe(OHTTPErrorCode.ChunkLimitExceeded);
 		},
 	);
 });
@@ -487,14 +487,11 @@ describe("maxFrameSize enforcement", () => {
 // ============================================================================
 
 describe("ChunkedOHTTPClient/ChunkedOHTTPServer round-trip", () => {
-	it.prop(
-		[bytesArb({ maxLength: 1024 }), bytesArb({ maxLength: 1024 }), fc.integer({ min: 1, max: 96 })],
-		CRYPTO,
-	)(
-		"request and response payloads survive encapsulation for arbitrary maxChunkSize, including empty payloads",
-		async (requestPayload, responsePayload, maxChunkSize) => {
-			const runClient = new ChunkedOHTTPClient(suite, publicKeyConfig, { maxChunkSize });
-			const runServer = new ChunkedOHTTPServer([serverKeyConfig], { maxChunkSize });
+	it.prop([bytesArb({ maxLength: 1024 }), bytesArb({ maxLength: 1024 })], CRYPTO)(
+		"request and response payloads survive encapsulation, including empty payloads",
+		async (requestPayload, responsePayload) => {
+			const runClient = new ChunkedOHTTPClient(suite, publicKeyConfig);
+			const runServer = new ChunkedOHTTPServer([serverKeyConfig]);
 
 			const { encapsulatedRequest, createResponseContext } =
 				await runClient.encapsulate(requestPayload);

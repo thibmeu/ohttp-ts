@@ -28,42 +28,57 @@ import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_12
 ## Quick Start
 
 ```typescript
-import { CipherSuite, KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM } from "hpke";
-import { KeyConfig, OHTTPClient, OHTTPServer } from "ohttp-ts";
+import {
+  AEAD_AES_128_GCM,
+  CipherSuite,
+  KDF_HKDF_SHA256,
+  KEM_DHKEM_X25519_HKDF_SHA256,
+} from "hpke";
+import { ChunkedOHTTPClient, ChunkedOHTTPServer, KeyConfig } from "ohttp-ts";
 
-// Gateway: generate key configuration
-const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+const suite = new CipherSuite(
+  KEM_DHKEM_X25519_HKDF_SHA256,
+  KDF_HKDF_SHA256,
+  AEAD_AES_128_GCM,
+);
+
+// Gateway setup. Publish only KeyConfig.serialize(keyConfig).
 const keyConfig = await KeyConfig.generate(suite, 0x01);
-const gateway = new OHTTPServer([keyConfig]);
+const gateway = new ChunkedOHTTPServer([keyConfig]);
 
-// Client: fetch and parse gateway's public key
-const publicKeyBytes = KeyConfig.serialize(keyConfig);
-const clientKeyConfig = KeyConfig.parse(publicKeyBytes);
-const client = new OHTTPClient(suite, clientKeyConfig);
+// Client setup from the gateway's published configuration.
+const publicConfig = KeyConfig.parse(KeyConfig.serialize(keyConfig));
+const client = new ChunkedOHTTPClient(suite, publicConfig);
 
-// Client: encapsulate HTTP request
-const httpRequest = new Request("https://target.example/api", {
+const originalRequest = new Request("https://target.example/api", {
   method: "POST",
   body: JSON.stringify({ data: "sensitive" }),
 });
-const { init, context } = await client.encapsulateRequest(httpRequest);
+const { init, context: clientContext } =
+  await client.encapsulateRequest(originalRequest);
 
-// Send to relay
-const relayResponse = await fetch("https://relay.example/ohttp", init);
+// A relay forwards this request unchanged to the gateway.
+const relayRequest = new Request("https://gateway.example/ohttp", init);
+const { request: innerRequest, context: gatewayContext } =
+  await gateway.decapsulateRequest(relayRequest);
 
-// Gateway: decapsulate request (received from relay)
-const { request: innerRequest, context: serverContext } = await gateway.decapsulateRequest(relayRequest);
-// relayRequest is what the relay receives and forwards to the gateway
-// innerRequest is the original Request object
+const innerResponse = new Response(
+  JSON.stringify({ received: await innerRequest.json() }),
+  { headers: { "Content-Type": "application/json" } },
+);
+const encapsulatedResponse =
+  await gatewayContext.encapsulateResponse(innerResponse);
 
-// Gateway: encapsulate response
-const httpResponse = new Response(JSON.stringify({ result: "ok" }), { status: 200 });
-const encapsulatedResponse = await serverContext.encapsulateResponse(httpResponse);
-
-// Client: decapsulate response
-const innerResponse = await context.decapsulateResponse(relayResponse);
-// innerResponse is the original Response object
+// The relay forwards the gateway response unchanged to the client.
+const response = await clientContext.decapsulateResponse(encapsulatedResponse);
+console.log(await response.json());
 ```
+
+Chunked endpoints use the draft's standard 16 KiB plaintext chunks. The only
+resource-policy option is the aggregate plaintext bound, for example
+`{ maxMessageSize: 64 * 1024 * 1024 }`; use the same deployment policy at both
+ends. High-level streaming operations also accept `{ signal }` as their second
+argument. The default message limit is 1 GiB.
 
 ### Gateway Key Configuration
 

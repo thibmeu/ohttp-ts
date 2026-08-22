@@ -53,21 +53,21 @@ export const CHUNKED_RESPONSE_LABEL = "message/bhttp chunked response";
 export const DEFAULT_MAX_CHUNK_SIZE = 16384;
 
 /**
- * Default cap on a single received ciphertext frame, in bytes (1 MiB).
- *
- * Distinct from {@link DEFAULT_MAX_CHUNK_SIZE}, which bounds what this side
- * *sends*: a peer may legitimately choose a larger chunk size, so the receive
- * limit is set generously above it rather than equal to it.
- *
- * A frame is a chunk's *ciphertext*, so it runs {@link AEAD_TAG_SIZE} bytes
- * longer than the plaintext chunk it carries.
- */
-export const DEFAULT_MAX_FRAME_SIZE = 1 << 20;
-
-/**
  * AEAD tag length in bytes, 16 for every AEAD OHTTP registers (draft-08 Section 6).
  */
 export const AEAD_TAG_SIZE = 16;
+
+/** Standard maximum received ciphertext chunk: 16 KiB plaintext plus its tag. */
+export const DEFAULT_MAX_FRAME_SIZE = DEFAULT_MAX_CHUNK_SIZE + AEAD_TAG_SIZE;
+
+/**
+ * Default per-message plaintext limit (1 GiB).
+ *
+ * This is the example bound from draft-08 Section 7.3 for AES-128-GCM, a
+ * target advantage below 2^-50, and at most 2^20 messages. Deployments remain
+ * responsible for key lifetime and may configure a smaller bound.
+ */
+export const DEFAULT_MAX_MESSAGE_SIZE = 1 << 30;
 
 /**
  * AAD for final chunk (draft-08 Section 6.1-6.2)

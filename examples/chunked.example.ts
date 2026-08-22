@@ -11,8 +11,8 @@ async function setup() {
 	const keyConfig = await KeyConfig.generate(suite, 0x01);
 
 	// Use custom chunk size for demonstration
-	const gateway = new ChunkedOHTTPServer([keyConfig], { maxChunkSize: 64 });
-	const client = new ChunkedOHTTPClient(suite, keyConfig, { maxChunkSize: 64 });
+	const gateway = new ChunkedOHTTPServer([keyConfig]);
+	const client = new ChunkedOHTTPClient(suite, keyConfig);
 
 	return { gateway, client };
 }

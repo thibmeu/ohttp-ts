@@ -375,4 +375,17 @@ describe("serializeKeyConfig validation", () => {
 			/INVALID_KEY_CONFIG/,
 		);
 	});
+
+	it("rejects fields that do not fit their 16-bit wire lengths", () => {
+		const algorithm = { kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM };
+		expect(() =>
+			serializeKeyConfig({ ...base, symmetricAlgorithms: Array(16_384).fill(algorithm) }),
+		).toThrow(/INVALID_KEY_CONFIG/);
+
+		const oversizedConfig = {
+			...base,
+			symmetricAlgorithms: Array(16_383).fill(algorithm),
+		};
+		expect(() => serializeKeyConfigs([oversizedConfig])).toThrow(/INVALID_KEY_CONFIG/);
+	});
 });

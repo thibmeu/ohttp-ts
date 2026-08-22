@@ -8,20 +8,18 @@
 import type { AEAD as AeadImpl, RecipientContext, SenderContext } from "hpke";
 import { decode as decodeVarint, encode as encodeVarint } from "quicvarint";
 import {
+	AEAD_TAG_SIZE,
 	type BHttpRequestPreambleEvent,
 	BHttpRequestStreamEncoder,
 	type BHttpResponsePreambleEvent,
 	BHttpResponseStreamEncoder,
 	BHttpStreamDecoder,
-} from "./constants.js";
-import {
 	DEFAULT_MAX_FRAME_SIZE,
-	FINAL_CHUNK_AAD,
-	openResponseChunk,
-	sealResponseChunk,
-} from "./encapsulation.js";
+	DEFAULT_MAX_MESSAGE_SIZE,
+} from "./constants.js";
+import { FINAL_CHUNK_AAD, openResponseChunk, sealResponseChunk } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { concat } from "./utils.js";
+import { concat, createChunkBudget } from "./utils.js";
 
 /** A ReadableStream that emits `bytes` as a single chunk (if non-empty) then closes. */
 export function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
@@ -58,6 +56,12 @@ export async function collectStream(
 const MAX_CHUNKS = 2 ** 32;
 
 const EMPTY = new Uint8Array(0);
+
+/** Cancellation shared by one high-level streaming operation. */
+export interface StreamOperationOptions {
+	/** Abort the operation and cancel its input stream with the signal's reason. */
+	readonly signal?: AbortSignal;
+}
 
 /**
  * How many per-chunk AEAD calls a streaming transform keeps in flight.
@@ -179,7 +183,9 @@ function varintLength(firstByte: number): number {
  */
 export function createRequestEncryptTransform(
 	senderContext: SenderContext,
+	maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
+	const claim = createChunkBudget(maxMessageSize);
 	let pendingChunk: Uint8Array | undefined;
 	// Seals issued but not yet emitted, oldest first (all non-final chunks).
 	// hpke's SenderContext.Seal claims its sequence number synchronously, so a
@@ -206,6 +212,7 @@ export function createRequestEncryptTransform(
 			// Seal the previous chunk as non-final; emit once the window is full so
 			// independent seals overlap.
 			if (pendingChunk !== undefined) {
+				claim(pendingChunk.length, false);
 				inflight.push(settle(senderContext.Seal(pendingChunk)));
 				if (inflight.length >= AEAD_PIPELINE_DEPTH && !(await emitOldest(controller))) return;
 			}
@@ -215,6 +222,7 @@ export function createRequestEncryptTransform(
 
 		async flush(controller) {
 			// Seal the last chunk as final, draining the window in order first.
+			claim((pendingChunk ?? EMPTY).length, true);
 			const final = settle(senderContext.Seal(pendingChunk ?? EMPTY, FINAL_CHUNK_AAD));
 			while (inflight.length > 0) {
 				if (!(await emitOldest(controller))) return;
@@ -242,7 +250,9 @@ export function createRequestEncryptTransform(
 function createFramedDecryptTransform(
 	openFrame: (ciphertext: Uint8Array, isFinal: boolean) => Promise<Uint8Array>,
 	maxFrameSize: number,
+	maxMessageSize: number,
 ): TransformStream<Uint8Array, Uint8Array> {
+	const claim = createChunkBudget(maxMessageSize);
 	const buffer = new StreamBuffer();
 	let inFinal = false;
 	// Opens issued but not yet emitted, oldest first (all non-final frames).
@@ -301,7 +311,13 @@ function createFramedDecryptTransform(
 					// materialize exactly one frame (zero-copy when it sits in one read),
 					// start its open immediately, and emit only once the window is full
 					const frame = buffer.read(frameLen);
-					inflight.push(settle(openFrame(frame.subarray(vlen), false)));
+					const ciphertext = frame.subarray(vlen);
+					if (ciphertext.length < AEAD_TAG_SIZE) {
+						controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
+						return;
+					}
+					claim(ciphertext.length - AEAD_TAG_SIZE, false);
+					inflight.push(settle(openFrame(ciphertext, false)));
 					if (inflight.length >= AEAD_PIPELINE_DEPTH && !(await emitOldest(controller))) return;
 				}
 			}
@@ -321,7 +337,13 @@ function createFramedDecryptTransform(
 				controller.error(new OHTTPError(OHTTPErrorCode.InvalidMessage));
 				return;
 			}
-			const final = settle(openFrame(buffer.read(buffer.length), true));
+			const ciphertext = buffer.read(buffer.length);
+			if (ciphertext.length < AEAD_TAG_SIZE) {
+				controller.error(new OHTTPError(OHTTPErrorCode.DecryptionFailed));
+				return;
+			}
+			claim(ciphertext.length - AEAD_TAG_SIZE, true);
+			const final = settle(openFrame(ciphertext, true));
 			while (inflight.length > 0) {
 				if (!(await emitOldest(controller))) return;
 			}
@@ -345,11 +367,13 @@ function createFramedDecryptTransform(
 export function createRequestDecryptTransform(
 	recipientContext: RecipientContext,
 	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
+	maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	return createFramedDecryptTransform(
 		(ciphertext, isFinal) =>
 			recipientContext.Open(ciphertext, isFinal ? FINAL_CHUNK_AAD : undefined),
 		maxFrameSize,
+		maxMessageSize,
 	);
 }
 
@@ -365,7 +389,9 @@ export function createResponseEncryptTransform(
 	aead: AeadImpl,
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
+	maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
+	const claim = createChunkBudget(maxMessageSize);
 	let counter = 0;
 	let pendingChunk: Uint8Array | undefined;
 	// Seals issued but not yet emitted, oldest first (all non-final chunks).
@@ -391,6 +417,7 @@ export function createResponseEncryptTransform(
 			// If we have a pending chunk, seal it as non-final; emit once the
 			// window is full so independent seals overlap
 			if (pendingChunk !== undefined) {
+				claim(pendingChunk.length, false);
 				if (counter >= MAX_CHUNKS) {
 					controller.error(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
 					return;
@@ -409,6 +436,7 @@ export function createResponseEncryptTransform(
 				return;
 			}
 
+			claim((pendingChunk ?? EMPTY).length, true);
 			const final = settle(
 				sealResponseChunk(aead, aeadKey, baseNonce, counter, pendingChunk ?? EMPTY, true),
 			);
@@ -440,16 +468,21 @@ export function createResponseDecryptTransform(
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
 	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
+	maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	let counter = 0;
 	// The counter is claimed synchronously at call time: opens are pipelined, so
 	// the next frame's open may start before this one's promise resolves.
-	return createFramedDecryptTransform((ciphertext, isFinal) => {
-		if (counter >= MAX_CHUNKS) {
-			return Promise.reject(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
-		}
-		return openResponseChunk(aead, aeadKey, baseNonce, counter++, ciphertext, isFinal);
-	}, maxFrameSize);
+	return createFramedDecryptTransform(
+		(ciphertext, isFinal) => {
+			if (counter >= MAX_CHUNKS) {
+				return Promise.reject(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
+			}
+			return openResponseChunk(aead, aeadKey, baseNonce, counter++, ciphertext, isFinal);
+		},
+		maxFrameSize,
+		maxMessageSize,
+	);
 }
 
 /**
