@@ -4,9 +4,14 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # npm trusted publishing requires permission to mint an OIDC token:
+    # https://docs.npmjs.com/trusted-publishers/#github-actions-configuration
     permissions:
       contents: read
       id-token: write
