@@ -1,7 +1,7 @@
 // OHTTP-TS: Oblivious HTTP implementation
 // RFC 9458: https://www.rfc-editor.org/rfc/rfc9458.txt
-// Chunked OHTTP: https://www.ietf.org/archive/id/draft-ietf-ohai-chunked-ohttp-08.txt
-// Incremental: https://www.ietf.org/archive/id/draft-ietf-httpbis-incremental-04.txt
+// Chunked OHTTP: https://datatracker.ietf.org/doc/html/draft-ietf-ohai-chunked-ohttp-08
+// Incremental: https://www.rfc-editor.org/rfc/rfc10036.txt
 
 // ============================================================================
 // Errors
@@ -161,7 +161,7 @@ import {
 	setIncremental,
 } from "./incremental.js";
 
-/** Incremental HTTP header utilities (draft-ietf-httpbis-incremental) */
+/** Incremental HTTP header utilities (RFC 10036) */
 export const Incremental = {
 	/** Header name: "Incremental" */
 	HEADER: INCREMENTAL_HEADER,

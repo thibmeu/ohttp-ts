@@ -1,5 +1,5 @@
 /**
- * Incremental HTTP header field (draft-ietf-httpbis-incremental)
+ * Incremental HTTP header field (RFC 10036)
  *
  * The Incremental header is a Structured Field of type Item (boolean).
  * - `?1` = request incremental forwarding

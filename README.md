@@ -8,7 +8,7 @@ TypeScript implementation of [Oblivious HTTP (RFC 9458)](https://www.rfc-editor.
 ## Features
 
 - **RFC 9458** - Oblivious HTTP
-- **Chunked OHTTP** - Streaming extension ([draft-ietf-ohai-chunked-ohttp-08](https://www.ietf.org/archive/id/draft-ietf-ohai-chunked-ohttp-08.txt))
+- **Chunked OHTTP** - Streaming extension ([draft-ietf-ohai-chunked-ohttp-08](https://datatracker.ietf.org/doc/html/draft-ietf-ohai-chunked-ohttp-08))
 - **WebCrypto** - Works in browsers, Cloudflare Workers, and Node.js
 - **Pluggable crypto** - Supply your own response KDF/AEAD factories for any other environment or cryptographic constraint (see [Response Encryption](#response-encryption))
 

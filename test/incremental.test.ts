@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { fc, it } from "@fast-check/vitest";
+import { describe, expect } from "vitest";
 import {
 	createIncrementalHeaders,
 	getIncremental,
@@ -57,6 +58,10 @@ describe("parseIncremental", () => {
 		expect(parseIncremental('"hello"')).toBeUndefined();
 		// Token
 		expect(parseIncremental("foo")).toBeUndefined();
+	});
+
+	it.prop([fc.boolean()])("round-trips any RFC 10036 value", (incremental) => {
+		expect(parseIncremental(serializeIncremental(incremental))).toBe(incremental);
 	});
 });
 
