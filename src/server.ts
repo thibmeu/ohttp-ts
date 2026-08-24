@@ -212,10 +212,10 @@ function validateKeyConfigs(
  * OHTTP Server (Gateway) for decapsulating requests
  */
 export class OHTTPServer {
-	private readonly keyConfigs: readonly KeyConfigWithPrivate[];
-	private readonly requestLabel: string;
-	private readonly responseLabel: string;
-	private readonly responseCrypto: ResponseCrypto | undefined;
+	readonly #keyConfigs: readonly KeyConfigWithPrivate[];
+	readonly #requestLabel: string;
+	readonly #responseLabel: string;
+	readonly #responseCrypto: ResponseCrypto | undefined;
 
 	/**
 	 * Create an OHTTP server
@@ -226,13 +226,13 @@ export class OHTTPServer {
 	constructor(keyConfigs: readonly KeyConfigWithPrivate[], options: OHTTPServerOptions = {}) {
 		// Validation runs once, so the server keeps its own array and its own suite
 		// lists rather than whatever the caller may change afterwards.
-		this.keyConfigs = validateKeyConfigs(keyConfigs);
-		for (const config of this.keyConfigs) {
+		this.#keyConfigs = validateKeyConfigs(keyConfigs);
+		for (const config of this.#keyConfigs) {
 			assertResponseCrypto(config.suites, options.responseCrypto);
 		}
-		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
-		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
-		this.responseCrypto = options.responseCrypto;
+		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
+		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
+		this.#responseCrypto = options.responseCrypto;
 	}
 
 	/**
@@ -242,10 +242,10 @@ export class OHTTPServer {
 	 * @returns The decrypted request bytes and context for encrypting the response
 	 */
 	async decapsulate(encapsulatedRequest: Uint8Array): Promise<DecapsulatedRequest> {
-		const ctx = await decapsulateRequest(encapsulatedRequest, this.keyConfigs, this.requestLabel);
+		const ctx = await decapsulateRequest(encapsulatedRequest, this.#keyConfigs, this.#requestLabel);
 
-		const responseLabel = this.responseLabel;
-		const responseCrypto = this.responseCrypto;
+		const responseLabel = this.#responseLabel;
+		const responseCrypto = this.#responseCrypto;
 		const context: ServerContext = {
 			async encryptResponse(response: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				// Generate random response nonce
@@ -325,10 +325,10 @@ export class OHTTPServer {
  * Chunked OHTTP Server for streaming requests/responses (draft-ietf-ohai-chunked-ohttp-08)
  */
 export class ChunkedOHTTPServer {
-	private readonly keyConfigs: readonly KeyConfigWithPrivate[];
-	private readonly requestLabel: string;
-	private readonly responseLabel: string;
-	private readonly responseCrypto: ResponseCrypto | undefined;
+	readonly #keyConfigs: readonly KeyConfigWithPrivate[];
+	readonly #requestLabel: string;
+	readonly #responseLabel: string;
+	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly maxMessageSize: number;
 
 	/**
@@ -343,13 +343,13 @@ export class ChunkedOHTTPServer {
 	) {
 		// Validation runs once, so the server keeps its own array and its own suite
 		// lists rather than whatever the caller may change afterwards.
-		this.keyConfigs = validateKeyConfigs(keyConfigs);
-		for (const config of this.keyConfigs) {
+		this.#keyConfigs = validateKeyConfigs(keyConfigs);
+		for (const config of this.#keyConfigs) {
 			assertResponseCrypto(config.suites, options.responseCrypto);
 		}
-		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
-		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
-		this.responseCrypto = options.responseCrypto;
+		this.#requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
+		this.#responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
+		this.#responseCrypto = options.responseCrypto;
 		this.maxMessageSize = resolveMaxMessageSize(options.maxMessageSize);
 	}
 
@@ -365,7 +365,7 @@ export class ChunkedOHTTPServer {
 		const { header } = parseRequestHeader(encapsulatedHeader);
 
 		// Find matching key config
-		const keyConfig = this.keyConfigs.find((k) => k.keyId === header.keyId);
+		const keyConfig = this.#keyConfigs.find((k) => k.keyId === header.keyId);
 		if (keyConfig === undefined) {
 			throw new OHTTPError(OHTTPErrorCode.UnknownKeyId);
 		}
@@ -384,7 +384,7 @@ export class ChunkedOHTTPServer {
 			header.kemId,
 			header.kdfId,
 			header.aeadId,
-			this.requestLabel,
+			this.#requestLabel,
 		);
 
 		// Setup recipient context
@@ -398,8 +398,8 @@ export class ChunkedOHTTPServer {
 		}
 
 		const enc = header.enc;
-		const responseLabel = this.responseLabel;
-		const responseCrypto = this.responseCrypto;
+		const responseLabel = this.#responseLabel;
+		const responseCrypto = this.#responseCrypto;
 		const maxMessageSize = this.maxMessageSize;
 
 		let requestFinished = false;
@@ -657,8 +657,8 @@ export class ChunkedOHTTPServer {
 
 		const suite = requestCtx[kSuite];
 		const maxMessageSize = this.maxMessageSize;
-		const responseLabel = this.responseLabel;
-		const responseCrypto = this.responseCrypto;
+		const responseLabel = this.#responseLabel;
+		const responseCrypto = this.#responseCrypto;
 
 		// Create context for encapsulating response (streaming)
 		const context: ChunkedHttpServerContext = {

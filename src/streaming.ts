@@ -144,7 +144,7 @@ type SettledChunk = { ok: true; value: Uint8Array } | { ok: false; error: unknow
 function settle(p: Promise<Uint8Array>): Promise<SettledChunk> {
 	return p.then(
 		(value) => ({ ok: true, value }),
-		(error) => ({ ok: false, error }),
+		(error: unknown) => ({ ok: false, error }),
 	);
 }
 
@@ -157,32 +157,32 @@ function settle(p: Promise<Uint8Array>): Promise<SettledChunk> {
  * approach was O(n·k) there.
  */
 class StreamBuffer {
-	private chunks: Uint8Array[] = [];
-	private headOff = 0; // bytes already consumed from chunks[0]
-	private total = 0; // bytes currently available across all chunks
+	readonly #chunks: Uint8Array[] = [];
+	#headOff = 0; // bytes already consumed from chunks[0]
+	#total = 0; // bytes currently available across all chunks
 
 	get length(): number {
-		return this.total;
+		return this.#total;
 	}
 
 	append(chunk: Uint8Array): void {
 		if (chunk.length === 0) return;
-		this.chunks.push(chunk);
-		this.total += chunk.length;
+		this.#chunks.push(chunk);
+		this.#total += chunk.length;
 	}
 
 	/** First available byte without consuming (length must be >= 1). */
 	firstByte(): number {
-		return (this.chunks[0] as Uint8Array)[this.headOff] as number;
+		return (this.#chunks[0] as Uint8Array)[this.#headOff] as number;
 	}
 
 	/** First `n` bytes as a contiguous array (must be <= length), without consuming. */
 	peek(n: number): Uint8Array {
 		if (n === 0) return EMPTY;
-		const first = this.chunks[0] as Uint8Array;
-		return first.length - this.headOff >= n
-			? first.subarray(this.headOff, this.headOff + n) // zero copy: within one chunk
-			: this.collect(n);
+		const first = this.#chunks[0] as Uint8Array;
+		return first.length - this.#headOff >= n
+			? first.subarray(this.#headOff, this.#headOff + n) // zero copy: within one chunk
+			: this.#collect(n);
 	}
 
 	/** First `n` bytes as a contiguous array (must be <= length), consuming them. */
@@ -194,26 +194,26 @@ class StreamBuffer {
 
 	/** Drop the first `n` bytes (must be <= length). */
 	skip(n: number): void {
-		this.total -= n;
+		this.#total -= n;
 		let rem = n;
 		while (rem > 0) {
-			const c = this.chunks[0] as Uint8Array;
-			const avail = c.length - this.headOff;
+			const c = this.#chunks[0] as Uint8Array;
+			const avail = c.length - this.#headOff;
 			if (rem < avail) {
-				this.headOff += rem;
+				this.#headOff += rem;
 				return;
 			}
 			rem -= avail;
-			this.chunks.shift();
-			this.headOff = 0;
+			this.#chunks.shift();
+			this.#headOff = 0;
 		}
 	}
 
-	private collect(n: number): Uint8Array {
+	#collect(n: number): Uint8Array {
 		const out = new Uint8Array(n);
 		let copied = 0;
-		let off = this.headOff;
-		for (const c of this.chunks) {
+		let off = this.#headOff;
+		for (const c of this.#chunks) {
 			if (copied >= n) break;
 			const take = Math.min(c.length - off, n - copied);
 			out.set(c.subarray(off, off + take), copied);

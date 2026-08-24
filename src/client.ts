@@ -191,16 +191,16 @@ export interface ChunkedHttpClientContext {
  * OHTTP Client for encapsulating requests
  */
 export class OHTTPClient {
-	private readonly suite: CipherSuite;
-	private readonly keyConfig: KeyConfig;
+	readonly #suite: CipherSuite;
+	readonly #keyConfig: KeyConfig;
 	/** Imported once: `DeserializePublicKey` is a WebCrypto `importKey`, and the
 	 * key config cannot change under a live client */
-	private importedPublicKey: Promise<Key> | undefined;
-	private readonly kdfId: KdfId;
-	private readonly aeadId: AeadId;
-	private readonly requestLabel: string;
-	private readonly responseLabel: string;
-	private readonly responseCrypto: ResponseCrypto | undefined;
+	#importedPublicKey: Promise<Key> | undefined;
+	readonly #kdfId: KdfId;
+	readonly #aeadId: AeadId;
+	readonly #requestLabel: string;
+	readonly #responseLabel: string;
+	readonly #responseCrypto: ResponseCrypto | undefined;
 
 	/**
 	 * Create an OHTTP client
@@ -211,11 +211,11 @@ export class OHTTPClient {
 	 */
 	constructor(suite: CipherSuite, keyConfig: KeyConfig, options: OHTTPClientOptions = {}) {
 		assertResponseCrypto([suite], options.responseCrypto);
-		this.suite = suite;
-		this.keyConfig = keyConfig;
-		this.requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
-		this.responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
-		this.responseCrypto = options.responseCrypto;
+		this.#suite = suite;
+		this.#keyConfig = keyConfig;
+		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
+		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
+		this.#responseCrypto = options.responseCrypto;
 
 		// Validate and extract cipher suite IDs
 		const rawKdfId = suite.KDF.id;
@@ -229,8 +229,8 @@ export class OHTTPClient {
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 		}
 
-		this.kdfId = rawKdfId;
-		this.aeadId = rawAeadId;
+		this.#kdfId = rawKdfId;
+		this.#aeadId = rawAeadId;
 	}
 
 	/**
@@ -240,30 +240,30 @@ export class OHTTPClient {
 	 * @returns The encapsulated request bytes and context for decrypting the response
 	 */
 	async encapsulate(request: Uint8Array): Promise<EncapsulatedRequest> {
-		this.importedPublicKey ??= this.suite
-			.DeserializePublicKey(this.keyConfig.publicKey)
+		this.#importedPublicKey ??= this.#suite
+			.DeserializePublicKey(this.#keyConfig.publicKey)
 			.catch((err: unknown) => {
 				// Only success is worth keeping: caching the rejection would poison
 				// the client for the rest of its life over one failed import.
-				this.importedPublicKey = undefined;
+				this.#importedPublicKey = undefined;
 				throw err;
 			});
-		const publicKey = await this.importedPublicKey;
+		const publicKey = await this.#importedPublicKey;
 
 		// Encapsulate the request
 		const ctx = await encapsulateRequest(
-			this.suite,
+			this.#suite,
 			publicKey,
-			this.keyConfig,
-			this.kdfId,
-			this.aeadId,
+			this.#keyConfig,
+			this.#kdfId,
+			this.#aeadId,
 			request,
-			this.requestLabel,
+			this.#requestLabel,
 		);
 
 		// Create client context
-		const responseLabel = this.responseLabel;
-		const responseCrypto = this.responseCrypto;
+		const responseLabel = this.#responseLabel;
+		const responseCrypto = this.#responseCrypto;
 		const context: ClientContext = {
 			async decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				return decapsulateResponse(ctx, encapsulatedResponse, responseLabel, responseCrypto);
@@ -350,16 +350,16 @@ export class OHTTPClient {
  * Chunked OHTTP Client for streaming requests/responses (draft-ietf-ohai-chunked-ohttp-08)
  */
 export class ChunkedOHTTPClient {
-	private readonly suite: CipherSuite;
-	private readonly keyConfig: KeyConfig;
+	readonly #suite: CipherSuite;
+	readonly #keyConfig: KeyConfig;
 	/** Imported once: `DeserializePublicKey` is a WebCrypto `importKey`, and the
 	 * key config cannot change under a live client */
-	private importedPublicKey: Promise<Key> | undefined;
-	private readonly kdfId: KdfId;
-	private readonly aeadId: AeadId;
-	private readonly requestLabel: string;
-	private readonly responseLabel: string;
-	private readonly responseCrypto: ResponseCrypto | undefined;
+	#importedPublicKey: Promise<Key> | undefined;
+	readonly #kdfId: KdfId;
+	readonly #aeadId: AeadId;
+	readonly #requestLabel: string;
+	readonly #responseLabel: string;
+	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly maxMessageSize: number;
 
 	/**
@@ -371,11 +371,11 @@ export class ChunkedOHTTPClient {
 	 */
 	constructor(suite: CipherSuite, keyConfig: KeyConfig, options: ChunkedOHTTPClientOptions = {}) {
 		assertResponseCrypto([suite], options.responseCrypto);
-		this.suite = suite;
-		this.keyConfig = keyConfig;
-		this.requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
-		this.responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
-		this.responseCrypto = options.responseCrypto;
+		this.#suite = suite;
+		this.#keyConfig = keyConfig;
+		this.#requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
+		this.#responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
+		this.#responseCrypto = options.responseCrypto;
 		this.maxMessageSize = resolveMaxMessageSize(options.maxMessageSize);
 
 		// Validate and extract cipher suite IDs
@@ -390,8 +390,8 @@ export class ChunkedOHTTPClient {
 			throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 		}
 
-		this.kdfId = rawKdfId;
-		this.aeadId = rawAeadId;
+		this.#kdfId = rawKdfId;
+		this.#aeadId = rawAeadId;
 	}
 
 	/**
@@ -403,27 +403,27 @@ export class ChunkedOHTTPClient {
 	 * 3. For final chunk: frameChunk(await ctx.sealFinalChunk(data), true)
 	 */
 	async createRequestContext(): Promise<ChunkedRequestContext> {
-		this.importedPublicKey ??= this.suite
-			.DeserializePublicKey(this.keyConfig.publicKey)
+		this.#importedPublicKey ??= this.#suite
+			.DeserializePublicKey(this.#keyConfig.publicKey)
 			.catch((err: unknown) => {
 				// Only success is worth keeping: caching the rejection would poison
 				// the client for the rest of its life over one failed import.
-				this.importedPublicKey = undefined;
+				this.#importedPublicKey = undefined;
 				throw err;
 			});
-		const publicKey = await this.importedPublicKey;
+		const publicKey = await this.#importedPublicKey;
 
 		// Build info string
 		const info = buildRequestInfo(
-			this.keyConfig.keyId,
-			this.keyConfig.kemId,
-			this.kdfId,
-			this.aeadId,
-			this.requestLabel,
+			this.#keyConfig.keyId,
+			this.#keyConfig.kemId,
+			this.#kdfId,
+			this.#aeadId,
+			this.#requestLabel,
 		);
 
 		// Setup sender context
-		const { encapsulatedSecret: enc, ctx: senderContext } = await this.suite.SetupSender(
+		const { encapsulatedSecret: enc, ctx: senderContext } = await this.#suite.SetupSender(
 			publicKey,
 			{
 				info,
@@ -432,16 +432,16 @@ export class ChunkedOHTTPClient {
 
 		// Build header
 		const hdr = buildRequestHeader(
-			this.keyConfig.keyId,
-			this.keyConfig.kemId,
-			this.kdfId,
-			this.aeadId,
+			this.#keyConfig.keyId,
+			this.#keyConfig.kemId,
+			this.#kdfId,
+			this.#aeadId,
 		);
 		const header = concat(hdr, enc);
 
-		const suite = this.suite;
-		const responseLabel = this.responseLabel;
-		const responseCrypto = this.responseCrypto;
+		const suite = this.#suite;
+		const responseLabel = this.#responseLabel;
+		const responseCrypto = this.#responseCrypto;
 
 		let requestFinished = false;
 		const claimRequest = createChunkBudget(this.maxMessageSize);
@@ -548,7 +548,7 @@ export class ChunkedOHTTPClient {
 
 		return {
 			encapsulatedRequest,
-			responseNonceLength: getResponseNonceLength(this.suite),
+			responseNonceLength: getResponseNonceLength(this.#suite),
 			createResponseContext: (nonce: Uint8Array) => ctx.createResponseContext(nonce),
 		};
 	}
@@ -562,7 +562,7 @@ export class ChunkedOHTTPClient {
 		createResponseContext: (responseNonce: Uint8Array) => Promise<ChunkedResponseContext>,
 		encapsulatedResponse: Uint8Array,
 	): Promise<Uint8Array<ArrayBuffer>> {
-		const nonceLength = getResponseNonceLength(this.suite);
+		const nonceLength = getResponseNonceLength(this.#suite);
 		if (encapsulatedResponse.length < nonceLength) {
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
@@ -608,10 +608,10 @@ export class ChunkedOHTTPClient {
 		options: StreamOperationOptions = {},
 	): Promise<EncapsulatedChunkedRequestInit> {
 		const requestCtx = await this.createRequestContext();
-		const suite = this.suite;
+		const suite = this.#suite;
 		const maxMessageSize = this.maxMessageSize;
-		const responseLabel = this.responseLabel;
-		const responseCrypto = this.responseCrypto;
+		const responseLabel = this.#responseLabel;
+		const responseCrypto = this.#responseCrypto;
 
 		// Get the HPKE sender context for creating the encrypt transform
 		// We need to access it through the request context internals

@@ -50,7 +50,7 @@ export const CHUNKED_RESPONSE_LABEL = "message/bhttp chunked response";
 /**
  * Default maximum chunk size (draft-08 Section 3)
  */
-export const DEFAULT_MAX_CHUNK_SIZE = 16384;
+export const DEFAULT_MAX_CHUNK_SIZE = 16_384;
 
 /**
  * AEAD tag length in bytes, 16 for every AEAD OHTTP registers (draft-08 Section 6).
