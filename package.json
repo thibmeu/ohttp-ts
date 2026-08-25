@@ -71,25 +71,25 @@
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",
-		"@biomejs/biome": "2.5.8",
+		"@biomejs/biome": "2.5.10",
 		"@cloudflare/vitest-pool-workers": "^0.22.0",
 		"@fast-check/vitest": "0.4.1",
 		"@hpke/chacha20poly1305": "1.8.0",
 		"@panva/hpke-noble": "1.1.4",
 		"@playwright/test": "1.62.1",
 		"@types/node": "26.2.0",
-		"@vitest/browser": "4.1.10",
-		"@vitest/browser-playwright": "4.1.10",
-		"@vitest/coverage-v8": "4.1.10",
+		"@vitest/browser": "4.1.11",
+		"@vitest/browser-playwright": "4.1.11",
+		"@vitest/coverage-v8": "4.1.11",
 		"esbuild": "0.28.2",
 		"esbuild-visualizer": "0.7.0",
 		"fast-check": "4.9.0",
-		"publint": "0.3.23",
+		"publint": "0.3.24",
 		"tsdown": "0.22.14",
 		"tsx": "4.23.12",
 		"typescript": "7.0.2",
-		"vite": "8.2.1",
-		"vitest": "4.1.10"
+		"vite": "8.2.2",
+		"vitest": "4.1.11"
 	},
 	"overrides": {
 		"tsdown": {
