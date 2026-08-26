@@ -16,8 +16,8 @@
  */
 
 import { bench, describe } from "vitest";
-import { client, makeFixture, server } from "./fixtures.js";
-import { BENCH_OPTS } from "./options.js";
+import { client, makeFixture, server } from "./fixtures.ts";
+import { BENCH_OPTS } from "./options.ts";
 
 const { payload, encapsulatedRequest } = await makeFixture(1_024);
 

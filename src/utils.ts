@@ -1,5 +1,5 @@
-import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE } from "./constants.js";
-import { OHTTPError, OHTTPErrorCode } from "./errors.js";
+import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE } from "./constants.ts";
+import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
 
 /**
  * Concatenate multiple Uint8Arrays into one

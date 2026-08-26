@@ -1,7 +1,7 @@
 import { decode as decodeVarint, encode as encodeVarint } from "quicvarint";
-import { DEFAULT_MAX_FRAME_SIZE } from "./constants.js";
-import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { concat } from "./utils.js";
+import { DEFAULT_MAX_FRAME_SIZE } from "./constants.ts";
+import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
+import { concat } from "./utils.ts";
 
 /**
  * Frame a chunk with varint length prefix

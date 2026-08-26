@@ -67,8 +67,8 @@ async function measure(fn: () => Promise<unknown>): Promise<OpMetrics> {
 
 async function collect(): Promise<Metrics> {
 	// Imported late so the patches above are in place first.
-	const { client, keyConfig, makeFixture, server, suite } = await import("../bench/fixtures.js");
-	const { ChunkedOHTTPClient, ChunkedOHTTPServer } = await import("../src/index.js");
+	const { client, keyConfig, makeFixture, server, suite } = await import("../bench/fixtures.ts");
+	const { ChunkedOHTTPClient, ChunkedOHTTPServer } = await import("../src/index.ts");
 
 	// Built here rather than taken from fixtures.ts, so this tool runs against any
 	// checkout that exports the shared suite/key — including one whose fixtures

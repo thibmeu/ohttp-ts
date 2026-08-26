@@ -2,7 +2,7 @@
 // Licensed under the MIT license
 
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { ChunkedOHTTPClient, ChunkedOHTTPServer, KeyConfig } from "../src/index.js";
+import { ChunkedOHTTPClient, ChunkedOHTTPServer, KeyConfig } from "../src/index.ts";
 
 // Follows draft-ietf-ohai-chunked-ohttp-08
 

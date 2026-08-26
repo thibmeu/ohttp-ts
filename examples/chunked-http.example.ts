@@ -14,7 +14,7 @@ import {
 	ChunkedOHTTPServer,
 	KeyConfig,
 	type StreamingRequestInit,
-} from "../src/index.js";
+} from "../src/index.ts";
 
 async function setup() {
 	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);

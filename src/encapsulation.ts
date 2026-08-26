@@ -23,8 +23,8 @@ import {
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	FINAL_CHUNK_AAD,
-} from "./constants.js";
-import { OHTTPError, OHTTPErrorCode } from "./errors.js";
+} from "./constants.ts";
+import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
 import {
 	AeadId,
 	getEncLength,
@@ -32,10 +32,10 @@ import {
 	type KeyConfig,
 	type KeyConfigWithPrivate,
 	selectSuite,
-} from "./keyConfig.js";
-import { asOwnedBytes, concat } from "./utils.js";
+} from "./keyConfig.ts";
+import { asOwnedBytes, concat } from "./utils.ts";
 
-export { frameChunk, type ParsedChunk, parseFramedChunk } from "./framing.js";
+export { frameChunk, type ParsedChunk, parseFramedChunk } from "./framing.ts";
 
 export {
 	AEAD_TAG_SIZE,

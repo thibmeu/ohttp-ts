@@ -37,9 +37,9 @@
  */
 
 import { AEAD_AES_128_GCM } from "hpke";
-import { sealResponseChunk } from "../src/encapsulation.js";
-import { client, makeFixture, server } from "./fixtures.js";
-import { randomBytes } from "./util.js";
+import { sealResponseChunk } from "../src/encapsulation.ts";
+import { client, makeFixture, server } from "./fixtures.ts";
+import { randomBytes } from "./util.ts";
 
 // --- crypto.subtle instrumentation -----------------------------------------
 

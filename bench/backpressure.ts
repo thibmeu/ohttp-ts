@@ -14,7 +14,7 @@
  *      SIZE=67108864 CHUNK=65536 OBSERVE_MS=2000 npm run bench:backpressure
  */
 
-import { chunkedClient } from "./fixtures.js";
+import { chunkedClient } from "./fixtures.ts";
 
 declare const gc: (() => void) | undefined;
 

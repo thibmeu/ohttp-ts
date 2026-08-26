@@ -26,7 +26,7 @@ jobs:
           path: base
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: npm
           cache-dependency-path: head/package-lock.json
 
@@ -39,14 +39,16 @@ jobs:
             if [ "$tree" != head ]; then
               cp head/tools/metrics.ts "$tree/tools/metrics.ts"
               cp head/bench/fixtures.ts head/bench/util.ts "$tree/bench/"
+              # Native Node resolves source files by their real .ts names.
+              sed -i 's/\.js"/.ts"/g' "$tree"/src/*.ts
             fi
-            (cd "$tree" && npm ci >/dev/null && npx tsx tools/metrics.ts) > "$tree.json"
+            (cd "$tree" && npm ci >/dev/null && node tools/metrics.ts) > "$tree.json"
           done
 
       - name: Report
         run: |
           set -euo pipefail
-          npx tsx head/tools/metrics.ts report "main=base.json" "PR=head.json" > body.md
+          node head/tools/metrics.ts report "main=base.json" "PR=head.json" > body.md
           if [ -s body.md ]; then
             printf '\nReview these increases before merging; confirm them if intentional.\n' >> body.md
           else

@@ -10,8 +10,8 @@ import {
 	createChunkerTransform,
 	createResponseDecryptTransform,
 	createResponseEncryptTransform,
-} from "../src/streaming.js";
-import { concat } from "../src/utils.js";
+} from "../src/streaming.ts";
+import { concat } from "../src/utils.ts";
 
 export function randomBytes(size: number): Uint8Array {
 	const buf = new Uint8Array(size);

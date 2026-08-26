@@ -7,7 +7,7 @@
 // Errors
 // ============================================================================
 
-export { isOHTTPError, OHTTPError, OHTTPErrorCode } from "./errors.js";
+export { isOHTTPError, OHTTPError, OHTTPErrorCode } from "./errors.ts";
 
 // ============================================================================
 // Client & Server classes
@@ -27,7 +27,7 @@ export {
 	OHTTPClient,
 	type OHTTPClientOptions,
 	type StreamingRequestInit,
-} from "./client.js";
+} from "./client.ts";
 
 export {
 	type ChunkedHttpServerContext,
@@ -42,7 +42,7 @@ export {
 	OHTTPServer,
 	type OHTTPServerOptions,
 	type ServerContext,
-} from "./server.js";
+} from "./server.ts";
 
 // ============================================================================
 // Algorithm IDs (like hpke factory constants)
@@ -55,7 +55,7 @@ export {
 	isValidKemId,
 	KdfId,
 	KemId,
-} from "./keyConfig.js";
+} from "./keyConfig.ts";
 
 // ============================================================================
 // KeyConfig namespace
@@ -75,7 +75,7 @@ import {
 	selectSuite,
 	serializeKeyConfig,
 	serializeKeyConfigs,
-} from "./keyConfig.js";
+} from "./keyConfig.ts";
 
 /** KeyConfig utilities for parsing, serializing, and generating OHTTP key configurations */
 export const KeyConfig = {
@@ -110,8 +110,8 @@ export type SymmetricAlgorithm = SymmetricAlgorithmType;
 // Media Types (RFC 9458 Section 9, draft-ietf-ohai-chunked-ohttp-08 Section 8)
 // ============================================================================
 
-export { MediaType } from "./constants.js";
-export type { StreamOperationOptions } from "./streaming.js";
+export { MediaType } from "./constants.ts";
+export type { StreamOperationOptions } from "./streaming.ts";
 
 // ============================================================================
 // Labels namespace
@@ -126,7 +126,7 @@ import {
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	FINAL_CHUNK_AAD,
-} from "./constants.js";
+} from "./constants.ts";
 
 /** Protocol labels for OHTTP request/response encryption */
 export const Labels = {
@@ -159,7 +159,7 @@ import {
 	parseIncremental,
 	serializeIncremental,
 	setIncremental,
-} from "./incremental.js";
+} from "./incremental.ts";
 
 /** Incremental HTTP header utilities (RFC 10036) */
 export const Incremental = {
@@ -187,5 +187,5 @@ export {
 	type EncapsulatedRequestHeader,
 	type ResponseCrypto,
 	type ServerEncapsulationContext,
-} from "./encapsulation.js";
-export { frameChunk, type ParsedChunk, parseFramedChunk } from "./framing.js";
+} from "./encapsulation.ts";
+export { frameChunk, type ParsedChunk, parseFramedChunk } from "./framing.ts";
