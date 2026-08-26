@@ -19,8 +19,8 @@ import {
 	KeyConfig,
 	OHTTPClient,
 	OHTTPServer,
-} from "../src/index.js";
-import { randomBytes } from "./util.js";
+} from "../src/index.ts";
+import { randomBytes } from "./util.ts";
 
 export const suite = new CipherSuite(
 	KEM_DHKEM_X25519_HKDF_SHA256,

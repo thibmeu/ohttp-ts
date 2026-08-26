@@ -20,8 +20,8 @@
  */
 import { AEAD_AES_128_GCM } from "hpke";
 import { bench, describe } from "vitest";
-import { BENCH_OPTS } from "./options.js";
-import { randomBytes, streamDecrypt, streamEncrypt } from "./util.js";
+import { BENCH_OPTS } from "./options.ts";
+import { randomBytes, streamDecrypt, streamEncrypt } from "./util.ts";
 
 const aead = AEAD_AES_128_GCM();
 const key = crypto.getRandomValues(new Uint8Array(16));

@@ -19,8 +19,8 @@
  */
 
 import { bench, describe } from "vitest";
-import { client, type Fixture, makeFixture, server } from "./fixtures.js";
-import { BENCH_OPTS } from "./options.js";
+import { client, type Fixture, makeFixture, server } from "./fixtures.ts";
+import { BENCH_OPTS } from "./options.ts";
 
 // Two regimes: setup-dominated (1KB) and AEAD-dominated (1MB).
 const SIZES = [

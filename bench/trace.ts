@@ -18,7 +18,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { Session } from "node:inspector/promises";
-import { client, makeFixture, server } from "./fixtures.js";
+import { client, makeFixture, server } from "./fixtures.ts";
 
 const { OP = "decapsulateRequest", SIZE = "1048576", ITERS = "2000" } = process.env;
 const f = await makeFixture(Number(SIZE));

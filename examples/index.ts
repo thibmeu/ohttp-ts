@@ -1,12 +1,12 @@
 // Copyright (c) 2024
 // Licensed under the MIT license
 
-import { obliviousHTTPWithRequestResponse } from "./bhttp.example.js";
-import { chunkedOHTTP } from "./chunked.example.js";
-import { chunkedHttpApi, chunkedHttpLargeBody } from "./chunked-http.example.js";
-import { postQuantumOHTTP } from "./mlkem.example.js";
-import { obliviousHTTP } from "./ohttp.example.js";
-import { chachaResponseOHTTP } from "./response-chacha.example.js";
+import { obliviousHTTPWithRequestResponse } from "./bhttp.example.ts";
+import { chunkedOHTTP } from "./chunked.example.ts";
+import { chunkedHttpApi, chunkedHttpLargeBody } from "./chunked-http.example.ts";
+import { postQuantumOHTTP } from "./mlkem.example.ts";
+import { obliviousHTTP } from "./ohttp.example.ts";
+import { chachaResponseOHTTP } from "./response-chacha.example.ts";
 
 async function main() {
 	const results = await Promise.all([

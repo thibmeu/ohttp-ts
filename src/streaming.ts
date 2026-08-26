@@ -11,10 +11,10 @@ import {
 	AEAD_TAG_SIZE,
 	DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
-} from "./constants.js";
-import { FINAL_CHUNK_AAD, openResponseChunk, sealResponseChunk } from "./encapsulation.js";
-import { OHTTPError, OHTTPErrorCode } from "./errors.js";
-import { concat, createChunkBudget } from "./utils.js";
+} from "./constants.ts";
+import { FINAL_CHUNK_AAD, openResponseChunk, sealResponseChunk } from "./encapsulation.ts";
+import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
+import { concat, createChunkBudget } from "./utils.ts";
 
 /** A ReadableStream that emits `bytes` as a single chunk (if non-empty) then closes. */
 export function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {

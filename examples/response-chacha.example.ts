@@ -14,7 +14,7 @@
 
 import { AEAD_ChaCha20Poly1305 } from "@panva/hpke-noble";
 import { AEAD_AES_128_GCM, CipherSuite, KDF_HKDF_SHA256, KEM_DHKEM_X25519_HKDF_SHA256 } from "hpke";
-import { KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.js";
+import { KeyConfig, OHTTPClient, OHTTPServer } from "../src/index.ts";
 
 export async function chachaResponseOHTTP(): Promise<boolean> {
 	// [ Gateway ] serves DHKEM(X25519) + HKDF-SHA256 with either AEAD. Same KEM

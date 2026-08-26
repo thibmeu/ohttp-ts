@@ -1,6 +1,6 @@
 import { MessageLimitExceededError } from "bhttp-ts";
 import type { AEAD as AeadImpl, CipherSuite, Key, SenderContext } from "hpke";
-import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
+import { bhttpDecoder, bhttpEncoder } from "./bhttp.ts";
 import {
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
@@ -11,7 +11,7 @@ import {
 	kEnc,
 	kSenderContext,
 	MediaType,
-} from "./constants.js";
+} from "./constants.ts";
 import {
 	AEAD_TAG_SIZE,
 	assertResponseCrypto,
@@ -28,8 +28,8 @@ import {
 	getResponseNonceLength,
 	openResponseChunk,
 	type ResponseCrypto,
-} from "./encapsulation.js";
-import { OHTTPError, OHTTPErrorCode } from "./errors.js";
+} from "./encapsulation.ts";
+import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
 import {
 	type AeadId,
 	isValidAeadId,
@@ -37,7 +37,7 @@ import {
 	type KdfId,
 	type KeyConfig,
 	supportsKeyConfig,
-} from "./keyConfig.js";
+} from "./keyConfig.ts";
 import {
 	collectStream,
 	createChunkerTransform,
@@ -47,7 +47,7 @@ import {
 	type StreamOperationOptions,
 	streamFromReader,
 	streamOfBytes,
-} from "./streaming.js";
+} from "./streaming.ts";
 import {
 	asOwnedBytes,
 	assertMessageSize,
@@ -55,7 +55,7 @@ import {
 	concat,
 	createChunkBudget,
 	resolveMaxMessageSize,
-} from "./utils.js";
+} from "./utils.ts";
 
 /**
  * Options for OHTTP client

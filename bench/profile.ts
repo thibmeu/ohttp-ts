@@ -17,8 +17,8 @@
 
 import { Session } from "node:inspector/promises";
 import { AEAD_AES_128_GCM } from "hpke";
-import { chunkedClient, chunkedServer, client, server } from "./fixtures.js";
-import { randomBytes, streamDecrypt, streamEncrypt } from "./util.js";
+import { chunkedClient, chunkedServer, client, server } from "./fixtures.ts";
+import { randomBytes, streamDecrypt, streamEncrypt } from "./util.ts";
 
 interface CallFrame {
 	functionName: string;

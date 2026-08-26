@@ -1,7 +1,7 @@
 import { MessageLimitExceededError } from "bhttp-ts";
 import type { AEAD as AeadImpl, CipherSuite, RecipientContext } from "hpke";
-import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
-import type { StreamingRequestInit } from "./client.js";
+import { bhttpDecoder, bhttpEncoder } from "./bhttp.ts";
+import type { StreamingRequestInit } from "./client.ts";
 import {
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
@@ -13,7 +13,7 @@ import {
 	kRecipientContext,
 	kSuite,
 	MediaType,
-} from "./constants.js";
+} from "./constants.ts";
 import {
 	AEAD_TAG_SIZE,
 	assertResponseCrypto,
@@ -32,8 +32,8 @@ import {
 	REQUEST_HEADER_SIZE,
 	type ResponseCrypto,
 	sealResponseChunk,
-} from "./encapsulation.js";
-import { OHTTPError, OHTTPErrorCode } from "./errors.js";
+} from "./encapsulation.ts";
+import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
 import {
 	isValidKeyId,
 	type KeyConfigWithPrivate,
@@ -41,7 +41,7 @@ import {
 	sameAlgorithms,
 	selectSuite,
 	symmetricAlgorithmsOf,
-} from "./keyConfig.js";
+} from "./keyConfig.ts";
 import {
 	collectStream,
 	createChunkerTransform,
@@ -51,7 +51,7 @@ import {
 	type StreamOperationOptions,
 	streamFromReader,
 	streamOfBytes,
-} from "./streaming.js";
+} from "./streaming.ts";
 import {
 	asOwnedBytes,
 	assertMessageSize,
@@ -59,7 +59,7 @@ import {
 	concat,
 	createChunkBudget,
 	resolveMaxMessageSize,
-} from "./utils.js";
+} from "./utils.ts";
 
 /**
  * Options for OHTTP server
