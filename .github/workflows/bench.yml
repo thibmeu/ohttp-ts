@@ -1,0 +1,74 @@
+name: Bench
+
+on:
+  pull_request:
+    branches: [main]
+
+# A new push supersedes the previous report.
+concurrency:
+  group: bench-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: head
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: head/package-lock.json
+
+      - name: Measure
+        run: |
+          set -euo pipefail
+          for tree in head base; do
+            # Drive both trees with THIS PR's harness, so a metric change is a
+            # change in src/, not in how it was measured.
+            if [ "$tree" != head ]; then
+              cp head/tools/metrics.ts "$tree/tools/metrics.ts"
+              cp head/bench/fixtures.ts head/bench/util.ts "$tree/bench/"
+            fi
+            (cd "$tree" && npm ci >/dev/null && npx tsx tools/metrics.ts) > "$tree.json"
+          done
+
+      - name: Report
+        run: |
+          set -euo pipefail
+          npx tsx head/tools/metrics.ts report "main=base.json" "PR=head.json" > body.md
+          if [ -s body.md ]; then
+            printf '\nReview these increases before merging; confirm them if intentional.\n' >> body.md
+          else
+            echo "No measured copy or WebCrypto-call regressions." > body.md
+          fi
+          sed -i '1i<!-- ohttp-bench-metrics -->' body.md
+          cat body.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment
+        # Forked PRs get a read-only token; the step summary above still has the
+        # report, so a failure here is not worth failing the run over.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          comment_id=$(gh api --paginate \
+            "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- ohttp-bench-metrics -->")) | .id' | head -n 1)
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/${{ github.repository }}/issues/comments/$comment_id" \
+              -F body=@body.md >/dev/null
+          else
+            gh pr comment ${{ github.event.pull_request.number }} \
+              --repo ${{ github.repository }} --body-file body.md
+          fi

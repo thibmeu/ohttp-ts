@@ -42,6 +42,7 @@
 		"check:package": "publint && attw --pack",
 		"check:treeshake": "tsx tools/check-treeshake.ts",
 		"size": "tsx tools/size.ts",
+		"metrics": "tsx tools/metrics.ts",
 		"lint": "biome check bench examples src test tools",
 		"format": "biome format --write bench examples src test tools",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
