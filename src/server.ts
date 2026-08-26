@@ -1,9 +1,11 @@
+import { MessageLimitExceededError } from "bhttp-ts";
 import type { AEAD as AeadImpl, CipherSuite, RecipientContext } from "hpke";
 import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
 import type { StreamingRequestInit } from "./client.js";
 import {
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
+	DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
 	kAead,
 	kAeadKey,
 	kAeadNonce,
@@ -27,6 +29,7 @@ import {
 	getEncLength,
 	getResponseNonceLength,
 	parseRequestHeader,
+	REQUEST_HEADER_SIZE,
 	type ResponseCrypto,
 	sealResponseChunk,
 } from "./encapsulation.js";
@@ -49,7 +52,14 @@ import {
 	streamFromReader,
 	streamOfBytes,
 } from "./streaming.js";
-import { asOwnedBytes, concat, createChunkBudget, resolveMaxMessageSize } from "./utils.js";
+import {
+	asOwnedBytes,
+	assertMessageSize,
+	collectLimitedBody,
+	concat,
+	createChunkBudget,
+	resolveMaxMessageSize,
+} from "./utils.js";
 
 /**
  * Options for OHTTP server
@@ -61,6 +71,8 @@ export interface OHTTPServerOptions {
 	readonly responseLabel?: string;
 	/** Crypto factory overrides for response encryption (default: resolved from the suite) */
 	readonly responseCrypto?: ResponseCrypto;
+	/** Maximum Binary HTTP bytes in one request or response. @default 1048576 */
+	readonly maxMessageSize?: number;
 }
 
 /**
@@ -216,6 +228,8 @@ export class OHTTPServer {
 	readonly #requestLabel: string;
 	readonly #responseLabel: string;
 	readonly #responseCrypto: ResponseCrypto | undefined;
+	readonly #maxEncapsulatedRequestSize: number;
+	readonly maxMessageSize: number;
 
 	/**
 	 * Create an OHTTP server
@@ -233,6 +247,14 @@ export class OHTTPServer {
 		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
+		this.maxMessageSize = resolveMaxMessageSize(
+			options.maxMessageSize ?? DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
+		);
+		this.#maxEncapsulatedRequestSize =
+			this.maxMessageSize +
+			REQUEST_HEADER_SIZE +
+			Math.max(...this.#keyConfigs.map(({ kemId }) => getEncLength(kemId))) +
+			AEAD_TAG_SIZE;
 	}
 
 	/**
@@ -243,11 +265,14 @@ export class OHTTPServer {
 	 */
 	async decapsulate(encapsulatedRequest: Uint8Array): Promise<DecapsulatedRequest> {
 		const ctx = await decapsulateRequest(encapsulatedRequest, this.#keyConfigs, this.#requestLabel);
+		assertMessageSize(ctx.request, this.maxMessageSize);
 
 		const responseLabel = this.#responseLabel;
 		const responseCrypto = this.#responseCrypto;
+		const maxMessageSize = this.maxMessageSize;
 		const context: ServerContext = {
 			async encryptResponse(response: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+				assertMessageSize(response, maxMessageSize);
 				// Generate random response nonce
 				const nonceLength = getResponseNonceLength(ctx.suite);
 				const responseNonce = crypto.getRandomValues(new Uint8Array(nonceLength));
@@ -277,7 +302,7 @@ export class OHTTPServer {
 		}
 
 		// Read and decrypt
-		const encapsulatedRequest = new Uint8Array(await request.arrayBuffer());
+		const encapsulatedRequest = await collectLimitedBody(request, this.#maxEncapsulatedRequestSize);
 		const { request: binaryRequest, context: bytesContext } =
 			await this.decapsulate(encapsulatedRequest);
 
@@ -294,13 +319,17 @@ export class OHTTPServer {
 		}
 
 		// Create HTTP context
+		const maxMessageSize = this.maxMessageSize;
 		const context: HttpServerContext = {
 			async encapsulateResponse(response: Response): Promise<Response> {
 				// Encode response to Binary HTTP
 				let binaryResponse: Uint8Array;
 				try {
-					binaryResponse = await bhttpEncoder().encodeResponse(response);
-				} catch {
+					binaryResponse = await bhttpEncoder().encodeResponse(response, { maxMessageSize });
+				} catch (error) {
+					if (error instanceof MessageLimitExceededError) {
+						throw new OHTTPError(OHTTPErrorCode.MessageTooLarge);
+					}
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
 

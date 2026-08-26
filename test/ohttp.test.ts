@@ -18,15 +18,18 @@ import { describe, expect, it } from "vitest";
 import { OHTTPClient } from "../src/client.js";
 import { MediaType } from "../src/constants.js";
 import {
+	AEAD_TAG_SIZE,
 	decapsulateRequest,
 	encapsulateResponse,
 	getResponseNonceLength,
+	REQUEST_HEADER_SIZE,
 } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
 import {
 	AeadId,
 	deriveKeyConfig,
 	generateKeyConfig,
+	getEncLength,
 	importKeyConfig,
 	KdfId,
 	KemId,
@@ -39,6 +42,116 @@ import ohttpJsVectors from "./vectors/ohttp-js.json";
 import rfc9458Vectors from "./vectors/rfc9458.json";
 
 describe("OHTTP round-trip", () => {
+	it("defaults buffered messages to 1 MiB and validates overrides", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const published = parseKeyConfig(serializeKeyConfig(keyConfig));
+
+		expect(new OHTTPClient(suite, published).maxMessageSize).toBe(1024 * 1024);
+		expect(new OHTTPServer([keyConfig]).maxMessageSize).toBe(1024 * 1024);
+		for (const maxMessageSize of [-1, 1.5, Number.NaN]) {
+			expect(() => new OHTTPClient(suite, published, { maxMessageSize })).toThrow(RangeError);
+			expect(() => new OHTTPServer([keyConfig], { maxMessageSize })).toThrow(RangeError);
+		}
+	});
+
+	it("enforces maxMessageSize in both directions", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new OHTTPClient(suite, parseKeyConfig(serializeKeyConfig(keyConfig)), {
+			maxMessageSize: 3,
+		});
+		const server = new OHTTPServer([keyConfig], { maxMessageSize: 3 });
+
+		await expect(client.encapsulate(new Uint8Array(4))).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+		const oversizedRequest = await new OHTTPClient(
+			suite,
+			parseKeyConfig(serializeKeyConfig(keyConfig)),
+			{ maxMessageSize: 4 },
+		).encapsulate(new Uint8Array(4));
+		await expect(server.decapsulate(oversizedRequest.encapsulatedRequest)).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+		const { encapsulatedRequest, context } = await client.encapsulate(new Uint8Array(3));
+		const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
+		await expect(serverContext.encryptResponse(new Uint8Array(4))).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+		const oversizedResponse = await new OHTTPServer([keyConfig], { maxMessageSize: 4 })
+			.decapsulate(encapsulatedRequest)
+			.then(({ context }) => context.encryptResponse(new Uint8Array(4)));
+		await expect(context.decryptResponse(oversizedResponse)).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+	});
+
+	it("limits buffered HTTP bodies and cancels oversized inputs", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new OHTTPClient(suite, parseKeyConfig(serializeKeyConfig(keyConfig)), {
+			maxMessageSize: 128,
+		});
+		const server = new OHTTPServer([keyConfig], { maxMessageSize: 128 });
+
+		await expect(
+			client.encapsulateRequest(
+				new Request("https://example.com", { method: "POST", body: new Uint8Array(256) }),
+			),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }));
+
+		const roomyClient = new OHTTPClient(suite, parseKeyConfig(serializeKeyConfig(keyConfig)), {
+			maxMessageSize: 1024,
+		});
+		const { init } = await roomyClient.encapsulateRequest(new Request("https://example.com"));
+		const { context: serverContext } = await server.decapsulateRequest(
+			new Request("https://gateway.example", init),
+		);
+		await expect(
+			serverContext.encapsulateResponse(new Response(new Uint8Array(256))),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }));
+
+		const oversizedBody = (size: number) => {
+			let cancelled = false;
+			return {
+				body: new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(new Uint8Array(size));
+					},
+					cancel() {
+						cancelled = true;
+					},
+				}),
+				get cancelled() {
+					return cancelled;
+				},
+			};
+		};
+
+		const requestSource = oversizedBody(
+			128 + REQUEST_HEADER_SIZE + getEncLength(keyConfig.kemId) + AEAD_TAG_SIZE + 1,
+		);
+		await expect(
+			server.decapsulateRequest({
+				headers: new Headers({ "Content-Type": MediaType.REQUEST }),
+				body: requestSource.body,
+			} as Request),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }));
+		expect(requestSource.cancelled).toBe(true);
+
+		const { context: clientContext } = await client.encapsulateRequest(
+			new Request("https://example.com"),
+		);
+		const responseSource = oversizedBody(128 + getResponseNonceLength(suite) + AEAD_TAG_SIZE + 1);
+		await expect(
+			clientContext.decapsulateResponse(
+				new Response(responseSource.body, { headers: { "Content-Type": MediaType.RESPONSE } }),
+			),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }));
+		expect(responseSource.cancelled).toBe(true);
+	});
+
 	it("encrypts and decrypts a request/response", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 

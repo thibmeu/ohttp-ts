@@ -6,10 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
+### Breaking changes
+
+- Normal OHTTP messages default to a 1 MiB size limit.
+
 ### Changed
 
 - Internal class state now uses native private fields.
 - Incremental header references now use RFC 10036.
+- Gateway examples validate client-provided URLs before fetching them.
 
 ## [0.5.1] - 2026-08-22
 

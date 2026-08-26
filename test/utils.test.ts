@@ -89,6 +89,11 @@ describe("concat", () => {
 		expect(concat(arr)).toEqual(arr);
 	});
 
+	it("concatenates an array of many parts", () => {
+		const parts = Array.from({ length: 100_000 }, () => new Uint8Array([1]));
+		expect(concat(parts)).toHaveLength(parts.length);
+	});
+
 	it("concatenates multiple arrays", () => {
 		const a = new Uint8Array([1, 2]);
 		const b = new Uint8Array([3, 4, 5]);

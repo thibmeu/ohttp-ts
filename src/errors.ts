@@ -18,6 +18,8 @@ export const OHTTPErrorCode = {
 	ChunkSequenceError: "CHUNK_SEQUENCE_ERROR",
 	/** Chunk limit exceeded */
 	ChunkLimitExceeded: "CHUNK_LIMIT_EXCEEDED",
+	/** Aggregate message size exceeded */
+	MessageTooLarge: "MESSAGE_TOO_LARGE",
 } as const;
 
 export type OHTTPErrorCode = (typeof OHTTPErrorCode)[keyof typeof OHTTPErrorCode];

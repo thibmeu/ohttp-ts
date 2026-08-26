@@ -60,6 +60,9 @@ export const AEAD_TAG_SIZE = 16;
 /** Standard maximum received ciphertext chunk: 16 KiB plaintext plus its tag. */
 export const DEFAULT_MAX_FRAME_SIZE = DEFAULT_MAX_CHUNK_SIZE + AEAD_TAG_SIZE;
 
+/** Default plaintext limit for buffered OHTTP messages (1 MiB). */
+export const DEFAULT_MAX_OHTTP_MESSAGE_SIZE = 1 << 20;
+
 /**
  * Default per-message plaintext limit (1 GiB).
  *
@@ -67,7 +70,7 @@ export const DEFAULT_MAX_FRAME_SIZE = DEFAULT_MAX_CHUNK_SIZE + AEAD_TAG_SIZE;
  * target advantage below 2^-50, and at most 2^20 messages. Deployments remain
  * responsible for key lifetime and may configure a smaller bound.
  */
-export const DEFAULT_MAX_MESSAGE_SIZE = 1 << 30;
+export const DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE = 1 << 30;
 
 /**
  * AAD for final chunk (draft-08 Section 6.1-6.2)
