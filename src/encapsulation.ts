@@ -192,7 +192,7 @@ export interface EncapsulatedRequestHeader {
 }
 
 /** Header size: keyId(1) + kemId(2) + kdfId(2) + aeadId(2) = 7 bytes */
-const HEADER_SIZE = 7;
+export const REQUEST_HEADER_SIZE = 7;
 
 /**
  * Write request header fields into a buffer at the given offset
@@ -210,7 +210,7 @@ function writeHeader(
 	view.setUint16(offset + 1, kemId);
 	view.setUint16(offset + 3, kdfId);
 	view.setUint16(offset + 5, aeadId);
-	return HEADER_SIZE;
+	return REQUEST_HEADER_SIZE;
 }
 
 /**
@@ -227,7 +227,7 @@ export function buildRequestInfo(
 	label: string = DEFAULT_REQUEST_LABEL,
 ): Uint8Array {
 	const labelBytes = encodeString(label);
-	const result = new Uint8Array(labelBytes.length + 1 + HEADER_SIZE);
+	const result = new Uint8Array(labelBytes.length + 1 + REQUEST_HEADER_SIZE);
 	const view = new DataView(result.buffer);
 
 	result.set(labelBytes, 0);
@@ -248,7 +248,7 @@ export function buildRequestHeader(
 	kdfId: number,
 	aeadId: number,
 ): Uint8Array {
-	const result = new Uint8Array(HEADER_SIZE);
+	const result = new Uint8Array(REQUEST_HEADER_SIZE);
 	const view = new DataView(result.buffer);
 	writeHeader(view, 0, keyId, kemId, kdfId, aeadId);
 	return result;
@@ -271,7 +271,7 @@ export function parseRequestHeader(data: Uint8Array): {
 	header: EncapsulatedRequestHeader;
 	offset: number;
 } {
-	if (data.length < 7) {
+	if (data.length < REQUEST_HEADER_SIZE) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
 

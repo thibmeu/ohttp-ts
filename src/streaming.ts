@@ -7,7 +7,11 @@
 
 import type { AEAD as AeadImpl, RecipientContext, SenderContext } from "hpke";
 import { decode as decodeVarint, encode as encodeVarint } from "quicvarint";
-import { AEAD_TAG_SIZE, DEFAULT_MAX_FRAME_SIZE, DEFAULT_MAX_MESSAGE_SIZE } from "./constants.js";
+import {
+	AEAD_TAG_SIZE,
+	DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
+	DEFAULT_MAX_FRAME_SIZE,
+} from "./constants.js";
 import { FINAL_CHUNK_AAD, openResponseChunk, sealResponseChunk } from "./encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "./errors.js";
 import { concat, createChunkBudget } from "./utils.js";
@@ -107,7 +111,7 @@ export async function collectStream(
 		if (done) break;
 		parts.push(value);
 	}
-	return concat(...parts);
+	return concat(parts);
 }
 
 /**
@@ -243,7 +247,7 @@ function varintLength(firstByte: number): number {
  */
 export function createRequestEncryptTransform(
 	senderContext: SenderContext,
-	maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE,
+	maxMessageSize: number = DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	const claim = createChunkBudget(maxMessageSize);
 	let pendingChunk: Uint8Array | undefined;
@@ -427,7 +431,7 @@ function createFramedDecryptTransform(
 export function createRequestDecryptTransform(
 	recipientContext: RecipientContext,
 	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
-	maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE,
+	maxMessageSize: number = DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	return createFramedDecryptTransform(
 		(ciphertext, isFinal) =>
@@ -449,7 +453,7 @@ export function createResponseEncryptTransform(
 	aead: AeadImpl,
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
-	maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE,
+	maxMessageSize: number = DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	const claim = createChunkBudget(maxMessageSize);
 	let counter = 0;
@@ -528,7 +532,7 @@ export function createResponseDecryptTransform(
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
 	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
-	maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE,
+	maxMessageSize: number = DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	let counter = 0;
 	// The counter is claimed synchronously at call time: opens are pipelined, so

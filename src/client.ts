@@ -1,8 +1,10 @@
+import { MessageLimitExceededError } from "bhttp-ts";
 import type { AEAD as AeadImpl, CipherSuite, Key, SenderContext } from "hpke";
 import { bhttpDecoder, bhttpEncoder } from "./bhttp.js";
 import {
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
+	DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
 	kAead,
 	kAeadKey,
 	kAeadNonce,
@@ -46,7 +48,14 @@ import {
 	streamFromReader,
 	streamOfBytes,
 } from "./streaming.js";
-import { asOwnedBytes, concat, createChunkBudget, resolveMaxMessageSize } from "./utils.js";
+import {
+	asOwnedBytes,
+	assertMessageSize,
+	collectLimitedBody,
+	concat,
+	createChunkBudget,
+	resolveMaxMessageSize,
+} from "./utils.js";
 
 /**
  * Options for OHTTP client
@@ -58,6 +67,8 @@ export interface OHTTPClientOptions {
 	readonly responseLabel?: string;
 	/** Crypto factory overrides for response decryption (default: resolved from the suite) */
 	readonly responseCrypto?: ResponseCrypto;
+	/** Maximum Binary HTTP bytes in one request or response. @default 1048576 */
+	readonly maxMessageSize?: number;
 }
 
 /**
@@ -201,6 +212,7 @@ export class OHTTPClient {
 	readonly #requestLabel: string;
 	readonly #responseLabel: string;
 	readonly #responseCrypto: ResponseCrypto | undefined;
+	readonly maxMessageSize: number;
 
 	/**
 	 * Create an OHTTP client
@@ -216,6 +228,9 @@ export class OHTTPClient {
 		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
+		this.maxMessageSize = resolveMaxMessageSize(
+			options.maxMessageSize ?? DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
+		);
 
 		// Validate and extract cipher suite IDs
 		const rawKdfId = suite.KDF.id;
@@ -240,6 +255,7 @@ export class OHTTPClient {
 	 * @returns The encapsulated request bytes and context for decrypting the response
 	 */
 	async encapsulate(request: Uint8Array): Promise<EncapsulatedRequest> {
+		assertMessageSize(request, this.maxMessageSize);
 		this.#importedPublicKey ??= this.#suite
 			.DeserializePublicKey(this.#keyConfig.publicKey)
 			.catch((err: unknown) => {
@@ -264,9 +280,17 @@ export class OHTTPClient {
 		// Create client context
 		const responseLabel = this.#responseLabel;
 		const responseCrypto = this.#responseCrypto;
+		const maxMessageSize = this.maxMessageSize;
 		const context: ClientContext = {
 			async decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
-				return decapsulateResponse(ctx, encapsulatedResponse, responseLabel, responseCrypto);
+				const response = await decapsulateResponse(
+					ctx,
+					encapsulatedResponse,
+					responseLabel,
+					responseCrypto,
+				);
+				assertMessageSize(response, maxMessageSize);
+				return response;
 			},
 		};
 
@@ -296,8 +320,13 @@ export class OHTTPClient {
 		// Encode request to Binary HTTP
 		let binaryRequest: Uint8Array;
 		try {
-			binaryRequest = await bhttpEncoder().encodeRequest(request);
-		} catch {
+			binaryRequest = await bhttpEncoder().encodeRequest(request, {
+				maxMessageSize: this.maxMessageSize,
+			});
+		} catch (error) {
+			if (error instanceof MessageLimitExceededError) {
+				throw new OHTTPError(OHTTPErrorCode.MessageTooLarge);
+			}
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
@@ -305,6 +334,8 @@ export class OHTTPClient {
 		const { encapsulatedRequest, context: bytesContext } = await this.encapsulate(binaryRequest);
 
 		// Create HTTP context
+		const maxEncapsulatedResponseSize =
+			this.maxMessageSize + getResponseNonceLength(this.#suite) + AEAD_TAG_SIZE;
 		const context: HttpClientContext = {
 			async decapsulateResponse(response: Response): Promise<Response> {
 				// Validate content type
@@ -314,11 +345,17 @@ export class OHTTPClient {
 				}
 
 				// Read and decrypt
-				const encapsulatedResponse = new Uint8Array(await response.arrayBuffer());
+				const encapsulatedResponse = await collectLimitedBody(
+					response,
+					maxEncapsulatedResponseSize,
+				);
 				let binaryResponse: Uint8Array;
 				try {
 					binaryResponse = await bytesContext.decryptResponse(encapsulatedResponse);
-				} catch {
+				} catch (error) {
+					if (error instanceof OHTTPError && error.code === OHTTPErrorCode.MessageTooLarge) {
+						throw error;
+					}
 					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 				}
 

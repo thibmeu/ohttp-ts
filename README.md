@@ -168,6 +168,9 @@ const { encapsulatedRequest, context } = await client.encapsulate(binaryHttpByte
 const { request: binaryBytes, context: serverCtx } = await gateway.decapsulate(encapsulatedRequest);
 ```
 
+Normal OHTTP limits each Binary HTTP message to 1 MiB by default. Pass
+`{ maxMessageSize }` to the client and gateway to use a different limit.
+
 See [`examples/bhttp.example.ts`](examples/bhttp.example.ts) for a complete example.
 
 ### Chunked OHTTP (Streaming)
@@ -338,7 +341,7 @@ the library avoids contradictory settings at the client and gateway.
 
 Every failure is an `OHTTPError` carrying a code: `InvalidKeyConfig`,
 `UnknownKeyId`, `UnsupportedCipherSuite`, `DecryptionFailed`,
-`EncryptionFailed`, `InvalidMessage`, and the two chunked sequence codes. Keep
+`EncryptionFailed`, `InvalidMessage`, and the sequence and size limit codes. Keep
 that detail for your own logs and answer the relay with a plain 400, as
 [RFC 9458 Section 4.3](https://www.rfc-editor.org/rfc/rfc9458.html#name-request-decapsulation)
 requires of any decapsulation failure:
@@ -348,6 +351,10 @@ import { isOHTTPError } from "ohttp-ts";
 
 try {
   const { request, context } = await gateway.decapsulateRequest(ohttpRequest);
+  // The client chooses this URL. The gateway MUST check it before fetching.
+  if (new URL(request.url).host !== "example.com") {
+    return new Response(null, { status: 400 });
+  }
   return await context.encapsulateResponse(await fetch(request));
 } catch (err) {
   if (isOHTTPError(err)) return new Response(null, { status: 400 });

@@ -121,8 +121,8 @@ import {
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
 	DEFAULT_MAX_CHUNK_SIZE,
+	DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
-	DEFAULT_MAX_MESSAGE_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	FINAL_CHUNK_AAD,
@@ -145,7 +145,7 @@ export const Labels = {
 	/** Standard maximum ciphertext frame accepted (16384-byte chunk plus tag) */
 	DEFAULT_MAX_FRAME_SIZE,
 	/** Default aggregate plaintext limit for one chunked message (1 GiB) */
-	DEFAULT_MAX_MESSAGE_SIZE,
+	DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 } as const;
 
 // ============================================================================

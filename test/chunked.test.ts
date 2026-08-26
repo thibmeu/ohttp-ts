@@ -565,17 +565,17 @@ describe("message size policy", () => {
 	it("enforces the configured aggregate plaintext limit", async () => {
 		const { priv, pub } = await keyConfigs();
 		const client = new ChunkedOHTTPClient(suite(), pub, { maxMessageSize: 3 });
-		await expect(client.encapsulate(new Uint8Array(4))).rejects.toThrow(/CHUNK_LIMIT_EXCEEDED/);
+		await expect(client.encapsulate(new Uint8Array(4))).rejects.toThrow(/MESSAGE_TOO_LARGE/);
 
 		const context = await client.createRequestContext();
 		await context.sealChunk(new Uint8Array(2));
-		await expect(context.sealFinalChunk(new Uint8Array(2))).rejects.toThrow(/CHUNK_LIMIT_EXCEEDED/);
+		await expect(context.sealFinalChunk(new Uint8Array(2))).rejects.toThrow(/MESSAGE_TOO_LARGE/);
 
 		const unrestrictedClient = new ChunkedOHTTPClient(suite(), pub);
 		const limitedServer = new ChunkedOHTTPServer([priv], { maxMessageSize: 3 });
 		const { encapsulatedRequest } = await unrestrictedClient.encapsulate(new Uint8Array(4));
 		await expect(limitedServer.decapsulate(encapsulatedRequest)).rejects.toThrow(
-			/CHUNK_LIMIT_EXCEEDED/,
+			/MESSAGE_TOO_LARGE/,
 		);
 	});
 });
