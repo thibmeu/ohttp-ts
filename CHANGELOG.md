@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Updated to `bhttp-ts` 0.5.4.
+- Development scripts now use Node.js's native TypeScript support, removing the `tsx` dependency.
 - Internal class state now uses native private fields.
 - Incremental header references now use RFC 10036.
 - Gateway examples validate client-provided URLs before fetching them.
