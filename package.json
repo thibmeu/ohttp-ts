@@ -4,13 +4,10 @@
 	"description": "Oblivious HTTP (RFC 9458) implementation with chunked extension support",
 	"type": "module",
 	"sideEffects": false,
-	"main": "./dist/index.mjs",
-	"module": "./dist/index.mjs",
 	"types": "./dist/index.d.mts",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.mts",
-			"import": "./dist/index.mjs",
 			"default": "./dist/index.mjs"
 		}
 	},
