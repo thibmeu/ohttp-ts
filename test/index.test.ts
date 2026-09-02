@@ -1,6 +1,8 @@
+import * as hpke from "hpke";
 import { describe, expect, it } from "vitest";
 import * as constants from "../src/constants.js";
 import * as incremental from "../src/incremental.js";
+import * as publicEntry from "../src/index.js";
 import { Incremental, KeyConfig, Labels } from "../src/index.js";
 import * as keyConfig from "../src/keyConfig.js";
 
@@ -23,5 +25,16 @@ describe("public entry namespaces", () => {
 			// not a stale copy or a lookalike.
 			expect(Object.values(module)).toContain(value);
 		}
+	});
+
+	it("does not re-export hpke values", () => {
+		// A peer supplies types and runtime collaborators to ohttp-ts; it must not
+		// become a second public entry point for hpke itself.
+		const hpkeExports = new Set(Object.values(hpke));
+		const reexported = Object.entries(publicEntry)
+			.filter(([, value]) => hpkeExports.has(value))
+			.map(([name]) => name);
+
+		expect(reexported).toEqual([]);
 	});
 });
