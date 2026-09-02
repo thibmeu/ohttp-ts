@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" height="288" width="480" viewBox="0 0 480 288" class="aasvg">
+<style>
+.aasvg { color-scheme: light dark; --aasvg-b: light-dark(black, white); --aasvg-w: light-dark(white, black);
+* { fill: none; stroke: var(--aasvg-b); stroke-linecap: round; }
+.dashed { stroke-dasharray: 3,6; }
+text { font: 13px monospace; text-anchor: middle; fill: var(--aasvg-b); stroke: none; }
+text.b { font-weight: 700; }
+text.i { font-style: italic; }
+polygon.arrowhead, .triangle { fill: var(--aasvg-b); stroke: none; }
+}
+</style>
+<text class="ascii" display="none"><![CDATA[
++---------+       +-------+       +---------+    +--------+
+| Client  |       | Relay |       | Gateway |    | Target |
++----+----+       +---+---+       +----+----+    +---+----+
+     |                |                |             |
+     | Encapsulated   |                |             |
+     | Request        |                |             |
+     +--------------->| Forward        |             |
+     |                +--------------->| Decrypt &   |
+     |                |                | Forward     |
+     |                |                +------------>|
+     |                |                |             |
+     |                |                |<------------+
+     |                |                | Encrypt     |
+     |                |<---------------+ Response    |
+     |<---------------+                |             |
+     | Decapsulated   |                |             |
+     | Response       |                |             |
+]]></text>
+<path d="M 8,16L 8,48"/>
+<path d="M 48,48L 48,272"/>
+<path d="M 88,16L 88,48"/>
+<path d="M 152,16L 152,48"/>
+<path d="M 184,48L 184,272"/>
+<path d="M 216,16L 216,48"/>
+<path d="M 280,16L 280,48"/>
+<path d="M 320,48L 320,272"/>
+<path d="M 360,16L 360,48"/>
+<path d="M 400,16L 400,48"/>
+<path d="M 432,48L 432,272"/>
+<path d="M 472,16L 472,48"/>
+<path d="M 8,16L 88,16"/>
+<path d="M 152,16L 216,16"/>
+<path d="M 280,16L 360,16"/>
+<path d="M 400,16L 472,16"/>
+<path d="M 8,48L 88,48"/>
+<path d="M 152,48L 216,48"/>
+<path d="M 280,48L 360,48"/>
+<path d="M 400,48L 472,48"/>
+<path d="M 48,112L 182.81765,112"/>
+<path d="M 184,128L 318.81765,128"/>
+<path d="M 320,160L 430.81765,160"/>
+<path d="M 321.18235,192L 432,192"/>
+<path d="M 185.18235,224L 320,224"/>
+<path d="M 49.18235,240L 184,240"/>
+<polygon class="arrowhead" points="432,160 420,154.4 420,165.6"/>
+<polygon class="arrowhead" points="320,192 332,197.6 332,186.4"/>
+<polygon class="arrowhead" points="320,128 308,122.4 308,133.6"/>
+<polygon class="arrowhead" points="184,224 196,229.6 196,218.4"/>
+<polygon class="arrowhead" points="184,112 172,106.4 172,117.6"/>
+<polygon class="arrowhead" points="48,240 60,245.6 60,234.4"/>
+<g class="text">
+<text x="44" y="36">Client</text>
+<text x="184" y="36">Relay</text>
+<text x="320" y="36">Gateway</text>
+<text x="436" y="36">Target</text>
+<text x="108" y="84">Encapsulated</text>
+<text x="88" y="100">Request</text>
+<text x="224" y="116">Forward</text>
+<text x="368" y="132">Decrypt &amp;</text>
+<text x="360" y="148">Forward</text>
+<text x="360" y="212">Encrypt</text>
+<text x="364" y="228">Response</text>
+<text x="108" y="260">Decapsulated</text>
+<text x="92" y="276">Response</text>
+</g>
+</svg>
