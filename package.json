@@ -67,8 +67,10 @@
 	"homepage": "https://github.com/thibmeu/ohttp-ts#readme",
 	"dependencies": {
 		"bhttp-ts": "0.5.4",
-		"hpke": "1.1.4",
 		"quicvarint": "0.2.1"
+	},
+	"peerDependencies": {
+		"hpke": "^1"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",
@@ -85,6 +87,7 @@
 		"esbuild": "0.28.2",
 		"esbuild-visualizer": "0.7.0",
 		"fast-check": "4.9.0",
+		"hpke": "1.1.4",
 		"publint": "0.3.24",
 		"tsdown": "0.22.14",
 		"typescript": "7.0.2",

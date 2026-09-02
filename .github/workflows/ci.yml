@@ -36,3 +36,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+
+  hpke-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install oldest supported hpke
+        run: npm install --no-save hpke@1.0.0
+      - name: Verify hpke version
+        run: node -e "const version = require('hpke/package.json').version; console.log(version); if (version !== '1.0.0') process.exit(1)"
+      - run: npm run typecheck
+      - run: npm test
