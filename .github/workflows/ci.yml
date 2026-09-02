@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24, 26]
+        node-version: [22, 24, 26]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7
@@ -25,15 +25,21 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - if: matrix.node-version != 20
-        run: npm run build
-      - if: matrix.node-version == 24
-        run: npm run check:package
-      - if: matrix.node-version == 24
-        run: npm run check:treeshake
-      - if: matrix.node-version == 24
-        run: npm run examples
       - run: npm test
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check:package
+      - run: npm run check:treeshake
+      - run: npm run examples
 
   lint:
     runs-on: ubuntu-latest
