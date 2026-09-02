@@ -1,7 +1,7 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-	format: ["esm", "cjs"],
+	format: ["esm"],
 	target: "es2022",
 	// Maps without inlined sourcesContent, paired with src/ in "files": the
 	// source ships once instead of once per format, and debuggers still resolve
