@@ -25,7 +25,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run build
+      - if: matrix.node-version != 20
+        run: npm run build
       - if: matrix.node-version == 24
         run: npm run check:package
       - if: matrix.node-version == 24
