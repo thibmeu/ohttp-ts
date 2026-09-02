@@ -34,7 +34,7 @@
 		"bench:backpressure": "node --expose-gc bench/backpressure.ts",
 		"bench:profile": "node bench/profile.ts",
 		"bench:trace": "node bench/trace.ts",
-		"check:package": "publint && attw --pack",
+		"check:package": "publint && attw --pack --profile esm-only",
 		"check:treeshake": "node tools/check-treeshake.ts",
 		"size": "node tools/size.ts",
 		"metrics": "node tools/metrics.ts",
