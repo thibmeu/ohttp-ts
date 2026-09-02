@@ -131,23 +131,7 @@ it used.
 
 ### Protocol Flow
 
-```mermaid
-%%{init: {"theme": "neutral"}}%%
-sequenceDiagram
-    participant Client
-    participant Relay
-    participant Gateway
-    participant Target
-
-    Client->>Client: Encapsulate request
-    Client->>Relay: Encapsulated request
-    Relay->>Gateway: Forward
-    Gateway->>Target: Decrypt and forward
-    Target-->>Gateway: Response
-    Gateway-->>Relay: Encrypt response
-    Relay-->>Client: Encapsulated response
-    Client->>Client: Decapsulate response
-```
+![OHTTP protocol flow](docs/protocol-flow.svg)
 
 This library encapsulates and decapsulates; it never sends anything. Each hop
 is a `fetch()` you make yourself, which is what keeps relay and gateway
