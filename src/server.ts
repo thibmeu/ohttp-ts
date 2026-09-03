@@ -431,7 +431,7 @@ export class ChunkedOHTTPServer {
 		const responseCrypto = this.#responseCrypto;
 		const maxMessageSize = this.maxMessageSize;
 
-		let requestFinished = false;
+		let requestState: "open" | "final-pending" | "finished" | "failed" = "open";
 		const claimRequest = createChunkBudget(maxMessageSize);
 
 		return {
@@ -441,7 +441,7 @@ export class ChunkedOHTTPServer {
 			[kSuite]: suite,
 
 			async openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
-				if (requestFinished) {
+				if (requestState !== "open") {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
 				if (ciphertext.length < AEAD_TAG_SIZE || ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
@@ -451,27 +451,26 @@ export class ChunkedOHTTPServer {
 				try {
 					return asOwnedBytes(await recipientContext.Open(ciphertext));
 				} catch {
+					requestState = "failed";
 					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 				}
 			},
 
 			async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
-				if (requestFinished) {
+				if (requestState !== "open") {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
 				if (ciphertext.length < AEAD_TAG_SIZE || ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 				}
 				claimRequest(ciphertext.length - AEAD_TAG_SIZE, true);
+				requestState = "final-pending";
 				try {
-					// Unlike the response contexts, the flag is claimed after the await on
-					// purpose: the HPKE context carries its own sequence number, so no two
-					// opens can share a nonce, and a chunk that fails to decrypt should
-					// leave the context usable rather than wedged as finished.
 					const pt = asOwnedBytes(await recipientContext.Open(ciphertext, FINAL_CHUNK_AAD));
-					requestFinished = true;
+					requestState = "finished";
 					return pt;
 				} catch {
+					requestState = "failed";
 					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 				}
 			},
