@@ -264,7 +264,12 @@ export class OHTTPServer {
 	 * @returns The decrypted request bytes and context for encrypting the response
 	 */
 	async decapsulate(encapsulatedRequest: Uint8Array): Promise<DecapsulatedRequest> {
-		const ctx = await decapsulateRequest(encapsulatedRequest, this.#keyConfigs, this.#requestLabel);
+		const ctx = await decapsulateRequest(
+			encapsulatedRequest,
+			this.#keyConfigs,
+			this.#requestLabel,
+			this.maxMessageSize,
+		);
 		assertMessageSize(ctx.request, this.maxMessageSize);
 
 		const responseLabel = this.#responseLabel;
