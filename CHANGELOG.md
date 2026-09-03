@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - The package now publishes ESM only.
 - `hpke` is now a peer dependency. Package managers that do not install peers automatically require `hpke` 1.x to be installed alongside `ohttp-ts`.
 
+### Security
+
+- Chunked request and response streams are cancelled and unlocked when header or nonce setup fails before reader handoff.
+- Manual server request contexts claim final chunks synchronously and become unusable after authentication failure, preventing concurrent calls from passing the final-chunk state check.
+- Buffered byte APIs reject oversized request and response ciphertexts before HPKE setup, key derivation, or AEAD authentication.
+
 ## [0.5.2] - 2026-08-26
 
 ### Breaking changes
