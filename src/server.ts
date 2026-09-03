@@ -620,49 +620,61 @@ export class ChunkedOHTTPServer {
 		if (signal.aborted) abort();
 		else signal.addEventListener("abort", abort, { once: true });
 		let buffer = new Uint8Array(0);
+		let ciphertextStream: ReadableStream<Uint8Array>;
+		let decryptTransform: ReturnType<typeof createRequestDecryptTransform>;
+		let requestCtx: ChunkedServerRequestContext;
 
-		// Read until we have the header (7 bytes + Nenc)
-		// We need at least 7 bytes to know the KEM ID, then we can compute header size
-		while (buffer.length < 7) {
-			const { done, value } = await reader.read();
-			if (done) {
-				if (signal.aborted) throw signal.reason;
-				throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+		try {
+			// Read until we have the header (7 bytes + Nenc)
+			// We need at least 7 bytes to know the KEM ID, then we can compute header size
+			while (buffer.length < 7) {
+				const { done, value } = await reader.read();
+				if (done) {
+					if (signal.aborted) throw signal.reason;
+					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+				}
+				buffer = concat(buffer, value);
 			}
-			buffer = concat(buffer, value);
-		}
 
-		// Parse header to get KEM ID and compute full header size
-		const kemId = ((buffer[1] ?? 0) << 8) | (buffer[2] ?? 0);
-		const encLength = getEncLength(kemId);
-		const headerSize = 7 + encLength;
+			// Parse header to get KEM ID and compute full header size
+			const kemId = ((buffer[1] ?? 0) << 8) | (buffer[2] ?? 0);
+			const encLength = getEncLength(kemId);
+			const headerSize = 7 + encLength;
 
-		// Read until we have the full header
-		while (buffer.length < headerSize) {
-			const { done, value } = await reader.read();
-			if (done) {
-				if (signal.aborted) throw signal.reason;
-				throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+			// Read until we have the full header
+			while (buffer.length < headerSize) {
+				const { done, value } = await reader.read();
+				if (done) {
+					if (signal.aborted) throw signal.reason;
+					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+				}
+				buffer = concat(buffer, value);
 			}
-			buffer = concat(buffer, value);
+
+			const headerBytes = buffer.subarray(0, headerSize);
+			const remainder = buffer.subarray(headerSize);
+
+			// Create request context from header
+			requestCtx = await this.createRequestContext(headerBytes);
+
+			// Create decrypt transform
+			decryptTransform = createRequestDecryptTransform(
+				requestCtx[kRecipientContext],
+				DEFAULT_MAX_FRAME_SIZE,
+				this.maxMessageSize,
+			);
+
+			// Create a stream from remainder + rest of request body
+			ciphertextStream = streamFromReader(reader, remainder, signal);
+		} catch (error) {
+			try {
+				await reader.cancel(error);
+			} catch {}
+			reader.releaseLock();
+			throw error;
+		} finally {
+			signal.removeEventListener("abort", abort);
 		}
-
-		const headerBytes = buffer.subarray(0, headerSize);
-		const remainder = buffer.subarray(headerSize);
-
-		// Create request context from header
-		const requestCtx = await this.createRequestContext(headerBytes);
-
-		// Create decrypt transform
-		const decryptTransform = createRequestDecryptTransform(
-			requestCtx[kRecipientContext],
-			DEFAULT_MAX_FRAME_SIZE,
-			this.maxMessageSize,
-		);
-
-		// Create a stream from remainder + rest of request body
-		signal.removeEventListener("abort", abort);
-		const ciphertextStream = streamFromReader(reader, remainder, signal);
 
 		// Decrypt stream
 		const plaintextStream = ciphertextStream.pipeThrough(decryptTransform);
