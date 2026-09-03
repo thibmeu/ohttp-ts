@@ -281,8 +281,13 @@ export class OHTTPClient {
 		const responseLabel = this.#responseLabel;
 		const responseCrypto = this.#responseCrypto;
 		const maxMessageSize = this.maxMessageSize;
+		const maxEncapsulatedResponseSize =
+			maxMessageSize + getResponseNonceLength(this.#suite) + AEAD_TAG_SIZE;
 		const context: ClientContext = {
 			async decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+				if (encapsulatedResponse.length > maxEncapsulatedResponseSize) {
+					throw new OHTTPError(OHTTPErrorCode.MessageTooLarge);
+				}
 				const response = await decapsulateResponse(
 					ctx,
 					encapsulatedResponse,

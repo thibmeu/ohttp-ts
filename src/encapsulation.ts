@@ -377,9 +377,13 @@ export async function decapsulateRequest(
 	encapsulatedRequest: Uint8Array,
 	keyConfigs: readonly KeyConfigWithPrivate[],
 	label: string = DEFAULT_REQUEST_LABEL,
+	maxMessageSize = Number.MAX_SAFE_INTEGER,
 ): Promise<ServerEncapsulationContext> {
 	// Parse the header
 	const { header, offset } = parseRequestHeader(encapsulatedRequest);
+	if (encapsulatedRequest.length > offset + maxMessageSize + AEAD_TAG_SIZE) {
+		throw new OHTTPError(OHTTPErrorCode.MessageTooLarge);
+	}
 
 	// Find the matching key config
 	const keyConfig = keyConfigs.find((k) => k.keyId === header.keyId);

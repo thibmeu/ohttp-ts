@@ -14,7 +14,7 @@ import {
 	KEM_DHKEM_P256_HKDF_SHA256,
 	KEM_DHKEM_X25519_HKDF_SHA256,
 } from "hpke";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OHTTPClient } from "../src/client.js";
 import { MediaType } from "../src/constants.js";
 import {
@@ -58,8 +58,22 @@ describe("OHTTP round-trip", () => {
 	it("enforces maxMessageSize in both directions", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 		const keyConfig = await generateKeyConfig(suite, 1);
+		let extracts = 0;
+		const responseKdf = KDF_HKDF_SHA256();
 		const client = new OHTTPClient(suite, parseKeyConfig(serializeKeyConfig(keyConfig)), {
 			maxMessageSize: 3,
+			responseCrypto: {
+				kdf: () =>
+					new Proxy(responseKdf, {
+						get(target, property) {
+							if (property !== "Extract") return Reflect.get(target, property);
+							return (...args: Parameters<typeof target.Extract>) => {
+								extracts++;
+								return target.Extract(...args);
+							};
+						},
+					}),
+			},
 		});
 		const server = new OHTTPServer([keyConfig], { maxMessageSize: 3 });
 
@@ -71,9 +85,11 @@ describe("OHTTP round-trip", () => {
 			parseKeyConfig(serializeKeyConfig(keyConfig)),
 			{ maxMessageSize: 4 },
 		).encapsulate(new Uint8Array(4));
+		const setupRecipient = vi.spyOn(suite, "SetupRecipient");
 		await expect(server.decapsulate(oversizedRequest.encapsulatedRequest)).rejects.toThrow(
 			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
 		);
+		expect(setupRecipient).not.toHaveBeenCalled();
 		const { encapsulatedRequest, context } = await client.encapsulate(new Uint8Array(3));
 		const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
 		await expect(serverContext.encryptResponse(new Uint8Array(4))).rejects.toThrow(
@@ -85,6 +101,7 @@ describe("OHTTP round-trip", () => {
 		await expect(context.decryptResponse(oversizedResponse)).rejects.toThrow(
 			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
 		);
+		expect(extracts).toBe(0);
 	});
 
 	it("limits buffered HTTP bodies and cancels oversized inputs", async () => {
