@@ -14,7 +14,12 @@ import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it } from "vitest";
 import { bhttpEncoder } from "../src/bhttp.js";
 import { ChunkedOHTTPClient } from "../src/client.js";
-import { CHUNKED_REQUEST_LABEL, kRecipientContext, MediaType } from "../src/constants.js";
+import {
+	CHUNKED_REQUEST_LABEL,
+	kRecipientContext,
+	kSenderContext,
+	MediaType,
+} from "../src/constants.js";
 import {
 	buildRequestInfo,
 	computeChunkNonce,
@@ -367,6 +372,7 @@ describe("chunk sequence guard", () => {
 
 		return {
 			spare,
+			spareReq,
 			spareSealed,
 			// [name, another final chunk, a further non-final chunk]
 			contexts: [
@@ -403,13 +409,25 @@ describe("chunk sequence guard", () => {
 		}
 	});
 
-	it("stays open when the final chunk fails to decrypt", async () => {
+	it("fails closed when the final chunk fails to decrypt", async () => {
 		const { spare, spareSealed } = await finishedContexts();
 		const tampered = Uint8Array.from(spareSealed);
 		tampered[0] ^= 0x01;
 
 		await expect(spare.openFinalChunk(tampered)).rejects.toThrow(OHTTPErrorCode.DecryptionFailed);
-		expect(await spare.openFinalChunk(spareSealed)).toEqual(data);
+		await expect(spare.openFinalChunk(spareSealed)).rejects.toThrow(
+			OHTTPErrorCode.ChunkSequenceError,
+		);
+	});
+
+	it("claims the final request chunk synchronously", async () => {
+		const { spare, spareReq, spareSealed } = await finishedContexts();
+		const extra = await spareReq[kSenderContext].Seal(data);
+
+		const final = spare.openFinalChunk(spareSealed);
+
+		await expect(spare.openChunk(extra)).rejects.toThrow(OHTTPErrorCode.ChunkSequenceError);
+		expect(await final).toEqual(data);
 	});
 });
 
