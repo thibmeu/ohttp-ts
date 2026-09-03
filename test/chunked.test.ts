@@ -1706,6 +1706,53 @@ describe("cancelling a peer that keeps sending", () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 
+	it("cancels and unlocks a request rejected during header setup", async () => {
+		const keyConfig = await generateKeyConfig(suite(), 1);
+		const header = (await new ChunkedOHTTPClient(suite(), keyConfig).createRequestContext()).header;
+		header[0] = 2;
+		const source = chattyBody([header]);
+		const request = new Request("https://gateway.example.com/", {
+			method: "POST",
+			headers: { "Content-Type": MediaType.CHUNKED_REQUEST },
+			body: source.body,
+			duplex: "half",
+		} as RequestInit & { duplex: "half" });
+
+		await expect(new ChunkedOHTTPServer([keyConfig]).decapsulateRequest(request)).rejects.toThrow(
+			OHTTPErrorCode.UnknownKeyId,
+		);
+
+		expect(source.cancelled).toBe(true);
+		expect(request.body?.locked).toBe(false);
+	});
+
+	it("cancels and unlocks a response when key derivation fails", async () => {
+		const failure = new Error("KDF failed");
+		const kdf = KDF_HKDF_SHA256();
+		const keyConfig = await generateKeyConfig(suite(), 1);
+		const client = new ChunkedOHTTPClient(suite(), keyConfig, {
+			responseCrypto: {
+				kdf: () =>
+					new Proxy(kdf, {
+						get: (target, property) =>
+							property === "Extract"
+								? async () => Promise.reject(failure)
+								: Reflect.get(target, property),
+					}),
+			},
+		});
+		const { context } = await client.encapsulateRequest(new Request("https://target.example.com/"));
+		const source = chattyBody([new Uint8Array(16)]);
+		const response = new Response(source.body, {
+			headers: { "Content-Type": MediaType.CHUNKED_RESPONSE },
+		});
+
+		await expect(context.decapsulateResponse(response)).rejects.toBe(failure);
+
+		expect(source.cancelled).toBe(true);
+		expect(response.body?.locked).toBe(false);
+	});
+
 	it("cancels the request body when the inner bhttp is malformed", async () => {
 		const serverKeyConfig = await generateKeyConfig(suite(), 1);
 		const client = new ChunkedOHTTPClient(

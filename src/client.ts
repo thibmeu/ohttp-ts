@@ -700,42 +700,53 @@ export class ChunkedOHTTPClient {
 				if (signal?.aborted) abort();
 				else signal?.addEventListener("abort", abort, { once: true });
 				let buffer = new Uint8Array(0);
+				let ciphertextStream: ReadableStream<Uint8Array>;
+				let decryptTransform: ReturnType<typeof createResponseDecryptTransform>;
 
-				// Read until we have the nonce
-				while (buffer.length < nonceLength) {
-					const { done, value } = await reader.read();
-					if (done) {
-						if (signal?.aborted) throw signal.reason;
-						throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+				try {
+					// Read until we have the nonce
+					while (buffer.length < nonceLength) {
+						const { done, value } = await reader.read();
+						if (done) {
+							if (signal?.aborted) throw signal.reason;
+							throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+						}
+						buffer = concat(buffer, value);
 					}
-					buffer = concat(buffer, value);
+
+					const responseNonce = buffer.subarray(0, nonceLength);
+					const remainder = buffer.subarray(nonceLength);
+
+					// Derive response keys
+					const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
+						suite,
+						requestCtx[kSenderContext],
+						requestCtx[kEnc],
+						responseNonce,
+						responseLabel,
+						responseCrypto,
+					);
+
+					// Create decrypt transform
+					decryptTransform = createResponseDecryptTransform(
+						aead,
+						aeadKey,
+						aeadNonce,
+						DEFAULT_MAX_FRAME_SIZE,
+						maxMessageSize,
+					);
+
+					// Create a stream from remainder + rest of response
+					ciphertextStream = streamFromReader(reader, remainder, signal);
+				} catch (error) {
+					try {
+						await reader.cancel(error);
+					} catch {}
+					reader.releaseLock();
+					throw error;
+				} finally {
+					signal?.removeEventListener("abort", abort);
 				}
-
-				const responseNonce = buffer.subarray(0, nonceLength);
-				const remainder = buffer.subarray(nonceLength);
-
-				// Derive response keys
-				const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
-					suite,
-					requestCtx[kSenderContext],
-					requestCtx[kEnc],
-					responseNonce,
-					responseLabel,
-					responseCrypto,
-				);
-
-				// Create decrypt transform
-				const decryptTransform = createResponseDecryptTransform(
-					aead,
-					aeadKey,
-					aeadNonce,
-					DEFAULT_MAX_FRAME_SIZE,
-					maxMessageSize,
-				);
-
-				// Create a stream from remainder + rest of response
-				signal?.removeEventListener("abort", abort);
-				const ciphertextStream = streamFromReader(reader, remainder, signal);
 
 				// Decrypt stream
 				const plaintextStream = ciphertextStream.pipeThrough(decryptTransform);
