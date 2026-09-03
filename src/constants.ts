@@ -35,6 +35,11 @@ export const MediaType = {
 
 export type MediaType = (typeof MediaType)[keyof typeof MediaType];
 
+/** Match an OHTTP media type case-insensitively. Parameters are not accepted. */
+export function isMediaType(value: string | null, expected: MediaType): boolean {
+	return value?.toLowerCase() === expected;
+}
+
 /**
  * Default labels for OHTTP request/response (RFC 9458 Section 4.3-4.4)
  */

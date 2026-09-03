@@ -26,35 +26,17 @@ export function serializeIncremental(incremental: boolean): string {
 /**
  * Parse an Incremental header value
  *
- * Accepts structured field boolean format:
- * - "?1" or "?1" with parameters → true
- * - "?0" or "?0" with parameters → false
- * - Invalid/unknown values → undefined
+ * Accepts only the canonical "?1" and "?0" values.
+ *
+ * Structured Fields parameters are not supported. Incremental is advisory, so
+ * unsupported or malformed values return undefined.
  *
  * @param value - The header value string
  * @returns true/false if valid boolean, undefined if invalid
  */
 export function parseIncremental(value: string): boolean | undefined {
-	const trimmed = value.trim();
-
-	// Per RFC 9651 Section 3.3.6, boolean is "?" followed by "0" or "1"
-	// Parameters may follow after ";"
-	if (trimmed.startsWith("?1")) {
-		// Check for valid continuation (end of string, whitespace, or parameters)
-		const rest = trimmed.slice(2);
-		if (rest === "" || rest.startsWith(";") || /^\s/.test(rest)) {
-			return true;
-		}
-	}
-
-	if (trimmed.startsWith("?0")) {
-		const rest = trimmed.slice(2);
-		if (rest === "" || rest.startsWith(";") || /^\s/.test(rest)) {
-			return false;
-		}
-	}
-
-	// Invalid format
+	if (value === "?1") return true;
+	if (value === "?0") return false;
 	return undefined;
 }
 

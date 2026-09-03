@@ -28,15 +28,14 @@ describe("parseIncremental", () => {
 		expect(parseIncremental("?0")).toBe(false);
 	});
 
-	it("handles leading/trailing whitespace", () => {
-		expect(parseIncremental("  ?1  ")).toBe(true);
-		expect(parseIncremental("\t?0\t")).toBe(false);
+	it("rejects whitespace", () => {
+		expect(parseIncremental("  ?1  ")).toBeUndefined();
+		expect(parseIncremental("\t?0\t")).toBeUndefined();
 	});
 
-	it("handles parameters after semicolon", () => {
-		// Per RFC 9651, parameters can follow the value
-		expect(parseIncremental("?1;foo=bar")).toBe(true);
-		expect(parseIncremental("?0;baz")).toBe(false);
+	it("rejects parameters", () => {
+		expect(parseIncremental("?1;foo=bar")).toBeUndefined();
+		expect(parseIncremental("?0;baz")).toBeUndefined();
 	});
 
 	it("returns undefined for invalid values", () => {
@@ -49,6 +48,8 @@ describe("parseIncremental", () => {
 		expect(parseIncremental("?2")).toBeUndefined();
 		expect(parseIncremental("?11")).toBeUndefined();
 		expect(parseIncremental("??1")).toBeUndefined();
+		expect(parseIncremental("?1 garbage")).toBeUndefined();
+		expect(parseIncremental("?1;=")).toBeUndefined();
 	});
 
 	it("returns undefined for non-boolean structured field types", () => {
