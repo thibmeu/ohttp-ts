@@ -6,6 +6,7 @@ import {
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
 	DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
+	isMediaType,
 	kAead,
 	kAeadKey,
 	kAeadNonce,
@@ -302,7 +303,7 @@ export class OHTTPServer {
 	async decapsulateRequest(request: Request): Promise<DecapsulatedHttpRequest> {
 		// Validate content type
 		const contentType = request.headers.get("content-type");
-		if (contentType !== MediaType.REQUEST) {
+		if (!isMediaType(contentType, MediaType.REQUEST)) {
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
@@ -609,7 +610,7 @@ export class ChunkedOHTTPServer {
 	): Promise<DecapsulatedChunkedHttpRequest> {
 		// Validate content type
 		const contentType = request.headers.get("content-type");
-		if (contentType !== MediaType.CHUNKED_REQUEST) {
+		if (!isMediaType(contentType, MediaType.CHUNKED_REQUEST)) {
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 

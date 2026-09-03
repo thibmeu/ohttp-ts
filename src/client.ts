@@ -5,6 +5,7 @@ import {
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
 	DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
+	isMediaType,
 	kAead,
 	kAeadKey,
 	kAeadNonce,
@@ -345,7 +346,7 @@ export class OHTTPClient {
 			async decapsulateResponse(response: Response): Promise<Response> {
 				// Validate content type
 				const contentType = response.headers.get("content-type");
-				if (contentType !== MediaType.RESPONSE) {
+				if (!isMediaType(contentType, MediaType.RESPONSE)) {
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
 
@@ -688,7 +689,7 @@ export class ChunkedOHTTPClient {
 			): Promise<Response> {
 				// Validate content type
 				const contentType = response.headers.get("content-type");
-				if (contentType !== MediaType.CHUNKED_RESPONSE) {
+				if (!isMediaType(contentType, MediaType.CHUNKED_RESPONSE)) {
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
 
