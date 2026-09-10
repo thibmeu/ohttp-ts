@@ -2,6 +2,7 @@ import {
 	AEAD_ChaCha20Poly1305 as NobleAEAD_ChaCha20Poly1305,
 	KDF_HKDF_SHA256 as NobleKDF_HKDF_SHA256,
 } from "@panva/hpke-noble";
+import { MessageLimitExceededError } from "bhttp-ts";
 import {
 	AEAD_AES_128_GCM,
 	AEAD_AES_256_GCM,
@@ -26,7 +27,9 @@ import {
 	DEFAULT_MAX_FRAME_SIZE,
 	deriveChunkedResponseKeys,
 	frameChunk,
+	getResponseNonceLength,
 	parseFramedChunk,
+	parseRequestHeader,
 	sealResponseChunk,
 } from "../src/encapsulation.js";
 import { OHTTPError, OHTTPErrorCode } from "../src/errors.js";
@@ -40,6 +43,7 @@ import {
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer } from "../src/server.js";
+import { collectStream } from "../src/streaming.js";
 import { concat } from "../src/utils.js";
 import { hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import chunkedVectors from "./vectors/chunked-ohttp-08.json";
@@ -836,9 +840,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 	}
 
 	async function waitForCancellation(source: { readonly cancelled: boolean }): Promise<void> {
-		for (let i = 0; i < 20 && !source.cancelled; i++) {
-			await new Promise<void>((resolve) => setImmediate(resolve));
-		}
+		await expect.poll(() => source.cancelled).toBe(true);
 	}
 
 	async function observeReadAhead(): Promise<void> {
@@ -1987,3 +1989,148 @@ describe("chunked server request guards", () => {
 		);
 	});
 });
+
+describe("chunked HTTP padding", () => {
+	it("should preserve abort reasons that are BHTTP size-limit errors", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, keyConfig);
+		const server = new ChunkedOHTTPServer([keyConfig]);
+		const reason = new MessageLimitExceededError("caller cancelled");
+		const signal = AbortSignal.abort(reason);
+		const aborted = await client.encapsulateRequest(new Request("https://example.com/"), {
+			signal,
+		});
+		await expect(collectStream(aborted.init.body)).rejects.toBe(reason);
+
+		const { init } = await client.encapsulateRequest(new Request("https://example.com/"));
+		const { context } = await server.decapsulateRequest(
+			new Request("https://gateway.example/", init),
+		);
+		const response = await context.encapsulateResponse(new Response("hello"), { signal });
+		await expect(collectStream(response.body as ReadableStream<Uint8Array>)).rejects.toBe(reason);
+	});
+
+	it("should authenticate padding-only final frames before completing HTTP bodies", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, keyConfig, { padding: 32768 });
+		const server = new ChunkedOHTTPServer([keyConfig], { padding: 32768 });
+		const { init, context } = await client.encapsulateRequest(
+			new Request("https://example.com/", { method: "POST", body: "hello" }),
+		);
+		const bytes = await collectStream(init.body);
+		const received = await server.decapsulateRequest(
+			new Request("https://gateway.example/", { ...init, body: bytes }),
+		);
+		expect(await received.request.text()).toBe("hello");
+		const response = await received.context.encapsulateResponse(new Response("hello"));
+		const responseBytes = await collectStream(response.body as ReadableStream<Uint8Array>);
+
+		// The BHTTP body ends in the first frame; this byte belongs to final padding.
+		bytes[bytes.length - 17] = (bytes[bytes.length - 17] as number) ^ 1;
+		await expect(
+			server
+				.decapsulateRequest(new Request("https://gateway.example/", { ...init, body: bytes }))
+				.then(({ request }) => collectStream(request.body as ReadableStream<Uint8Array>)),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }));
+		responseBytes[responseBytes.length - 17] =
+			(responseBytes[responseBytes.length - 17] as number) ^ 1;
+		await expect(
+			context
+				.decapsulateResponse(new Response(responseBytes, { headers: response.headers }))
+				.then((response) => collectStream(response.body as ReadableStream<Uint8Array>)),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }));
+	});
+
+	it.each([{}, { maxMessageSize: 65536 }, { padding: 0 }, { padding: 8192 }])(
+		"should pad both directions with options %j",
+		async (options) => {
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_AES_128_GCM,
+			);
+			const keyConfig = await generateKeyConfig(suite, 1);
+			const client = new ChunkedOHTTPClient(suite, keyConfig, options);
+			const server = new ChunkedOHTTPServer([keyConfig], options);
+			const body = "x".repeat(20000);
+			const { init, context } = await client.encapsulateRequest(
+				new Request("https://example.com/", { method: "POST", body }),
+			);
+			const request = new Uint8Array(
+				await new Request("https://gateway.example/", init).arrayBuffer(),
+			);
+			const { offset } = parseRequestHeader(request);
+			const finalSize = options.padding === 0 ? undefined : (options.padding ?? 16384);
+			checkPaddedFrames(request.subarray(offset), finalSize);
+			const received = await server.decapsulateRequest(
+				new Request("https://gateway.example/", { ...init, body: request }),
+			);
+			expect(await received.request.text()).toBe(body);
+			const response = await received.context.encapsulateResponse(new Response(body));
+			const responseBytes = new Uint8Array(await response.arrayBuffer());
+			checkPaddedFrames(responseBytes.subarray(getResponseNonceLength(suite)), finalSize);
+			const decoded = await context.decapsulateResponse(
+				new Response(responseBytes, { headers: response.headers }),
+			);
+			expect(await decoded.text()).toBe(body);
+
+			// Changing the final padding bytes must still fail authentication.
+			request[request.length - 17] = (request[request.length - 17] as number) ^ 1;
+			await expect(server.decapsulate(request)).rejects.toThrow(
+				expect.objectContaining({ code: OHTTPErrorCode.DecryptionFailed }),
+			);
+		},
+	);
+
+	it("should reject padding above a custom limit in both directions", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, keyConfig, { maxMessageSize: 16383 });
+		const { init } = await client.encapsulateRequest(new Request("https://example.com/"));
+		await expect(collectStream(init.body)).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+		const unpaddedClient = new ChunkedOHTTPClient(suite, keyConfig, { padding: 0 });
+		const unpadded = await unpaddedClient.encapsulateRequest(new Request("https://example.com/"));
+		const server = new ChunkedOHTTPServer([keyConfig], { maxMessageSize: 16383 });
+		const { context } = await server.decapsulateRequest(
+			new Request("https://gateway.example/", unpadded.init),
+		);
+		const response = await context.encapsulateResponse(new Response("hello"));
+		await expect(collectStream(response.body as ReadableStream<Uint8Array>)).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+	});
+
+	it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+		"should reject padding %s during construction",
+		async (padding) => {
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_AES_128_GCM,
+			);
+			const keyConfig = await generateKeyConfig(suite, 1);
+			expect(() => new ChunkedOHTTPClient(suite, keyConfig, { padding })).toThrow(RangeError);
+			expect(() => new ChunkedOHTTPServer([keyConfig], { padding })).toThrow(RangeError);
+		},
+	);
+});
+
+// Helpers
+
+function checkPaddedFrames(bytes: Uint8Array<ArrayBuffer>, finalSize: number | undefined) {
+	const first = parseFramedChunk(bytes);
+	expect(first).toBeDefined();
+	if (!first) throw new Error("Missing first frame");
+	expect(first.isFinal).toBe(false);
+	expect(first.ciphertext).toHaveLength(16384 + 16);
+	const final = parseFramedChunk(bytes.subarray(first.bytesConsumed));
+	expect(final).toBeDefined();
+	if (!final) throw new Error("Missing final frame");
+	expect(final.isFinal).toBe(true);
+	if (finalSize === undefined) expect(final.ciphertext.length).toBeLessThan(8192 + 16);
+	else expect(final.ciphertext).toHaveLength(finalSize + 16);
+}
