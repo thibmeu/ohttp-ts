@@ -1,6 +1,6 @@
 import { MessageLimitExceededError } from "bhttp-ts";
 import type { AEAD as AeadImpl, CipherSuite, RecipientContext } from "hpke";
-import { bhttpDecoder, bhttpEncoder } from "./bhttp.ts";
+import { bhttpDecoder, bhttpEncoder, mapBhttpEncodingError, resolvePadding } from "./bhttp.ts";
 import type { StreamingRequestInit } from "./client.ts";
 import {
 	DEFAULT_MAX_CHUNK_SIZE,
@@ -66,6 +66,8 @@ import {
  * Options for OHTTP server
  */
 export interface OHTTPServerOptions {
+	/** Pad outgoing BHTTP to a byte multiple; 0 disables padding. HTTP helpers only. @default 1024 */
+	readonly padding?: number;
 	/** Custom request label (default: "message/bhttp request") */
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp response") */
@@ -80,6 +82,8 @@ export interface OHTTPServerOptions {
  * Options for chunked OHTTP server
  */
 export interface ChunkedOHTTPServerOptions {
+	/** Pad outgoing BHTTP to a byte multiple; 0 disables padding. HTTP helpers only. @default 16384 */
+	readonly padding?: number;
 	/** Custom request label (default: "message/bhttp chunked request") */
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp chunked response") */
@@ -231,6 +235,7 @@ export class OHTTPServer {
 	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly #maxEncapsulatedRequestSize: number;
 	readonly maxMessageSize: number;
+	readonly #padding: number;
 
 	/**
 	 * Create an OHTTP server
@@ -248,6 +253,7 @@ export class OHTTPServer {
 		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
+		this.#padding = resolvePadding(options.padding ?? 1024);
 		this.maxMessageSize = resolveMaxMessageSize(
 			options.maxMessageSize ?? DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
 		);
@@ -326,12 +332,16 @@ export class OHTTPServer {
 
 		// Create HTTP context
 		const maxMessageSize = this.maxMessageSize;
+		const padding = this.#padding;
 		const context: HttpServerContext = {
 			async encapsulateResponse(response: Response): Promise<Response> {
 				// Encode response to Binary HTTP
 				let binaryResponse: Uint8Array;
 				try {
-					binaryResponse = await bhttpEncoder().encodeResponse(response, { maxMessageSize });
+					binaryResponse = await bhttpEncoder().encodeResponse(response, {
+						maxMessageSize,
+						padding,
+					});
 				} catch (error) {
 					if (error instanceof MessageLimitExceededError) {
 						throw new OHTTPError(OHTTPErrorCode.MessageTooLarge);
@@ -365,6 +375,7 @@ export class ChunkedOHTTPServer {
 	readonly #responseLabel: string;
 	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly maxMessageSize: number;
+	readonly #padding: number;
 
 	/**
 	 * Create a chunked OHTTP server
@@ -385,6 +396,7 @@ export class ChunkedOHTTPServer {
 		this.#requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
+		this.#padding = resolvePadding(options.padding ?? DEFAULT_MAX_CHUNK_SIZE);
 		this.maxMessageSize = resolveMaxMessageSize(options.maxMessageSize);
 	}
 
@@ -703,6 +715,7 @@ export class ChunkedOHTTPServer {
 
 		const suite = requestCtx[kSuite];
 		const maxMessageSize = this.maxMessageSize;
+		const padding = this.#padding;
 		const responseLabel = this.#responseLabel;
 		const responseCrypto = this.#responseCrypto;
 
@@ -727,7 +740,10 @@ export class ChunkedOHTTPServer {
 				);
 
 				// Encode response to BHTTP stream
-				const bhttpStream = bhttpEncoder().encodeResponseStream(response);
+				const bhttpStream = bhttpEncoder().encodeResponseStream(response, {
+					padding,
+					maxMessageSize,
+				});
 
 				// Create the encryption pipeline
 				const chunkerTransform = createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE);
@@ -745,7 +761,13 @@ export class ChunkedOHTTPServer {
 					.pipeThrough(encryptTransform, signal === undefined ? undefined : { signal });
 
 				// Create output stream that prepends response nonce
-				const finalStream = streamFromReader(encryptedStream.getReader(), responseNonce);
+				const finalStream = streamFromReader(
+					encryptedStream.getReader(),
+					responseNonce,
+					undefined,
+					(error) =>
+						signal?.aborted && error === signal.reason ? error : mapBhttpEncodingError(error),
+				);
 
 				return new Response(finalStream, {
 					status: 200,

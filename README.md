@@ -153,6 +153,23 @@ const { request: binaryBytes, context: serverCtx } = await gateway.decapsulate(e
 Normal OHTTP limits each Binary HTTP message to 1 MiB by default. Pass
 `{ maxMessageSize }` to the client and gateway to use a different limit.
 
+HTTP helpers pad outgoing requests and responses to multiples of 1,024 BHTTP bytes
+by default, or 16,384 bytes for chunked OHTTP. Set `{ padding: 0 }` on the client or
+gateway to disable outgoing padding, or use a positive safe integer for another
+multiple. Setting only `maxMessageSize` keeps the padding default. The limit includes
+padding on both send and receive; a message that cannot fit its padded size fails
+with `MessageTooLarge`. A gateway with `maxMessageSize: 1000` rejects requests from
+a default-configured client, whose smallest padded request is 1,024 bytes. Choose
+sender padding and receiver limits together; they do not need matching padding settings.
+
+For positive `padding`, the sender's effective encoded-message limit is
+`Math.floor(maxMessageSize / padding) * padding`, including BHTTP framing and headers.
+Raw byte APIs preserve the supplied bytes and enforce `maxMessageSize` without rounding.
+
+Chunked padding fills the final plaintext chunk to 16 KiB by default. Authentication
+tags and framing add wire overhead. Padding is appended after the BHTTP trailers;
+it does not hide timing or the number of chunks.
+
 See [`examples/bhttp.example.ts`](examples/bhttp.example.ts) for a complete example.
 
 ### Chunked OHTTP (Streaming)

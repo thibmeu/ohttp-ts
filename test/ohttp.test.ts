@@ -15,6 +15,7 @@ import {
 	KEM_DHKEM_X25519_HKDF_SHA256,
 } from "hpke";
 import { describe, expect, it, vi } from "vitest";
+import { bhttpEncoder } from "../src/bhttp.js";
 import { OHTTPClient } from "../src/client.js";
 import { MediaType } from "../src/constants.js";
 import {
@@ -109,8 +110,9 @@ describe("OHTTP round-trip", () => {
 		const keyConfig = await generateKeyConfig(suite, 1);
 		const client = new OHTTPClient(suite, parseKeyConfig(serializeKeyConfig(keyConfig)), {
 			maxMessageSize: 128,
+			padding: 0,
 		});
-		const server = new OHTTPServer([keyConfig], { maxMessageSize: 128 });
+		const server = new OHTTPServer([keyConfig], { maxMessageSize: 128, padding: 0 });
 
 		await expect(
 			client.encapsulateRequest(
@@ -120,6 +122,7 @@ describe("OHTTP round-trip", () => {
 
 		const roomyClient = new OHTTPClient(suite, parseKeyConfig(serializeKeyConfig(keyConfig)), {
 			maxMessageSize: 1024,
+			padding: 0,
 		});
 		const { init } = await roomyClient.encapsulateRequest(new Request("https://example.com"));
 		const { context: serverContext } = await server.decapsulateRequest(
@@ -938,4 +941,72 @@ describe("server key config list", () => {
 			expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
 		);
 	});
+});
+
+describe("HTTP padding", () => {
+	it.each([
+		[{}, 1024],
+		[{ maxMessageSize: 2048 }, 1024],
+		[{ maxMessageSize: 2048, padding: 0 }, 0],
+		[{ padding: 128 }, 128],
+	] as const)("should pad both directions with options %j", async (options, paddedLength) => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new OHTTPClient(suite, keyConfig, options);
+		const server = new OHTTPServer([keyConfig], options);
+		const request = () => new Request("https://example.com/", { method: "POST", body: "hello" });
+		const { init, context } = await client.encapsulateRequest(request());
+		const wireRequest = new Uint8Array(
+			await new Request("https://gateway.example/", init).arrayBuffer(),
+		);
+		const { request: plaintext } = await server.decapsulate(wireRequest);
+		expect(plaintext).toHaveLength(
+			paddedLength || (await bhttpEncoder().encodeRequest(request())).length,
+		);
+		const received = await server.decapsulateRequest(
+			new Request("https://gateway.example/", { ...init, body: wireRequest }),
+		);
+		expect(await received.request.text()).toBe("hello");
+		const response = await received.context.encapsulateResponse(new Response("world"));
+		const wireResponse = new Uint8Array(await response.arrayBuffer());
+		expect(wireResponse.length - getResponseNonceLength(suite) - AEAD_TAG_SIZE).toBe(
+			paddedLength || (await bhttpEncoder().encodeResponse(new Response("world"))).length,
+		);
+		const decoded = await context.decapsulateResponse(
+			new Response(wireResponse, { headers: response.headers }),
+		);
+		expect(await decoded.text()).toBe("world");
+	});
+
+	it("should reject default padding above a custom limit in both directions", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new OHTTPClient(suite, keyConfig, { maxMessageSize: 1023 });
+		await expect(client.encapsulateRequest(new Request("https://example.com"))).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+		const unpaddedClient = new OHTTPClient(suite, keyConfig, { padding: 0 });
+		const { init } = await unpaddedClient.encapsulateRequest(new Request("https://example.com"));
+		const server = new OHTTPServer([keyConfig], { maxMessageSize: 1023 });
+		const { context } = await server.decapsulateRequest(
+			new Request("https://gateway.example", init),
+		);
+		await expect(context.encapsulateResponse(new Response("hello"))).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+	});
+
+	it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+		"should reject padding %s during construction",
+		async (padding) => {
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_AES_128_GCM,
+			);
+			const keyConfig = await generateKeyConfig(suite, 1);
+			expect(() => new OHTTPClient(suite, keyConfig, { padding })).toThrow(RangeError);
+			expect(() => new OHTTPServer([keyConfig], { padding })).toThrow(RangeError);
+		},
+	);
 });

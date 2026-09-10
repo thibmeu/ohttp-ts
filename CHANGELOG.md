@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking changes
 
+- HTTP helpers now pad outgoing requests and responses to 1 KiB multiples, or
+  16 KiB for chunked OHTTP. This increases wire sizes. `maxMessageSize` includes
+  padding on send and receive; limits below these defaults reject padded messages.
+  Set `padding: 0` on the sender to disable padding, or choose a smaller multiple.
+
 - The package now publishes ESM only.
 - `hpke` is now a peer dependency. Package managers that do not install peers automatically require `hpke` 1.x to be installed alongside `ohttp-ts`.
 

@@ -1,6 +1,6 @@
 import { MessageLimitExceededError } from "bhttp-ts";
 import type { AEAD as AeadImpl, CipherSuite, Key, SenderContext } from "hpke";
-import { bhttpDecoder, bhttpEncoder } from "./bhttp.ts";
+import { bhttpDecoder, bhttpEncoder, mapBhttpEncodingError, resolvePadding } from "./bhttp.ts";
 import {
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
@@ -62,6 +62,8 @@ import {
  * Options for OHTTP client
  */
 export interface OHTTPClientOptions {
+	/** Pad outgoing BHTTP to a byte multiple; 0 disables padding. HTTP helpers only. @default 1024 */
+	readonly padding?: number;
 	/** Custom request label (default: "message/bhttp request") */
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp response") */
@@ -76,6 +78,8 @@ export interface OHTTPClientOptions {
  * Options for chunked OHTTP client
  */
 export interface ChunkedOHTTPClientOptions {
+	/** Pad outgoing BHTTP to a byte multiple; 0 disables padding. HTTP helpers only. @default 16384 */
+	readonly padding?: number;
 	/** Custom request label (default: "message/bhttp chunked request") */
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp chunked response") */
@@ -214,6 +218,7 @@ export class OHTTPClient {
 	readonly #responseLabel: string;
 	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly maxMessageSize: number;
+	readonly #padding: number;
 
 	/**
 	 * Create an OHTTP client
@@ -229,6 +234,7 @@ export class OHTTPClient {
 		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
+		this.#padding = resolvePadding(options.padding ?? 1024);
 		this.maxMessageSize = resolveMaxMessageSize(
 			options.maxMessageSize ?? DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
 		);
@@ -328,6 +334,7 @@ export class OHTTPClient {
 		try {
 			binaryRequest = await bhttpEncoder().encodeRequest(request, {
 				maxMessageSize: this.maxMessageSize,
+				padding: this.#padding,
 			});
 		} catch (error) {
 			if (error instanceof MessageLimitExceededError) {
@@ -404,6 +411,7 @@ export class ChunkedOHTTPClient {
 	readonly #responseLabel: string;
 	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly maxMessageSize: number;
+	readonly #padding: number;
 
 	/**
 	 * Create a chunked OHTTP client
@@ -419,6 +427,7 @@ export class ChunkedOHTTPClient {
 		this.#requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
+		this.#padding = resolvePadding(options.padding ?? DEFAULT_MAX_CHUNK_SIZE);
 		this.maxMessageSize = resolveMaxMessageSize(options.maxMessageSize);
 
 		// Validate and extract cipher suite IDs
@@ -661,7 +670,10 @@ export class ChunkedOHTTPClient {
 		// For now, we'll build the pipeline manually
 
 		// Encode request to BHTTP stream
-		const bhttpStream = bhttpEncoder().encodeRequestStream(request);
+		const bhttpStream = bhttpEncoder().encodeRequestStream(request, {
+			padding: this.#padding,
+			maxMessageSize,
+		});
 
 		// Create the encryption pipeline:
 		// BHTTP bytes → chunker → OHTTP encrypt → framed ciphertext
@@ -679,7 +691,9 @@ export class ChunkedOHTTPClient {
 
 		// Create output stream that prepends header to encrypted chunks
 		const header = requestCtx.header;
-		const finalStream = streamFromReader(encryptedStream.getReader(), header);
+		const finalStream = streamFromReader(encryptedStream.getReader(), header, undefined, (error) =>
+			signal.aborted && error === signal.reason ? error : mapBhttpEncodingError(error),
+		);
 
 		// Create context for decapsulating response (streaming)
 		const context: ChunkedHttpClientContext = {
