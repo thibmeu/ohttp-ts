@@ -13,6 +13,12 @@
  *   calls   `crypto.subtle` calls by kind. ohttp-ts is bound by the fixed
  *           per-call dispatch cost, so the call count is the lever
  *           (see bench/overlap.ts).
+ *   streams Web Streams objects constructed per operation. This is a stable
+ *           proxy for JS-heap plumbing that catches accidentally layering an
+ *           additional ReadableStream/TransformStream/WritableStream.
+ *   readAhead
+ *           plaintext bytes pulled while a network consumer is stalled. This
+ *           is the deterministic backpressure signal; process RSS is not.
  *
  * Both survive a loaded runner, which is the whole point.
  *
@@ -45,9 +51,26 @@ const subtleCalls: string[] = [];
 	}
 })();
 
+const streamConstructions: Record<string, number> = {};
+for (const name of ["ReadableStream", "TransformStream", "WritableStream"] as const) {
+	const Native = globalThis[name];
+	Object.defineProperty(globalThis, name, {
+		configurable: true,
+		writable: true,
+		value: new Proxy(Native, {
+			construct(target, args, newTarget) {
+				if (counting) streamConstructions[name] = (streamConstructions[name] ?? 0) + 1;
+				return Reflect.construct(target, args, newTarget);
+			},
+		}),
+	});
+}
+
 interface OpMetrics {
 	copied: number;
 	calls: Record<string, number>;
+	streams: Record<string, number>;
+	readAhead?: number;
 }
 type Metrics = Record<string, OpMetrics>;
 
@@ -56,13 +79,32 @@ async function measure(fn: () => Promise<unknown>): Promise<OpMetrics> {
 	await fn();
 	copied = 0;
 	subtleCalls.length = 0;
+	for (const name of Object.keys(streamConstructions)) delete streamConstructions[name];
 	counting = true;
 	await fn();
 	counting = false;
 
 	const calls: Record<string, number> = {};
 	for (const name of subtleCalls) calls[name] = (calls[name] ?? 0) + 1;
-	return { copied, calls };
+	return { copied, calls, streams: { ...streamConstructions } };
+}
+
+async function waitForStable(value: () => number): Promise<number> {
+	let previous = -1;
+	let stable = 0;
+	const started = performance.now();
+	for (let i = 0; i < 200; i++) {
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		const current = value();
+		if (current === previous) {
+			stable++;
+			if (stable >= 10 && performance.now() - started >= 250) return current;
+		} else {
+			previous = current;
+			stable = 0;
+		}
+	}
+	throw new Error("stalled stream did not reach a stable read-ahead value");
 }
 
 async function collect(): Promise<Metrics> {
@@ -106,6 +148,29 @@ async function collect(): Promise<Metrics> {
 
 	const out: Metrics = {};
 	for (const [name, fn] of ops) out[name] = await measure(fn);
+
+	let lastReadAhead = 0;
+	const stalled = await measure(async () => {
+		let bytesRead = 0;
+		const source = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				const chunk = new Uint8Array(64 * 1024);
+				bytesRead += chunk.length;
+				controller.enqueue(chunk);
+			},
+		});
+		const request = new Request("https://target.example/upload", {
+			method: "POST",
+			body: source,
+			duplex: "half",
+		} as RequestInit & { duplex: "half" });
+		const { init } = await chunkedClient.encapsulateRequest(request);
+		if (!(init.body instanceof ReadableStream)) throw new TypeError("expected streaming body");
+		lastReadAhead = await waitForStable(() => bytesRead);
+		await init.body.cancel("metrics complete");
+	});
+	stalled.readAhead = lastReadAhead;
+	out["stalled chunked request"] = stalled;
 	return out;
 }
 
@@ -148,6 +213,15 @@ function report(labelled: Array<[string, Metrics]>): string {
 			for (const [kind, count] of Object.entries(h.calls)) {
 				const before = b.calls[kind] ?? 0;
 				if (count > before) changes.push(`\`${kind}\` calls: ${before} → ${count}`);
+			}
+			for (const [kind, count] of Object.entries(h.streams)) {
+				const before = b.streams[kind] ?? 0;
+				if (count > before) changes.push(`\`${kind}\` objects: ${before} → ${count}`);
+			}
+			if (h.readAhead !== undefined && h.readAhead > (b.readAhead ?? 0)) {
+				changes.push(
+					`stalled plaintext read-ahead: ${fmtBytes(b.readAhead ?? 0)} → ${fmtBytes(h.readAhead)} (${delta(b.readAhead ?? 0, h.readAhead)})`,
+				);
 			}
 			if (changes.length > 0) rows.push(`| ${op} | ${baseLabel} | ${changes.join("<br>")} |`);
 		}

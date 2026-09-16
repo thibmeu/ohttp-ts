@@ -10,11 +10,12 @@
  *     they're external memory, hence process.memoryUsage().
  *   - heapUsed     : JS-heap objects (wrappers, promises, closures).
  *
- * Method: force GC for a clean baseline, run N ops, read memory WITHOUT a
- * trailing GC so transient buffers still count. This is approximate — if a GC
- * fires mid-loop it frees transients and the delta becomes a lower bound (can
- * even go slightly negative). Iteration counts are kept small for large
- * payloads to make a mid-loop GC unlikely. Requires --expose-gc.
+ * Method: warm up, force GC for a clean baseline, run exactly one operation,
+ * then take two readings: before GC (short-lived working memory) and after GC
+ * (memory retained by live state). Measuring one operation prevents a
+ * collection in the middle of an iteration batch from producing misleading
+ * per-op ratios. Heap deltas remain approximate; ArrayBuffer deltas are the
+ * more useful signal. Requires --expose-gc.
  *
  * Browser/Workers can't run this, so it stays out of the vitest bench glob and
  * is Node-only.
@@ -28,31 +29,36 @@ import { randomBytes, streamDecrypt, streamEncrypt } from "./util.ts";
 
 declare const gc: (() => void) | undefined;
 
-interface Alloc {
+interface Snapshot {
 	heap: number;
 	ab: number;
 }
 
-/** Per-op delta of heapUsed and arrayBuffers (bytes). See file header for caveats. */
-async function measure(iters: number, fn: () => Promise<unknown>): Promise<Alloc> {
+interface Alloc {
+	transient: Snapshot;
+	retained: Snapshot;
+}
+
+function snapshot(before: NodeJS.MemoryUsage, after: NodeJS.MemoryUsage): Snapshot {
+	return {
+		heap: after.heapUsed - before.heapUsed,
+		ab: after.arrayBuffers - before.arrayBuffers,
+	};
+}
+
+/** Memory visible after one operation, before and after collecting garbage. */
+async function measure(fn: () => Promise<unknown>): Promise<Alloc> {
 	if (!gc) throw new Error("run with --expose-gc (use `npm run bench:alloc`)");
 
-	// Warm up so one-time setup (key import, etc.) isn't attributed to the op.
-	for (let i = 0; i < Math.min(iters, 10); i++) await fn();
-
-	// Two passes: the first collects young-gen, the second sweeps what the first
-	// promoted/freed, so the baseline has no collectible buffers left to skew the
-	// loop delta negative.
 	gc();
 	gc();
 	const before = process.memoryUsage();
-	for (let i = 0; i < iters; i++) await fn();
-	const after = process.memoryUsage(); // no trailing GC: keep transients counted
-
-	return {
-		heap: (after.heapUsed - before.heapUsed) / iters,
-		ab: (after.arrayBuffers - before.arrayBuffers) / iters,
-	};
+	await fn();
+	const transient = process.memoryUsage();
+	gc();
+	gc();
+	const retained = process.memoryUsage();
+	return { transient: snapshot(before, transient), retained: snapshot(before, retained) };
 }
 
 function median(xs: number[]): number {
@@ -61,11 +67,20 @@ function median(xs: number[]): number {
 	return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 }
 
-/** Median of several measure() runs — damps the GC noise on large payloads. */
-async function measureMedian(iters: number, fn: () => Promise<unknown>): Promise<Alloc> {
+/** Median of several one-operation runs damps heap and collector noise. */
+async function measureMedian(fn: () => Promise<unknown>): Promise<Alloc> {
 	const runs: Alloc[] = [];
-	for (let i = 0; i < 5; i++) runs.push(await measure(iters, fn));
-	return { heap: median(runs.map((r) => r.heap)), ab: median(runs.map((r) => r.ab)) };
+	for (let i = 0; i < 9; i++) runs.push(await measure(fn));
+	return {
+		transient: {
+			heap: median(runs.map((r) => r.transient.heap)),
+			ab: median(runs.map((r) => r.transient.ab)),
+		},
+		retained: {
+			heap: median(runs.map((r) => r.retained.heap)),
+			ab: median(runs.map((r) => r.retained.ab)),
+		},
+	};
 }
 
 function fmt(bytes: number): string {
@@ -98,40 +113,40 @@ async function main(): Promise<void> {
 		await chunkedClient.decapsulateResponse(createResponseContext, encRes);
 	};
 
-	// Few iters for large payloads so a mid-loop GC stays unlikely (see header).
-	const cases: Array<[string, number, () => Promise<unknown>]> = [
-		["encapsulateRequest 1KB", 100, () => client.encapsulate(f1k.payload)],
-		["encapsulateRequest 1MB", 5, () => client.encapsulate(f1m.payload)],
-		["decapsulateRequest 1KB", 100, () => server.decapsulate(f1k.encapsulatedRequest)],
-		["decapsulateRequest 1MB", 5, () => server.decapsulate(f1m.encapsulatedRequest)],
-		["encryptResponse 1MB", 5, () => f1m.serverCtx.encryptResponse(f1m.payload)],
-		["decryptResponse 1MB", 5, () => f1m.clientCtx.decryptResponse(f1m.encryptedResponse)],
-		["round-trip 1KB", 100, () => roundTrip(f1k.payload)],
-		["round-trip 1MB", 5, () => roundTrip(f1m.payload)],
-		["chunked encapsulateRequest 1KB", 100, () => chunkedClient.encapsulate(f1k.payload)],
-		["chunked encapsulateRequest 1MB", 5, () => chunkedClient.encapsulate(f1m.payload)],
-		["chunked decapsulateRequest 1KB", 100, () => chunkedServer.decapsulate(chunkedEnc1KB)],
-		["chunked decapsulateRequest 1MB", 5, () => chunkedServer.decapsulate(chunkedEnc1MB)],
-		["chunked round-trip 1KB", 100, () => chunkedRoundTrip(f1k.payload)],
-		["chunked round-trip 1MB", 5, () => chunkedRoundTrip(f1m.payload)],
-		[
-			"stream encrypt 512KB / 16KB chunks",
-			5,
-			() => streamEncrypt(aead, skey, snonce, _512KB, 16_384),
-		],
+	const cases: Array<[string, () => Promise<unknown>]> = [
+		["encapsulateRequest 1KB", () => client.encapsulate(f1k.payload)],
+		["encapsulateRequest 1MB", () => client.encapsulate(f1m.payload)],
+		["decapsulateRequest 1KB", () => server.decapsulate(f1k.encapsulatedRequest)],
+		["decapsulateRequest 1MB", () => server.decapsulate(f1m.encapsulatedRequest)],
+		["encryptResponse 1MB", () => f1m.serverCtx.encryptResponse(f1m.payload)],
+		["decryptResponse 1MB", () => f1m.clientCtx.decryptResponse(f1m.encryptedResponse)],
+		["round-trip 1KB", () => roundTrip(f1k.payload)],
+		["round-trip 1MB", () => roundTrip(f1m.payload)],
+		["chunked encapsulateRequest 1KB", () => chunkedClient.encapsulate(f1k.payload)],
+		["chunked encapsulateRequest 1MB", () => chunkedClient.encapsulate(f1m.payload)],
+		["chunked decapsulateRequest 1KB", () => chunkedServer.decapsulate(chunkedEnc1KB)],
+		["chunked decapsulateRequest 1MB", () => chunkedServer.decapsulate(chunkedEnc1MB)],
+		["chunked round-trip 1KB", () => chunkedRoundTrip(f1k.payload)],
+		["chunked round-trip 1MB", () => chunkedRoundTrip(f1m.payload)],
+		["stream encrypt 512KB / 16KB chunks", () => streamEncrypt(aead, skey, snonce, _512KB, 16_384)],
 		[
 			"stream decrypt 512KB / 64KB reads",
-			5,
 			() => streamDecrypt(aead, skey, snonce, framed16, 65_536),
 		],
 	];
 
-	console.log("Allocation per op (process.memoryUsage deltas; approximate)\n");
-	console.log(`${"case".padEnd(40)}  ${"arrayBuf/op".padStart(12)}  ${"heap/op".padStart(10)}`);
-	console.log("-".repeat(66));
-	for (const [label, iters, fn] of cases) {
-		const { heap, ab } = await measureMedian(iters, fn);
-		console.log(`${label.padEnd(40)}  ${fmt(ab).padStart(12)}  ${fmt(heap).padStart(10)}`);
+	for (const [, fn] of cases) for (let i = 0; i < 10; i++) await fn();
+
+	console.log("Memory after one operation (median process.memoryUsage delta)\n");
+	console.log(
+		`${"case".padEnd(40)}  ${"temporary AB".padStart(12)}  ${"temporary heap".padStart(14)}  ${"retained AB".padStart(11)}  ${"retained heap".padStart(13)}`,
+	);
+	console.log("-".repeat(98));
+	for (const [label, fn] of cases) {
+		const { transient, retained } = await measureMedian(fn);
+		console.log(
+			`${label.padEnd(40)}  ${fmt(transient.ab).padStart(12)}  ${fmt(transient.heap).padStart(14)}  ${fmt(retained.ab).padStart(11)}  ${fmt(retained.heap).padStart(13)}`,
+		);
 	}
 }
 

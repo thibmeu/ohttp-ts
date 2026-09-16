@@ -52,7 +52,7 @@ jobs:
           if [ -s body.md ]; then
             printf '\nReview these increases before merging; confirm them if intentional.\n' >> body.md
           else
-            echo "No measured copy or WebCrypto-call regressions." > body.md
+            echo "No measured copy, WebCrypto-call, stream-construction, or backpressure regressions." > body.md
           fi
           sed -i '1i<!-- ohttp-bench-metrics -->' body.md
           cat body.md >> "$GITHUB_STEP_SUMMARY"

@@ -4,9 +4,15 @@ ohttp-ts is crypto- and runtime-bound: most of an operation runs inside
 WebCrypto, and the rest is the fixed cost of dispatching many `crypto.subtle`
 calls. The benches are built around that, in three groups.
 
-**Compass** (deterministic): find the lever. `overlap` counts the `crypto.subtle`
-calls per op; `alloc` counts the bytes. Both are machine-independent, so they
-hold up under load.
+**Compass**: find the lever. `overlap` counts the `crypto.subtle` calls per op;
+`metrics` counts copies, stream objects, and stalled read-ahead; `alloc` shows
+temporary and retained process memory. The structural counters are
+machine-independent; process-memory readings are diagnostic.
+
+Pull-request CI also compares deterministic copy counts, WebCrypto calls, Web
+Streams object counts, and stalled-consumer read-ahead against the base commit.
+It intentionally does not gate on RSS, heap deltas, or wall-clock timing from a
+shared runner.
 
 **Gate** (vitest): confirm a change moved the numbers. `ohttp.bench`,
 `concurrency.bench`, `streaming.bench`.
@@ -29,9 +35,16 @@ client/server pair, from `fixtures.ts`.
 | `npm run bench:profile` | `profile.ts` | CPU self-time per function (quick text summary) |
 | `npm run bench:trace` | `trace.ts` | `.cpuprofile` / `.heapprofile` / trace JSON for external tools |
 | `npm run bench:browser` | `*.bench.ts` | the vitest benches under Chromium |
+| `npm run metrics` | `tools/metrics.ts` | deterministic copies, crypto calls, stream objects, and read-ahead |
 
 `ohttp.bench.ts` (single-shot ops at 1KB and 1MB) and `streaming.bench.ts` (chunk
 transforms) complete the vitest set.
+
+`alloc.ts` reports two snapshots after one operation. “Temporary” is measured
+before collection and represents the working memory still awaiting GC;
+“retained” is measured after two forced collections and exposes live state.
+Each sample contains exactly one operation, avoiding the misleading per-op
+ratios that occur when V8 collects midway through a batch.
 
 `backpressure.ts` is a controlled pressure probe for the high-level chunked
 request API. It gives the returned network body to a stalled consumer, then
@@ -51,17 +64,18 @@ figure.
 - Gate on a quiet machine: pin cores (`taskset -c`), set the performance
   governor, close other work. Raise `BENCH_OPTS` (time and iterations, in
   `options.ts`) for a steadier read.
-- For anything you need to trust, lean on the deterministic benches. The call
-  counts from `overlap` and the byte deltas from `alloc` reproduce run to run;
-  the wall-clock benches tell you an effect is real, not how big it is.
+- For anything you need to trust, lean on `metrics`: copy counts, crypto calls,
+  stream-object counts, and stalled read-ahead reproduce run to run. Treat
+  `alloc` and wall-clock measurements as supporting diagnostics.
 - `concurrency.bench` is the most useful timing bench for a decision: server
   throughput is where fewer `crypto.subtle` calls show up, and it's less
   sample-sensitive than single-op latency.
 
 ## The loop
 
-1. `bench:overlap` + `bench:alloc` to find a lever (a repeated `importKey`, a
-   copy, a high call count).
+1. `metrics` + `bench:overlap` to find a lever (a repeated `importKey`, a copy,
+   extra stream plumbing, or high call count); use `bench:alloc` to inspect the
+   resulting temporary and retained memory.
 2. Make the change.
 3. `bench:concurrency` (or `bench`) on a quiet box to confirm it moved.
 4. `bench:trace` when you need to see where the time or allocations go.
