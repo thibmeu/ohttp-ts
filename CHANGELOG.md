@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-16
+
 ### Fixed
 
 - Fixed delays in chunked requests and responses when the sender pauses between chunks.
