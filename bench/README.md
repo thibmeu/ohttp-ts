@@ -29,6 +29,8 @@ client/server pair, from `fixtures.ts`.
 | `npm run bench:profile` | `profile.ts` | CPU self-time per function (quick text summary) |
 | `npm run bench:trace` | `trace.ts` | `.cpuprofile` / `.heapprofile` / trace JSON for external tools |
 | `npm run bench:browser` | `*.bench.ts` | the vitest benches under Chromium |
+| `npm run bench:workers` | workerd timing benches | batched OHTTP, concurrency, and streaming throughput |
+| `npm run bench:workers:backpressure` | `workerd-backpressure.test.ts` | stalled-stream plaintext read-ahead in workerd |
 
 `ohttp.bench.ts` (single-shot ops at 1KB and 1MB) and `streaming.bench.ts` (chunk
 transforms) complete the vitest set.
@@ -40,6 +42,25 @@ The source read-ahead is the regression signal; RSS and ArrayBuffer deltas are
 diagnostic because V8's garbage collector makes process memory measurements
 noisy. Override its 32 MiB payload, 64 KiB source reads, and observation window
 with `SIZE`, `CHUNK`, and `OBSERVE_MS`.
+
+The workerd timing command batches short OHTTP operations because the Workers
+runtime exposes a millisecond-scale clock. For labels ending in `×N`, multiply
+the reported hz by `N` to obtain operations per second. The concurrency benches
+already use batches of 64 and follow the same convention.
+
+The workerd backpressure command runs the deterministic part of the probe—the
+source pull and byte counts—inside the Workers runtime. It deliberately omits
+Node's `process.memoryUsage()` diagnostics. For isolate memory and CPU profiles,
+attach Chrome DevTools while running a focused benchmark:
+
+```sh
+npx vitest bench --config vitest.workers.bench.config.ts --inspect --no-file-parallelism \
+  bench/workerd.bench.ts
+```
+
+Attach DevTools to port 9229, then use the Profiler or Memory panel. Local
+workerd heap snapshots replace the Node-only heap profile; they do not provide a
+stable automated bytes-per-operation counter.
 
 ## Reading the numbers
 

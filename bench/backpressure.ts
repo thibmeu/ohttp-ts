@@ -14,6 +14,7 @@
  *      SIZE=67108864 CHUNK=65536 OBSERVE_MS=2000 npm run bench:backpressure
  */
 
+import { measuredSource } from "./backpressure-probe.ts";
 import { chunkedClient } from "./fixtures.ts";
 
 declare const gc: (() => void) | undefined;
@@ -21,39 +22,6 @@ declare const gc: (() => void) | undefined;
 const payloadSize = readPositiveInteger("SIZE", 32 * 1024 * 1024);
 const sourceChunkSize = readPositiveInteger("CHUNK", 64 * 1024);
 const observationMs = readPositiveInteger("OBSERVE_MS", 1_000);
-
-interface SourceProbe {
-	readonly stream: ReadableStream<Uint8Array>;
-	readonly bytesRead: () => number;
-	readonly pulls: () => number;
-}
-
-function measuredSource(totalBytes: number, chunkSize: number): SourceProbe {
-	let produced = 0;
-	let pullCount = 0;
-
-	return {
-		stream: new ReadableStream<Uint8Array>({
-			pull(controller) {
-				if (produced >= totalBytes) {
-					controller.close();
-					return;
-				}
-
-				const size = Math.min(chunkSize, totalBytes - produced);
-				// Allocate distinct backing stores so eager read-ahead creates real
-				// memory pressure instead of repeatedly enqueueing the same buffer.
-				const chunk = new Uint8Array(size);
-				chunk[0] = pullCount & 0xff;
-				produced += size;
-				pullCount++;
-				controller.enqueue(chunk);
-			},
-		}),
-		bytesRead: () => produced,
-		pulls: () => pullCount,
-	};
-}
 
 function memory(): NodeJS.MemoryUsage {
 	gc?.();

@@ -26,6 +26,8 @@
 		"test:coverage": "vitest run --coverage",
 		"bench": "vitest bench",
 		"bench:browser": "vitest bench --config vitest.browser.config.ts",
+		"bench:workers": "vitest bench --config vitest.workers.bench.config.ts --run bench/workerd.bench.ts bench/concurrency.bench.ts bench/streaming.bench.ts",
+		"bench:workers:backpressure": "vitest run --config vitest.workers.bench.config.ts bench/workerd-backpressure.test.ts --reporter=verbose",
 		"bench:concurrency": "vitest bench --run bench/concurrency.bench.ts",
 		"bench:overlap": "node bench/overlap.ts",
 		"bench:alloc": "node --expose-gc bench/alloc.ts",
