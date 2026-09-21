@@ -24,33 +24,32 @@ async function repeat(count: number, op: () => Promise<unknown>): Promise<void> 
 	for (let i = 0; i < count; i++) await op();
 }
 
-describe("workerd OHTTP throughput (reported hz is batches/sec)", () => {
-	for (const [label, , batch] of CASES) {
+for (const [label, , batch] of CASES) {
+	describe(`workerd OHTTP throughput ${label} ×${batch} (reported hz is batches/sec)`, () => {
 		const fixture = fixtures.get(label)!;
-		const name = (op: string) => `${op} ${label} ×${batch}`;
 
 		bench(
-			name("encapsulateRequest"),
+			"encapsulateRequest",
 			() => repeat(batch, () => client.encapsulate(fixture.payload)),
 			BENCH_OPTS,
 		);
 		bench(
-			name("decapsulateRequest"),
+			"decapsulateRequest",
 			() => repeat(batch, () => server.decapsulate(fixture.encapsulatedRequest)),
 			BENCH_OPTS,
 		);
 		bench(
-			name("encryptResponse"),
+			"encryptResponse",
 			() => repeat(batch, () => fixture.serverCtx.encryptResponse(fixture.payload)),
 			BENCH_OPTS,
 		);
 		bench(
-			name("decryptResponse"),
+			"decryptResponse",
 			() => repeat(batch, () => fixture.clientCtx.decryptResponse(fixture.encryptedResponse)),
 			BENCH_OPTS,
 		);
 		bench(
-			name("round-trip"),
+			"round-trip",
 			() =>
 				repeat(batch, async () => {
 					const { encapsulatedRequest, context } = await client.encapsulate(fixture.payload);
@@ -59,5 +58,5 @@ describe("workerd OHTTP throughput (reported hz is batches/sec)", () => {
 				}),
 			BENCH_OPTS,
 		);
-	}
-});
+	});
+}
