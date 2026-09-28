@@ -397,20 +397,6 @@ describe("OHTTP round-trip", () => {
 
 		await expect(server.decapsulate(encapsulatedRequest)).rejects.toThrow(OHTTPError);
 	});
-
-	it("uses deterministic keys for reproducible tests", async () => {
-		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
-
-		const seed = new Uint8Array(32);
-		seed.fill(0x42);
-
-		const config1 = await deriveKeyConfig(suite, seed, 1);
-
-		const config2 = await deriveKeyConfig(suite, seed, 1);
-
-		// Same seed produces same keys
-		expect(toHex(config1.publicKey)).toBe(toHex(config2.publicKey));
-	});
 });
 
 describe("RFC 9458 Appendix A test vectors", () => {

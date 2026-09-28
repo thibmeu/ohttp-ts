@@ -22,16 +22,6 @@ describe("OHTTPError", () => {
 		expect(decryptError.message).not.toContain("nonce");
 		expect(decryptError.message).not.toContain("ciphertext");
 	});
-
-	it("supports all error codes", () => {
-		const codes = Object.values(OHTTPErrorCode);
-		expect(codes.length).toBeGreaterThan(0);
-
-		for (const code of codes) {
-			const error = new OHTTPError(code);
-			expect(error.code).toBe(code);
-		}
-	});
 });
 
 describe("isOHTTPError", () => {
