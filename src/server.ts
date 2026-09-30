@@ -1,6 +1,12 @@
-import { MessageLimitExceededError } from "bhttp-ts";
+import { MessageLimitExceededError, type Padding } from "bhttp-ts";
 import type { AEAD as AeadImpl, CipherSuite, RecipientContext } from "hpke";
-import { bhttpDecoder, bhttpEncoder, mapBhttpEncodingError, resolvePadding } from "./bhttp.ts";
+import {
+	bhttpDecoder,
+	bhttpEncoder,
+	DEFAULT_PADDING,
+	mapBhttpEncodingError,
+	resolvePadding,
+} from "./bhttp.ts";
 import type { StreamingRequestInit } from "./client.ts";
 import {
 	DEFAULT_MAX_CHUNK_SIZE,
@@ -66,8 +72,12 @@ import {
  * Options for OHTTP server
  */
 export interface OHTTPServerOptions {
-	/** Pad outgoing BHTTP to a byte multiple; 0 disables padding. HTTP helpers only. @default 1024 */
-	readonly padding?: number;
+	/**
+	 * Outgoing BHTTP byte multiple (0 disables padding), or a nondecreasing function
+	 * returning a safe integer >= the unpadded size. HTTP helpers only.
+	 * @default max(1024, padme(size))
+	 */
+	readonly padding?: Padding;
 	/** Custom request label (default: "message/bhttp request") */
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp response") */
@@ -82,8 +92,12 @@ export interface OHTTPServerOptions {
  * Options for chunked OHTTP server
  */
 export interface ChunkedOHTTPServerOptions {
-	/** Pad outgoing BHTTP to a byte multiple; 0 disables padding. HTTP helpers only. @default 16384 */
-	readonly padding?: number;
+	/**
+	 * Outgoing BHTTP byte multiple (0 disables padding), or a nondecreasing function
+	 * returning a safe integer >= the unpadded size. HTTP helpers only.
+	 * @default max(1024, padme(size))
+	 */
+	readonly padding?: Padding;
 	/** Custom request label (default: "message/bhttp chunked request") */
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp chunked response") */
@@ -235,7 +249,7 @@ export class OHTTPServer {
 	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly #maxEncapsulatedRequestSize: number;
 	readonly maxMessageSize: number;
-	readonly #padding: number;
+	readonly #padding: Padding;
 
 	/**
 	 * Create an OHTTP server
@@ -253,10 +267,10 @@ export class OHTTPServer {
 		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
-		this.#padding = resolvePadding(options.padding ?? 1024);
 		this.maxMessageSize = resolveMaxMessageSize(
 			options.maxMessageSize ?? DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
 		);
+		this.#padding = resolvePadding(options.padding ?? DEFAULT_PADDING, this.maxMessageSize);
 		this.#maxEncapsulatedRequestSize =
 			this.maxMessageSize +
 			REQUEST_HEADER_SIZE +
@@ -375,7 +389,7 @@ export class ChunkedOHTTPServer {
 	readonly #responseLabel: string;
 	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly maxMessageSize: number;
-	readonly #padding: number;
+	readonly #padding: Padding;
 
 	/**
 	 * Create a chunked OHTTP server
@@ -396,8 +410,8 @@ export class ChunkedOHTTPServer {
 		this.#requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
-		this.#padding = resolvePadding(options.padding ?? DEFAULT_MAX_CHUNK_SIZE);
 		this.maxMessageSize = resolveMaxMessageSize(options.maxMessageSize);
+		this.#padding = resolvePadding(options.padding ?? DEFAULT_PADDING, this.maxMessageSize);
 	}
 
 	/**

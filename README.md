@@ -153,22 +153,23 @@ const { request: binaryBytes, context: serverCtx } = await gateway.decapsulate(e
 Normal OHTTP limits each Binary HTTP message to 1 MiB by default. Pass
 `{ maxMessageSize }` to the client and gateway to use a different limit.
 
-HTTP helpers pad outgoing requests and responses to multiples of 1,024 BHTTP bytes
-by default, or 16,384 bytes for chunked OHTTP. Set `{ padding: 0 }` on the client or
-gateway to disable outgoing padding, or use a positive safe integer for another
-multiple. Setting only `maxMessageSize` keeps the padding default. The limit includes
-padding on both send and receive; a message that cannot fit its padded size fails
-with `MessageTooLarge`. A gateway with `maxMessageSize: 1000` rejects requests from
-a default-configured client, whose smallest padded request is 1,024 bytes. Choose
-sender padding and receiver limits together; they do not need matching padding settings.
+HTTP helpers default to `max(1024, padme(size))` for normal and chunked OHTTP.
+`size` includes BHTTP framing, headers and body. [Padmé (PURBs, 2019)](https://petsymposium.org/popets/2019/popets-2019-0056.php)
+groups nearby lengths with at most 12% padding overhead; the 1 KiB floor can add
+more overhead for small messages. Padding hides exact lengths within these groups.
+Chunk count and timing still leak in streaming mode; authentication tags and framing
+add wire overhead.
 
-For positive `padding`, the sender's effective encoded-message limit is
-`Math.floor(maxMessageSize / padding) * padding`, including BHTTP framing and headers.
-Raw byte APIs preserve the supplied bytes and enforce `maxMessageSize` without rounding.
+Set `padding: 0` to disable outgoing padding, use a positive safe integer to round
+to a byte multiple, or pass a function returning a padded total. Function results
+must be safe integers at least as large as the input and must never decrease as
+input grows. Exported `padme` and `padmeWithFloor` help compose policies.
 
-Chunked padding fills the final plaintext chunk to 16 KiB by default. Authentication
-tags and framing add wire overhead. Padding is appended after the BHTTP trailers;
-it does not hide timing or the number of chunks.
+`maxMessageSize` includes padding on send and receive. Constructors throw `RangeError`
+if `policy(1)` (or a numeric multiple) exceeds the limit. Larger messages that exceed
+the padded limit fail with `MessageTooLarge`, including during streaming. Senders and
+receivers need compatible limits, but may use different padding policies.
+Raw byte APIs preserve supplied bytes and enforce the limit without padding.
 
 See [`examples/bhttp.example.ts`](examples/bhttp.example.ts) for a complete example.
 
