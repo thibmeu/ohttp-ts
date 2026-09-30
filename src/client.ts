@@ -1,6 +1,12 @@
-import { MessageLimitExceededError } from "bhttp-ts";
+import { MessageLimitExceededError, type Padding } from "bhttp-ts";
 import type { AEAD as AeadImpl, CipherSuite, Key, SenderContext } from "hpke";
-import { bhttpDecoder, bhttpEncoder, mapBhttpEncodingError, resolvePadding } from "./bhttp.ts";
+import {
+	bhttpDecoder,
+	bhttpEncoder,
+	DEFAULT_PADDING,
+	mapBhttpEncodingError,
+	resolvePadding,
+} from "./bhttp.ts";
 import {
 	DEFAULT_MAX_CHUNK_SIZE,
 	DEFAULT_MAX_FRAME_SIZE,
@@ -62,8 +68,12 @@ import {
  * Options for OHTTP client
  */
 export interface OHTTPClientOptions {
-	/** Pad outgoing BHTTP to a byte multiple; 0 disables padding. HTTP helpers only. @default 1024 */
-	readonly padding?: number;
+	/**
+	 * Outgoing BHTTP byte multiple (0 disables padding), or a nondecreasing function
+	 * returning a safe integer >= the unpadded size. HTTP helpers only.
+	 * @default max(1024, padme(size))
+	 */
+	readonly padding?: Padding;
 	/** Custom request label (default: "message/bhttp request") */
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp response") */
@@ -78,8 +88,12 @@ export interface OHTTPClientOptions {
  * Options for chunked OHTTP client
  */
 export interface ChunkedOHTTPClientOptions {
-	/** Pad outgoing BHTTP to a byte multiple; 0 disables padding. HTTP helpers only. @default 16384 */
-	readonly padding?: number;
+	/**
+	 * Outgoing BHTTP byte multiple (0 disables padding), or a nondecreasing function
+	 * returning a safe integer >= the unpadded size. HTTP helpers only.
+	 * @default max(1024, padme(size))
+	 */
+	readonly padding?: Padding;
 	/** Custom request label (default: "message/bhttp chunked request") */
 	readonly requestLabel?: string;
 	/** Custom response label (default: "message/bhttp chunked response") */
@@ -218,7 +232,7 @@ export class OHTTPClient {
 	readonly #responseLabel: string;
 	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly maxMessageSize: number;
-	readonly #padding: number;
+	readonly #padding: Padding;
 
 	/**
 	 * Create an OHTTP client
@@ -234,10 +248,10 @@ export class OHTTPClient {
 		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
-		this.#padding = resolvePadding(options.padding ?? 1024);
 		this.maxMessageSize = resolveMaxMessageSize(
 			options.maxMessageSize ?? DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
 		);
+		this.#padding = resolvePadding(options.padding ?? DEFAULT_PADDING, this.maxMessageSize);
 
 		// Validate and extract cipher suite IDs
 		const rawKdfId = suite.KDF.id;
@@ -411,7 +425,7 @@ export class ChunkedOHTTPClient {
 	readonly #responseLabel: string;
 	readonly #responseCrypto: ResponseCrypto | undefined;
 	readonly maxMessageSize: number;
-	readonly #padding: number;
+	readonly #padding: Padding;
 
 	/**
 	 * Create a chunked OHTTP client
@@ -427,8 +441,8 @@ export class ChunkedOHTTPClient {
 		this.#requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
-		this.#padding = resolvePadding(options.padding ?? DEFAULT_MAX_CHUNK_SIZE);
 		this.maxMessageSize = resolveMaxMessageSize(options.maxMessageSize);
+		this.#padding = resolvePadding(options.padding ?? DEFAULT_PADDING, this.maxMessageSize);
 
 		// Validate and extract cipher suite IDs
 		const rawKdfId = suite.KDF.id;

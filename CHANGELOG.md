@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Normal and chunked HTTP helpers now default to `max(1024, padme(size))` padding.
+  Constructors reject padding whose minimum exceeds `maxMessageSize`.
+
+### Added
+
+- Custom function padding policies and exported `padme` and `padmeWithFloor` helpers.
+
 ## [0.6.0] - 2026-09-16
 
 ### Fixed
