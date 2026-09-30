@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-30
+
 ### Breaking changes
 
 - Normal and chunked HTTP helpers now default to `max(1024, padme(size))` padding.
