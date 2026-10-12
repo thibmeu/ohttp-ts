@@ -18,7 +18,7 @@
  * crypto.subtle call breakdown see `npm run bench:overlap`.
  */
 
-import { bench, describe } from "vitest";
+import { test } from "vitest";
 import { client, type Fixture, makeFixture, server } from "./fixtures.ts";
 import { BENCH_OPTS } from "./options.ts";
 
@@ -31,49 +31,29 @@ const SIZES = [
 const fixtures = new Map<string, Fixture>();
 for (const [label, n] of SIZES) fixtures.set(label, await makeFixture(n));
 
-describe("encapsulateRequest (client)", () => {
-	for (const [label] of SIZES) {
-		const f = fixtures.get(label)!;
-		bench(label, async () => void (await client.encapsulate(f.payload)), BENCH_OPTS);
-	}
-});
+const groups: Array<[string, (f: Fixture) => Promise<unknown>]> = [
+	["encapsulateRequest (client)", (f) => client.encapsulate(f.payload)],
+	["decapsulateRequest (server)", (f) => server.decapsulate(f.encapsulatedRequest)],
+	["encryptResponse (server)", (f) => f.serverCtx.encryptResponse(f.payload)],
+	["decryptResponse (client)", (f) => f.clientCtx.decryptResponse(f.encryptedResponse)],
+	[
+		"full round-trip",
+		async (f) => {
+			const { encapsulatedRequest, context } = await client.encapsulate(f.payload);
+			const { context: sctx } = await server.decapsulate(encapsulatedRequest);
+			await context.decryptResponse(await sctx.encryptResponse(f.payload));
+		},
+	],
+];
 
-describe("decapsulateRequest (server)", () => {
-	for (const [label] of SIZES) {
-		const f = fixtures.get(label)!;
-		bench(label, async () => void (await server.decapsulate(f.encapsulatedRequest)), BENCH_OPTS);
-	}
-});
-
-describe("encryptResponse (server)", () => {
-	for (const [label] of SIZES) {
-		const f = fixtures.get(label)!;
-		bench(label, async () => void (await f.serverCtx.encryptResponse(f.payload)), BENCH_OPTS);
-	}
-});
-
-describe("decryptResponse (client)", () => {
-	for (const [label] of SIZES) {
-		const f = fixtures.get(label)!;
-		bench(
-			label,
-			async () => void (await f.clientCtx.decryptResponse(f.encryptedResponse)),
+for (const [name, op] of groups) {
+	test(name, async ({ bench }) => {
+		await bench.compare(
+			...SIZES.map(([label]) => {
+				const f = fixtures.get(label)!;
+				return bench(label, async () => void (await op(f)));
+			}),
 			BENCH_OPTS,
 		);
-	}
-});
-
-describe("full round-trip", () => {
-	for (const [label] of SIZES) {
-		const f = fixtures.get(label)!;
-		bench(
-			label,
-			async () => {
-				const { encapsulatedRequest, context } = await client.encapsulate(f.payload);
-				const { context: sctx } = await server.decapsulate(encapsulatedRequest);
-				await context.decryptResponse(await sctx.encryptResponse(f.payload));
-			},
-			BENCH_OPTS,
-		);
-	}
-});
+	});
+}

@@ -15,7 +15,7 @@
  * Run: npm run bench:concurrency   (or part of `npm run bench`)
  */
 
-import { bench, describe } from "vitest";
+import { test } from "vitest";
 import { client, makeFixture, server } from "./fixtures.ts";
 import { BENCH_OPTS } from "./options.ts";
 
@@ -39,14 +39,18 @@ async function roundTrip(): Promise<void> {
 	await context.decryptResponse(await sctx.encryptResponse(payload));
 }
 
-describe(`decapsulateRequest ×${BATCH} @ concurrency (server hot path, 1KB)`, () => {
-	for (const c of LEVELS) {
-		bench(`c=${c}`, () => batched(c, () => server.decapsulate(encapsulatedRequest)), BENCH_OPTS);
-	}
+test(`decapsulateRequest ×${BATCH} @ concurrency (server hot path, 1KB)`, async ({ bench }) => {
+	await bench.compare(
+		...LEVELS.map((c) =>
+			bench(`c=${c}`, () => batched(c, () => server.decapsulate(encapsulatedRequest))),
+		),
+		BENCH_OPTS,
+	);
 });
 
-describe(`full round-trip ×${BATCH} @ concurrency (1KB)`, () => {
-	for (const c of LEVELS) {
-		bench(`c=${c}`, () => batched(c, roundTrip), BENCH_OPTS);
-	}
+test(`full round-trip ×${BATCH} @ concurrency (1KB)`, async ({ bench }) => {
+	await bench.compare(
+		...LEVELS.map((c) => bench(`c=${c}`, () => batched(c, roundTrip))),
+		BENCH_OPTS,
+	);
 });
