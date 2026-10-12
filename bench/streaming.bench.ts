@@ -19,7 +19,7 @@
  *      npm run bench:browser    (Chromium, same file)
  */
 import { AEAD_AES_128_GCM } from "hpke";
-import { bench, describe } from "vitest";
+import { test } from "vitest";
 import { BENCH_OPTS } from "./options.ts";
 import { randomBytes, streamDecrypt, streamEncrypt } from "./util.ts";
 
@@ -37,16 +37,15 @@ const scenarios: Array<[string, number, number]> = [
 	["256B chunks / 256B reads (fragmented)", 256, 256],
 ];
 
-describe("streaming encrypt (chunker + response-encrypt)", () => {
-	for (const [label, chunkSize] of scenarios) {
-		bench(
-			label,
-			async () => {
+test("streaming encrypt (chunker + response-encrypt)", async ({ bench }) => {
+	await bench.compare(
+		...scenarios.map(([label, chunkSize]) =>
+			bench(label, async () => {
 				await streamEncrypt(aead, key, nonce, payload, chunkSize);
-			},
-			BENCH_OPTS,
-		);
-	}
+			}),
+		),
+		BENCH_OPTS,
+	);
 });
 
 // Pre-frame each scenario once so the decrypt bench measures only decryption.
@@ -55,15 +54,14 @@ for (const [label, chunkSize] of scenarios) {
 	framedByLabel.set(label, await streamEncrypt(aead, key, nonce, payload, chunkSize));
 }
 
-describe("streaming decrypt (response-decrypt)", () => {
-	for (const [label, , readSize] of scenarios) {
-		const framed = framedByLabel.get(label)!;
-		bench(
-			label,
-			async () => {
+test("streaming decrypt (response-decrypt)", async ({ bench }) => {
+	await bench.compare(
+		...scenarios.map(([label, , readSize]) => {
+			const framed = framedByLabel.get(label)!;
+			return bench(label, async () => {
 				await streamDecrypt(aead, key, nonce, framed, readSize);
-			},
-			BENCH_OPTS,
-		);
-	}
+			});
+		}),
+		BENCH_OPTS,
+	);
 });

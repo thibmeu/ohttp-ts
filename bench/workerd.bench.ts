@@ -8,7 +8,7 @@
  * Run: npm run bench:workers
  */
 
-import { bench, describe } from "vitest";
+import { test } from "vitest";
 import { client, type Fixture, makeFixture, server } from "./fixtures.ts";
 import { BENCH_OPTS } from "./options.ts";
 
@@ -25,37 +25,29 @@ async function repeat(count: number, op: () => Promise<unknown>): Promise<void> 
 }
 
 for (const [label, , batch] of CASES) {
-	describe(`workerd OHTTP throughput ${label} ×${batch} (reported hz is batches/sec)`, () => {
+	test(`workerd OHTTP throughput ${label} ×${batch} (reported hz is batches/sec)`, async ({
+		bench,
+	}) => {
 		const fixture = fixtures.get(label)!;
 
-		bench(
-			"encapsulateRequest",
-			() => repeat(batch, () => client.encapsulate(fixture.payload)),
-			BENCH_OPTS,
-		);
-		bench(
-			"decapsulateRequest",
-			() => repeat(batch, () => server.decapsulate(fixture.encapsulatedRequest)),
-			BENCH_OPTS,
-		);
-		bench(
-			"encryptResponse",
-			() => repeat(batch, () => fixture.serverCtx.encryptResponse(fixture.payload)),
-			BENCH_OPTS,
-		);
-		bench(
-			"decryptResponse",
-			() => repeat(batch, () => fixture.clientCtx.decryptResponse(fixture.encryptedResponse)),
-			BENCH_OPTS,
-		);
-		bench(
-			"round-trip",
-			() =>
+		await bench.compare(
+			bench("encapsulateRequest", () => repeat(batch, () => client.encapsulate(fixture.payload))),
+			bench("decapsulateRequest", () =>
+				repeat(batch, () => server.decapsulate(fixture.encapsulatedRequest)),
+			),
+			bench("encryptResponse", () =>
+				repeat(batch, () => fixture.serverCtx.encryptResponse(fixture.payload)),
+			),
+			bench("decryptResponse", () =>
+				repeat(batch, () => fixture.clientCtx.decryptResponse(fixture.encryptedResponse)),
+			),
+			bench("round-trip", () =>
 				repeat(batch, async () => {
 					const { encapsulatedRequest, context } = await client.encapsulate(fixture.payload);
 					const { context: serverContext } = await server.decapsulate(encapsulatedRequest);
 					await context.decryptResponse(await serverContext.encryptResponse(fixture.payload));
 				}),
+			),
 			BENCH_OPTS,
 		);
 	});
