@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   across reads, instead of throwing `InvalidMessage`.
 - Chunked HTTP helpers keep `MessageTooLarge`, `DecryptionFailed` and
   `ChunkLimitExceeded` instead of reporting every failure as `InvalidMessage`.
+- Chunked decoding no longer slows quadratically when a frame arrives in many
+  small reads.
 
 ## [0.6.1] - 2026-09-30
 
