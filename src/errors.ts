@@ -46,3 +46,13 @@ export class OHTTPError extends Error {
 export function isOHTTPError(error: unknown): error is OHTTPError {
 	return error instanceof OHTTPError;
 }
+
+/**
+ * Keep the code a decryption pipeline raised; anything else (a Binary HTTP
+ * decoding failure) is a framing error.
+ *
+ * @internal
+ */
+export function asInvalidMessage(error: unknown): OHTTPError {
+	return error instanceof OHTTPError ? error : new OHTTPError(OHTTPErrorCode.InvalidMessage);
+}

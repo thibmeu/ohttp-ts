@@ -40,7 +40,7 @@ import {
 	type ResponseCrypto,
 	sealResponseChunk,
 } from "./encapsulation.ts";
-import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
+import { asInvalidMessage, OHTTPError, OHTTPErrorCode } from "./errors.ts";
 import {
 	isValidKeyId,
 	type KeyConfigWithPrivate,
@@ -713,16 +713,16 @@ export class ChunkedOHTTPServer {
 		let decoded: Request;
 		try {
 			decoded = await bhttpDecoder().decodeRequestStream(plaintextStream);
-		} catch {
+		} catch (error) {
 			if (signal.aborted) throw signal.reason;
-			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+			throw asInvalidMessage(error);
 		}
 		const innerRequest =
 			decoded.body === null
 				? decoded
 				: new Request(decoded, {
-						body: mapStreamErrors(decoded.body, () =>
-							signal.aborted ? signal.reason : new OHTTPError(OHTTPErrorCode.InvalidMessage),
+						body: mapStreamErrors(decoded.body, (error) =>
+							signal.aborted ? signal.reason : asInvalidMessage(error),
 						),
 						duplex: "half",
 					} as StreamingRequestInit);

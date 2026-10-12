@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- `parseFramedChunk` returns `undefined` when a varint length prefix is split
+  across reads, instead of throwing `InvalidMessage`.
+- Chunked HTTP helpers keep `MessageTooLarge`, `DecryptionFailed` and
+  `ChunkLimitExceeded` instead of reporting every failure as `InvalidMessage`.
+
 ## [0.6.1] - 2026-09-30
 
 ### Breaking changes
