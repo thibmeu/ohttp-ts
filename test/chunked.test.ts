@@ -770,10 +770,11 @@ describe("varint edge cases", () => {
 		expect(parsed?.isFinal).toBe(false);
 	});
 
-	it("throws for incomplete varint", () => {
-		// 2-byte varint marker (0x40) but only 1 byte provided - can't parse
-		const incomplete = new Uint8Array([0x40]);
-		expect(() => parseFramedChunk(incomplete)).toThrow(OHTTPError);
+	it("returns undefined for a varint split across reads", () => {
+		// 2-, 4- and 8-byte varint markers with the rest still in flight
+		for (const incomplete of [[0x40], [0x80, 0, 0], [0xc0, 0, 0, 0, 0, 0, 0]]) {
+			expect(parseFramedChunk(new Uint8Array(incomplete))).toBeUndefined();
+		}
 	});
 
 	it("returns undefined for truncated chunk data", () => {
@@ -2051,14 +2052,14 @@ describe("chunked HTTP padding", () => {
 			server
 				.decapsulateRequest(new Request("https://gateway.example/", { ...init, body: bytes }))
 				.then(({ request }) => collectStream(request.body as ReadableStream<Uint8Array>)),
-		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }));
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.DecryptionFailed }));
 		responseBytes[responseBytes.length - 17] =
 			(responseBytes[responseBytes.length - 17] as number) ^ 1;
 		await expect(
 			context
 				.decapsulateResponse(new Response(responseBytes, { headers: response.headers }))
 				.then((response) => collectStream(response.body as ReadableStream<Uint8Array>)),
-		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.InvalidMessage }));
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.DecryptionFailed }));
 	});
 
 	it.each([
@@ -2104,6 +2105,21 @@ describe("chunked HTTP padding", () => {
 		await expect(server.decapsulate(request)).rejects.toThrow(
 			expect.objectContaining({ code: OHTTPErrorCode.DecryptionFailed }),
 		);
+	});
+
+	it("should report MessageTooLarge for an oversized chunked HTTP request", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, keyConfig);
+		const server = new ChunkedOHTTPServer([keyConfig], { maxMessageSize: 4096 });
+		const { init } = await client.encapsulateRequest(
+			new Request("https://example.com/", { method: "POST", body: "x".repeat(100_000) }),
+		);
+		await expect(
+			server
+				.decapsulateRequest(new Request("https://gateway.example/", init))
+				.then(({ request }) => collectStream(request.body as ReadableStream<Uint8Array>)),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }));
 	});
 
 	it("rejects minimum padding above the limit at construction", async () => {

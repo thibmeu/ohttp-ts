@@ -36,7 +36,7 @@ import {
 	openResponseChunk,
 	type ResponseCrypto,
 } from "./encapsulation.ts";
-import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
+import { asInvalidMessage, OHTTPError, OHTTPErrorCode } from "./errors.ts";
 import {
 	type AeadId,
 	isValidAeadId,
@@ -788,14 +788,14 @@ export class ChunkedOHTTPClient {
 				let decoded: Response;
 				try {
 					decoded = await bhttpDecoder().decodeResponseStream(plaintextStream);
-				} catch {
+				} catch (error) {
 					if (signal?.aborted) throw signal.reason;
-					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+					throw asInvalidMessage(error);
 				}
 				if (decoded.body === null) return decoded;
 				return new Response(
-					mapStreamErrors(decoded.body, () =>
-						signal?.aborted ? signal.reason : new OHTTPError(OHTTPErrorCode.InvalidMessage),
+					mapStreamErrors(decoded.body, (error) =>
+						signal?.aborted ? signal.reason : asInvalidMessage(error),
 					),
 					decoded,
 				);

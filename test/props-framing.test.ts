@@ -123,16 +123,8 @@ describe("parseFramedChunk truncation safety", () => {
 				expect(parseFramedChunk(prefix)).toBeUndefined();
 				return;
 			}
-			if (prefixLength < varintLength) {
-				// Fewer bytes than the first byte's prefix demands: the varint
-				// decode itself fails, which parseFramedChunk turns into InvalidMessage.
-				expect(catchOHTTPError(() => parseFramedChunk(prefix)).code).toBe(
-					OHTTPErrorCode.InvalidMessage,
-				);
-				return;
-			}
 			if (prefixLength < totalLength) {
-				// Varint complete, ciphertext still short: not enough data yet.
+				// Varint or ciphertext still short: not enough data yet.
 				expect(parseFramedChunk(prefix)).toBeUndefined();
 				return;
 			}

@@ -27,7 +27,9 @@ export interface ParsedChunk {
 /**
  * Parse a framed chunk, returning the ciphertext and whether it's final
  *
- * Returns undefined if not enough data available.
+ * Returns undefined if not enough data available, including a length prefix
+ * split across reads. A final chunk extends to end of stream, so call this on
+ * a final frame only once the whole body has been read.
  * Throws OHTTPError if the varint encoding is malformed, or if the declared
  * frame length exceeds `maxFrameSize`.
  *
@@ -38,6 +40,11 @@ export function parseFramedChunk(
 	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
 ): ParsedChunk | undefined {
 	if (data.length === 0) {
+		return undefined;
+	}
+
+	// A length prefix split across reads is incomplete, not malformed
+	if (data.length < 1 << ((data[0] as number) >> 6)) {
 		return undefined;
 	}
 
