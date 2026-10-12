@@ -224,7 +224,8 @@ async function decryptedFrame(operation: Promise<Uint8Array>, isFinal: boolean) 
  */
 class StreamBuffer {
 	readonly #chunks: Uint8Array[] = [];
-	#headOff = 0; // bytes already consumed from chunks[0]
+	#head = 0; // index of the first unconsumed chunk; shift() per chunk is O(k)
+	#headOff = 0; // bytes already consumed from chunks[head]
 	#total = 0; // bytes currently available across all chunks
 
 	get length(): number {
@@ -239,13 +240,13 @@ class StreamBuffer {
 
 	/** First available byte without consuming (length must be >= 1). */
 	firstByte(): number {
-		return (this.#chunks[0] as Uint8Array)[this.#headOff] as number;
+		return (this.#chunks[this.#head] as Uint8Array)[this.#headOff] as number;
 	}
 
 	/** First `n` bytes as a contiguous array (must be <= length), without consuming. */
 	peek(n: number): Uint8Array {
 		if (n === 0) return EMPTY;
-		const first = this.#chunks[0] as Uint8Array;
+		const first = this.#chunks[this.#head] as Uint8Array;
 		return first.length - this.#headOff >= n
 			? first.subarray(this.#headOff, this.#headOff + n) // zero copy: within one chunk
 			: this.#collect(n);
@@ -263,15 +264,23 @@ class StreamBuffer {
 		this.#total -= n;
 		let rem = n;
 		while (rem > 0) {
-			const c = this.#chunks[0] as Uint8Array;
+			const c = this.#chunks[this.#head] as Uint8Array;
 			const avail = c.length - this.#headOff;
 			if (rem < avail) {
 				this.#headOff += rem;
-				return;
+				break;
 			}
 			rem -= avail;
-			this.#chunks.shift();
+			this.#head++;
 			this.#headOff = 0;
+		}
+		// Drop consumed chunks in bulk, keeping skip amortized O(1) per chunk
+		if (this.#head === this.#chunks.length) {
+			this.#chunks.length = 0;
+			this.#head = 0;
+		} else if (this.#head >= 64 && this.#head * 2 >= this.#chunks.length) {
+			this.#chunks.splice(0, this.#head);
+			this.#head = 0;
 		}
 	}
 
@@ -279,8 +288,8 @@ class StreamBuffer {
 		const out = new Uint8Array(n);
 		let copied = 0;
 		let off = this.#headOff;
-		for (const c of this.#chunks) {
-			if (copied >= n) break;
+		for (let i = this.#head; copied < n; i++) {
+			const c = this.#chunks[i] as Uint8Array;
 			const take = Math.min(c.length - off, n - copied);
 			out.set(c.subarray(off, off + take), copied);
 			copied += take;
