@@ -74,11 +74,11 @@
 		"@fast-check/vitest": "0.5.0",
 		"@hpke/chacha20poly1305": "1.8.0",
 		"@panva/hpke-noble": "1.1.7",
-		"@playwright/test": "1.64.0",
+		"@playwright/test": "1.64.1",
 		"@types/node": "26.6.5",
-		"@vitest/browser": "5.0.3",
-		"@vitest/browser-playwright": "5.0.3",
-		"@vitest/coverage-v8": "5.0.3",
+		"@vitest/browser": "5.0.5",
+		"@vitest/browser-playwright": "5.0.5",
+		"@vitest/coverage-v8": "5.0.5",
 		"esbuild": "0.28.2",
 		"esbuild-visualizer": "0.7.0",
 		"fast-check": "4.10.2",
@@ -87,7 +87,7 @@
 		"tsdown": "0.23.1",
 		"typescript": "7.0.2",
 		"vite": "8.3.4",
-		"vitest": "5.0.3"
+		"vitest": "5.0.5"
 	},
 	"overrides": {
 		"tsdown": {
