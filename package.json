@@ -69,7 +69,7 @@
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",
-		"@biomejs/biome": "2.6.2",
+		"@biomejs/biome": "2.6.3",
 		"@cloudflare/vitest-plugin": "^1.4.0",
 		"@fast-check/vitest": "0.5.0",
 		"@hpke/chacha20poly1305": "1.8.0",
