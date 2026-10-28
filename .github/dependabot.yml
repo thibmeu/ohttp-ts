@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # tsdown >=0.23.2 needs TypeScript's classic API, gone in TS 7.0. Drop
+      # this once TS 7.1 ships the tsgo emit API that tsdown picks up instead.
+      - dependency-name: tsdown
+        versions: [">=0.23.2"]
     groups:
       dev-dependencies:
         dependency-type: development

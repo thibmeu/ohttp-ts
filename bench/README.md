@@ -19,18 +19,18 @@ client/server pair, from `fixtures.ts`.
 
 ## The benches
 
-| command | file | measures |
-|---|---|---|
-| `npm run bench` | `*.bench.ts` | vitest: every timing bench below |
-| `npm run bench:concurrency` | `concurrency.bench.ts` | throughput vs in-flight concurrency |
-| `npm run bench:overlap` | `overlap.ts` | `crypto.subtle` calls per op, by kind, plus overlap |
-| `npm run bench:alloc` | `alloc.ts` | arrayBuffers + heap per op |
-| `npm run bench:backpressure` | `backpressure.ts` | upstream read-ahead and memory while the network is stalled |
-| `npm run bench:profile` | `profile.ts` | CPU self-time per function (quick text summary) |
-| `npm run bench:trace` | `trace.ts` | `.cpuprofile` / `.heapprofile` / trace JSON for external tools |
-| `npm run bench:browser` | `*.bench.ts` | the vitest benches under Chromium |
-| `npm run bench:workers` | workerd timing benches | batched OHTTP, concurrency, and streaming throughput |
-| `npm run bench:workers:backpressure` | `workerd-backpressure.test.ts` | stalled-stream plaintext read-ahead in workerd |
+| command                              | file                           | measures                                                       |
+| ------------------------------------ | ------------------------------ | -------------------------------------------------------------- |
+| `npm run bench`                      | `*.bench.ts`                   | vitest: every timing bench below                               |
+| `npm run bench:concurrency`          | `concurrency.bench.ts`         | throughput vs in-flight concurrency                            |
+| `npm run bench:overlap`              | `overlap.ts`                   | `crypto.subtle` calls per op, by kind, plus overlap            |
+| `npm run bench:alloc`                | `alloc.ts`                     | arrayBuffers + heap per op                                     |
+| `npm run bench:backpressure`         | `backpressure.ts`              | upstream read-ahead and memory while the network is stalled    |
+| `npm run bench:profile`              | `profile.ts`                   | CPU self-time per function (quick text summary)                |
+| `npm run bench:trace`                | `trace.ts`                     | `.cpuprofile` / `.heapprofile` / trace JSON for external tools |
+| `npm run bench:browser`              | `*.bench.ts`                   | the vitest benches under Chromium                              |
+| `npm run bench:workers`              | workerd timing benches         | batched OHTTP, concurrency, and streaming throughput           |
+| `npm run bench:workers:backpressure` | `workerd-backpressure.test.ts` | stalled-stream plaintext read-ahead in workerd                 |
 
 `ohttp.bench.ts` (single-shot ops at 1KB and 1MB) and `streaming.bench.ts` (chunk
 transforms) complete the vitest set.
@@ -68,7 +68,6 @@ Wall-clock here is noisy. Much of each op is idle, waiting on async WebCrypto, s
 a few samples swing widely and a busy machine makes it worse. Treat the vitest hz
 as an order-of-magnitude and throughput-shape gate, not a microsecond-precise
 figure.
-
 - Gate on a quiet machine: pin cores (`taskset -c`), set the performance
   governor, close other work. Raise `BENCH_OPTS` (time and iterations, in
   `options.ts`) for a steadier read.
