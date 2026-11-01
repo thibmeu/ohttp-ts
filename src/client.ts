@@ -124,6 +124,7 @@ export interface EncapsulatedRequest {
  * - method: "POST"
  * - headers: { "Content-Type": "message/ohttp-req" }
  * - body: ArrayBuffer (encapsulated request)
+ * - signal (the request's), credentials: "omit", referrerPolicy: "no-referrer"
  *
  * Usage: `fetch(relayUrl, init)` or `new Request(relayUrl, init)`
  */
@@ -191,6 +192,9 @@ export interface ChunkedResponseContext {
  */
 export type StreamingRequestInit = RequestInit & { duplex: "half" };
 
+/** Outer-request defaults: no ambient cookies or page referrer reach the relay */
+const RELAY_INIT = { method: "POST", credentials: "omit", referrerPolicy: "no-referrer" } as const;
+
 /**
  * Result of encapsulating a chunked HTTP request (Request/Response API)
  *
@@ -199,6 +203,7 @@ export type StreamingRequestInit = RequestInit & { duplex: "half" };
  * - headers: { "Content-Type": "message/ohttp-chunked-req" }
  * - body: ReadableStream (streaming encapsulated request)
  * - duplex: "half" (required for streaming bodies in Node.js/Workers)
+ * - signal (the effective one), credentials: "omit", referrerPolicy: "no-referrer"
  *
  * Usage: `fetch(relayUrl, init)` or `new Request(relayUrl, init)`
  */
@@ -399,7 +404,8 @@ export class OHTTPClient {
 
 		// Build RequestInit for relay
 		const init: RequestInit = {
-			method: "POST",
+			...RELAY_INIT,
+			signal: request.signal,
 			headers: {
 				"Content-Type": MediaType.REQUEST,
 			},
@@ -804,7 +810,8 @@ export class ChunkedOHTTPClient {
 
 		// Build RequestInit for relay with streaming body
 		const init: StreamingRequestInit = {
-			method: "POST",
+			...RELAY_INIT,
+			signal,
 			headers: {
 				"Content-Type": MediaType.CHUNKED_REQUEST,
 			},

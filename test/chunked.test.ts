@@ -376,6 +376,8 @@ describe("chunk sequence guard", () => {
 		const spare = await server.createRequestContext(spareReq.header);
 
 		return {
+			server,
+			serverReq,
 			spare,
 			spareReq,
 			spareSealed,
@@ -433,6 +435,21 @@ describe("chunk sequence guard", () => {
 
 		await expect(spare.openChunk(extra)).rejects.toThrow(OHTTPErrorCode.ChunkSequenceError);
 		expect(await final).toEqual(data);
+	});
+
+	it("never reuses a response context across buffered and incremental sealing", async () => {
+		const { server, serverReq } = await finishedContexts();
+		const SEQ = OHTTPErrorCode.ChunkSequenceError;
+
+		const buffered = await serverReq.createResponseContext();
+		const first = server.encapsulateResponse(buffered, data);
+		await expect(server.encapsulateResponse(buffered, data)).rejects.toThrow(SEQ);
+		await first;
+		await expect(buffered.sealChunk(data)).rejects.toThrow(SEQ);
+
+		const incremental = await serverReq.createResponseContext();
+		await incremental.sealChunk(data);
+		await expect(server.encapsulateResponse(incremental, data)).rejects.toThrow(SEQ);
 	});
 });
 

@@ -16,6 +16,7 @@ import {
 	kAead,
 	kAeadKey,
 	kAeadNonce,
+	kClaim,
 	kEnc,
 	kRecipientContext,
 	kSuite,
@@ -183,6 +184,8 @@ export interface ChunkedServerResponseContext {
 	readonly [kAeadKey]: Uint8Array;
 	/** Derived response AEAD base nonce */
 	readonly [kAeadNonce]: Uint8Array;
+	/** Claim the whole response for the buffered path; any later seal or claim throws */
+	[kClaim](): void;
 }
 
 /**
@@ -537,6 +540,13 @@ export class ChunkedOHTTPServer {
 					[kAeadKey]: aeadKey,
 					[kAeadNonce]: aeadNonce,
 
+					[kClaim]() {
+						if (counter > 0 || responseFinished) {
+							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+						}
+						responseFinished = true;
+					},
+
 					async sealChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
@@ -604,6 +614,9 @@ export class ChunkedOHTTPServer {
 		responseContext: ChunkedServerResponseContext,
 		response: Uint8Array,
 	): Promise<Uint8Array<ArrayBuffer>> {
+		// Claimed before any await: the transform below restarts at counter 0, so
+		// a second use of this context would reuse (key, nonce) pairs.
+		responseContext[kClaim]();
 		// Chunk + seal through the pipelined response transform (seals run in a
 		// concurrent window), prefixed with the response nonce.
 		return collectStream(

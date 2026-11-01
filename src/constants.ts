@@ -94,3 +94,4 @@ export const kSuite: unique symbol = /* @__PURE__ */ Symbol("suite");
 export const kAead: unique symbol = /* @__PURE__ */ Symbol("aead");
 export const kAeadKey: unique symbol = /* @__PURE__ */ Symbol("aeadKey");
 export const kAeadNonce: unique symbol = /* @__PURE__ */ Symbol("aeadNonce");
+export const kClaim: unique symbol = /* @__PURE__ */ Symbol("claim");

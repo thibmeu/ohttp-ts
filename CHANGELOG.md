@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- `ChunkedOHTTPServer.encapsulateResponse` rejects a response context that was
+  already used, instead of encrypting again with the same AES-GCM key and nonce.
+  It throws `ChunkSequenceError`.
+
+### Changed
+
+- The `init` returned by `encapsulateRequest` now carries the request's
+  `signal`, so aborting it cancels the relay fetch. It also sets
+  `credentials: "omit"` and `referrerPolicy: "no-referrer"`. Override them on
+  `init` if your relay needs cookies.
+
 ## [0.6.2] - 2026-10-28
 
 ### Fixed
