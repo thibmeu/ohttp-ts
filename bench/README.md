@@ -68,6 +68,7 @@ Wall-clock here is noisy. Much of each op is idle, waiting on async WebCrypto, s
 a few samples swing widely and a busy machine makes it worse. Treat the vitest hz
 as an order-of-magnitude and throughput-shape gate, not a microsecond-precise
 figure.
+
 - Gate on a quiet machine: pin cores (`taskset -c`), set the performance
   governor, close other work. Raise `BENCH_OPTS` (time and iterations, in
   `options.ts`) for a steadier read.

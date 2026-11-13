@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-13
+
 ### Fixed
 
 - `ChunkedOHTTPServer.encapsulateResponse` rejects a response context that was
@@ -13,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   It throws `ChunkSequenceError`.
 
 ### Changed
+
+- Updated development and test dependencies, including HPKE 1.1.8.
 
 - The `init` returned by `encapsulateRequest` now carries the request's
   `signal`, so aborting it cancels the relay fetch. It also sets
