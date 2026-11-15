@@ -124,6 +124,7 @@ export type { StreamOperationOptions } from "./streaming.ts";
 // ============================================================================
 
 import {
+	AEAD_TAG_SIZE,
 	CHUNKED_REQUEST_LABEL,
 	CHUNKED_RESPONSE_LABEL,
 	DEFAULT_MAX_CHUNK_SIZE,
@@ -131,7 +132,6 @@ import {
 	DEFAULT_MAX_FRAME_SIZE,
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
-	FINAL_CHUNK_AAD,
 } from "./constants.ts";
 
 /** Protocol labels for OHTTP request/response encryption */
@@ -144,8 +144,6 @@ export const Labels = {
 	CHUNKED_REQUEST: CHUNKED_REQUEST_LABEL,
 	/** Label for chunked OHTTP responses (draft-08) */
 	CHUNKED_RESPONSE: CHUNKED_RESPONSE_LABEL,
-	/** AAD for final chunk in chunked OHTTP */
-	FINAL_CHUNK_AAD,
 } as const;
 
 /** Chunked OHTTP size limits */
@@ -154,6 +152,8 @@ export const Limits = {
 	MAX_CHUNK_SIZE: DEFAULT_MAX_CHUNK_SIZE,
 	/** Largest ciphertext frame accepted (16384-byte chunk plus tag) */
 	MAX_FRAME_SIZE: DEFAULT_MAX_FRAME_SIZE,
+	/** AEAD tag bytes on every ciphertext chunk (16) */
+	AEAD_TAG_SIZE,
 	/** Default `maxMessageSize` for the chunked client and server (1 GiB) */
 	DEFAULT_MAX_CHUNKED_MESSAGE_SIZE: DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 } as const;
@@ -191,5 +191,5 @@ export const Incremental = {
 // Low-level encapsulation (for advanced use)
 // ============================================================================
 
-export { AEAD_TAG_SIZE, type ResponseCrypto } from "./encapsulation.ts";
+export type { ResponseCrypto } from "./encapsulation.ts";
 export { frameChunk, type ParsedChunk, parseFramedChunk } from "./framing.ts";

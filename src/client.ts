@@ -553,6 +553,9 @@ export class ChunkedOHTTPClient {
 			},
 
 			async createResponseContext(responseNonce: Uint8Array): Promise<ChunkedResponseContext> {
+				if (responseNonce.length !== getResponseNonceLength(suite)) {
+					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+				}
 				const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
 					suite,
 					senderContext,

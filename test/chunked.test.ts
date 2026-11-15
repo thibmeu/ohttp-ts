@@ -367,9 +367,13 @@ describe("chunk sequence guard", () => {
 		const clientReq = await client.createRequestContext();
 		const sealedReq = await clientReq.sealFinalChunk(data);
 		const serverReq = await server.createRequestContext(clientReq.header);
+		expect(serverReq.bytesConsumed).toBe(clientReq.header.length);
 		expect(await serverReq.openFinalChunk(sealedReq)).toEqual(data);
 
 		const serverResp = await serverReq.createResponseContext();
+		await expect(
+			clientReq.createResponseContext(serverResp.responseNonce.subarray(1)),
+		).rejects.toMatchObject({ code: OHTTPErrorCode.InvalidMessage });
 		const sealedResp = await serverResp.sealFinalChunk(data);
 		const clientResp = await clientReq.createResponseContext(serverResp.responseNonce);
 		expect(await clientResp.openFinalChunk(sealedResp)).toEqual(data);

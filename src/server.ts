@@ -148,6 +148,8 @@ export interface HttpServerContext {
 export interface ChunkedServerRequestContext {
 	/** The key ID the request was encrypted to */
 	readonly keyId: number;
+	/** Header length (7 + Nenc): the chunks start at this offset of the input */
+	readonly bytesConsumed: number;
 	/** Open a non-final chunk */
 	openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Open the final chunk */
@@ -420,12 +422,12 @@ export class ChunkedOHTTPServer {
 	 * Create a streaming request context from the encapsulated header
 	 *
 	 * Use this for incremental request processing:
-	 * 1. Parse header (first 7 + Nenc bytes)
+	 * 1. Pass the header (7 + Nenc bytes; trailing bytes are ignored, see `bytesConsumed`)
 	 * 2. For each chunk: await ctx.openChunk(ciphertext) or ctx.openFinalChunk(ciphertext)
 	 */
 	async createRequestContext(encapsulatedHeader: Uint8Array): Promise<ChunkedServerRequestContext> {
 		// parseRequestHeader already rejects anything shorter than 7 + Nenc.
-		const { header } = parseRequestHeader(encapsulatedHeader);
+		const { header, offset } = parseRequestHeader(encapsulatedHeader);
 
 		// Find matching key config
 		const keyConfig = this.#keyConfigs.find((k) => k.keyId === header.keyId);
@@ -470,6 +472,7 @@ export class ChunkedOHTTPServer {
 
 		const requestContext: ChunkedServerRequestContext = {
 			keyId: keyConfig.keyId,
+			bytesConsumed: offset,
 
 			async openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				if (requestState !== "open") {
@@ -570,15 +573,13 @@ export class ChunkedOHTTPServer {
 	 * {@link OHTTPServer.decapsulate}.
 	 */
 	async decapsulate(encapsulatedRequest: Uint8Array): Promise<DecapsulatedRequest> {
-		// Parse header to get offset
-		const { offset: headerOffset } = parseRequestHeader(encapsulatedRequest);
-		const ctx = await this.createRequestContext(encapsulatedRequest.subarray(0, headerOffset));
+		const ctx = await this.createRequestContext(encapsulatedRequest);
 		const { recipientContext, enc, suite } = recipientState(ctx);
 
 		// Decrypt the framed body through the request decrypt transform (opens run
 		// in a concurrent window).
 		const request = await collectStream(
-			streamOfBytes(encapsulatedRequest.subarray(headerOffset)).pipeThrough(
+			streamOfBytes(encapsulatedRequest.subarray(ctx.bytesConsumed)).pipeThrough(
 				createRequestDecryptTransform(recipientContext, this.maxMessageSize),
 			),
 		);

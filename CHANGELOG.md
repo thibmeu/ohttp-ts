@@ -17,6 +17,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Size constants moved from `Labels` to `Limits` (`MAX_CHUNK_SIZE`,
   `MAX_FRAME_SIZE`, `DEFAULT_MAX_CHUNKED_MESSAGE_SIZE`).
 - `ChunkedServerRequestContext.keyConfig` is now `keyId`.
+- `AEAD_TAG_SIZE` moved to `Limits.AEAD_TAG_SIZE`; `Labels.FINAL_CHUNK_AAD` is
+  removed.
+- Client constructors throw `InvalidKeyConfig` for a `keyId` outside 0-255.
+- A response chunk that fails to open ends its `ChunkedResponseContext`; later
+  opens throw `ChunkSequenceError`.
+- `ChunkedRequestContext.createResponseContext` throws `InvalidMessage` for a
+  response nonce of the wrong length.
 - Removed `KeyConfig.selectSuite` and the `ClientEncapsulationContext`,
   `ServerEncapsulationContext` and `EncapsulatedRequestHeader` types.
 - `KeyConfig.import` rejects a private key that does not match the public key.
@@ -28,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - `KeyConfig.fromKeyPair(suites, keyId, keyPair)`, e.g. for non-extractable
   `CryptoKey`s.
+- `ChunkedServerRequestContext.bytesConsumed`, the request header length.
 - `KeyConfig.select([suiteA, suiteB], configs)` returns `{ suite, config }` for
   the first suite, in client order, that a config supports.
 
