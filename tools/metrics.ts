@@ -80,11 +80,45 @@ async function collect(): Promise<Metrics> {
 	const f1m = await makeFixture(1_048_576);
 
 	const cenc1k = (await chunkedClient.encapsulate(f1k.payload)).encapsulatedRequest;
-	const { encapsulatedRequest: cenc1m, context: cclient } = await chunkedClient.encapsulate(
-		f1m.payload,
-	);
-	const { context: cserver } = await chunkedServer.decapsulate(cenc1m);
-	const cresponse = await cserver.encryptResponse(f1m.payload);
+	const clientResult = await chunkedClient.encapsulate(f1m.payload);
+	const cenc1m = clientResult.encapsulatedRequest;
+	const serverResult = await chunkedServer.decapsulate(cenc1m);
+
+	// CI copies this harness onto the base revision too. Adapt the pre-0.7
+	// API without changing the measured work: derive fresh response keys on
+	// every seal, and include that derivation in the measured operation.
+	type LegacyResponseContext = Awaited<ReturnType<typeof chunkedServer.createRequestContext>>;
+	const legacyServer = serverResult as unknown as Pick<
+		LegacyResponseContext,
+		"createResponseContext"
+	>;
+	const legacyClient = clientResult as unknown as {
+		createResponseContext: Awaited<
+			ReturnType<typeof chunkedClient.createRequestContext>
+		>["createResponseContext"];
+	};
+	const encryptResponse = serverResult.context
+		? () => serverResult.context.encryptResponse(f1m.payload)
+		: async () => {
+				const ctx = await legacyServer.createResponseContext();
+				return (
+					chunkedServer as unknown as {
+						encapsulateResponse(context: typeof ctx, response: Uint8Array): Promise<Uint8Array>;
+					}
+				).encapsulateResponse(ctx, f1m.payload);
+			};
+	const cresponse = await encryptResponse();
+	const decryptResponse = clientResult.context
+		? () => clientResult.context.decryptResponse(cresponse)
+		: () =>
+				(
+					chunkedClient as unknown as {
+						decapsulateResponse(
+							create: typeof legacyClient.createResponseContext,
+							response: Uint8Array,
+						): Promise<Uint8Array>;
+					}
+				).decapsulateResponse(legacyClient.createResponseContext, cresponse);
 
 	const ops: Array<[string, () => Promise<unknown>]> = [
 		["encapsulate 1KB", () => client.encapsulate(f1k.payload)],
@@ -97,8 +131,8 @@ async function collect(): Promise<Metrics> {
 		["chunked encapsulate 1MB", () => chunkedClient.encapsulate(f1m.payload)],
 		["chunked decapsulate 1KB", () => chunkedServer.decapsulate(cenc1k)],
 		["chunked decapsulate 1MB", () => chunkedServer.decapsulate(cenc1m)],
-		["chunked encryptResponse 1MB", () => cserver.encryptResponse(f1m.payload)],
-		["chunked decryptResponse 1MB", () => cclient.decryptResponse(cresponse)],
+		["chunked encryptResponse 1MB", encryptResponse],
+		["chunked decryptResponse 1MB", decryptResponse],
 	];
 
 	const out: Metrics = {};

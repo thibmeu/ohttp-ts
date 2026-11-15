@@ -138,7 +138,8 @@ export interface StreamOperationOptions {
  * that otherwise serializes the stream; on runtimes with synchronous-under-the-
  * hood crypto (workerd) it is harmless. Measured by bench:overlap (chunkedSeal
  * c=1 vs c=4).
- * The request leg gains nothing: hpke serializes Seal/Open on its context.
+ * The request leg gains nothing yet: hpke holds a per-context lock across each
+ * Seal/Open, so its window queues inside hpke instead of overlapping.
  */
 const AEAD_PIPELINE_DEPTH = 4;
 
@@ -327,7 +328,8 @@ export function createRequestEncryptTransform(
 	const pipeline = createCryptoPipeline();
 	const writable = pipeline.writable({
 		async write(chunk) {
-			// HPKE claims sequence numbers synchronously when Seal is called.
+			// Seals are issued without awaiting the previous one. hpke's context
+			// lock is FIFO, so sequence numbers follow call order.
 			if (pendingChunk !== undefined) {
 				claim(pendingChunk.length, false);
 				await pipeline.enqueue(encryptedFrame(senderContext.Seal(pendingChunk), false));

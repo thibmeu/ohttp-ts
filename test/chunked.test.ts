@@ -432,6 +432,23 @@ describe("chunk sequence guard", () => {
 		);
 	});
 
+	it("fails closed when a response chunk fails to decrypt", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const req = await new ChunkedOHTTPClient(suite, keyConfig).createRequestContext();
+		const serverReq = await new ChunkedOHTTPServer([keyConfig]).createRequestContext(req.header);
+		const serverRes = await serverReq.createResponseContext();
+		const first = await serverRes.sealChunk(data);
+		const second = await serverRes.sealChunk(data);
+		const res = await req.createResponseContext(serverRes.responseNonce);
+		const tampered = Uint8Array.from(first);
+		tampered[0] ^= 0x01;
+
+		await expect(res.openChunk(tampered)).rejects.toThrow(OHTTPErrorCode.DecryptionFailed);
+		// Opening the next chunk would otherwise succeed and hide the gap
+		await expect(res.openChunk(second)).rejects.toThrow(OHTTPErrorCode.ChunkSequenceError);
+	});
+
 	it("claims the final request chunk synchronously", async () => {
 		const { spare, spareReq, spareSealed } = await finishedContexts();
 		const extra = await hpkeOf(spareReq).senderContext.Seal(data);

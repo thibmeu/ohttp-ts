@@ -37,6 +37,7 @@ import {
 	type AeadId,
 	isValidAeadId,
 	isValidKdfId,
+	isValidKeyId,
 	type KdfId,
 	type KeyConfig,
 	supportsKeyConfig,
@@ -263,6 +264,10 @@ export class OHTTPClient {
 		const rawKdfId = suite.KDF.id;
 		const rawAeadId = suite.AEAD.id;
 
+		// The wire gives keyId one byte: anything else would be silently truncated
+		if (!isValidKeyId(keyConfig.keyId)) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+		}
 		if (
 			!isValidKdfId(rawKdfId) ||
 			!isValidAeadId(rawAeadId) ||
@@ -456,6 +461,10 @@ export class ChunkedOHTTPClient {
 		const rawKdfId = suite.KDF.id;
 		const rawAeadId = suite.AEAD.id;
 
+		// The wire gives keyId one byte: anything else would be silently truncated
+		if (!isValidKeyId(keyConfig.keyId)) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+		}
 		if (
 			!isValidKdfId(rawKdfId) ||
 			!isValidAeadId(rawAeadId) ||
@@ -561,6 +570,12 @@ export class ChunkedOHTTPClient {
 				const claimResponse = createChunkBudget(maxMessageSize);
 				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
 				const maxChunks = 2 ** 32;
+				// A failed open ends the response: its counter is spent, so carrying
+				// on would hand the caller a message with that chunk missing.
+				const fail = (error: unknown): never => {
+					responseFinished = true;
+					throw error;
+				};
 
 				return {
 					async openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
@@ -574,7 +589,9 @@ export class ChunkedOHTTPClient {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
 						claimResponse(ciphertext.length - AEAD_TAG_SIZE, false);
-						return openResponseChunk(aead, aeadKey, aeadNonce, counter++, ciphertext, false);
+						return openResponseChunk(aead, aeadKey, aeadNonce, counter++, ciphertext, false).catch(
+							fail,
+						);
 					},
 
 					async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
