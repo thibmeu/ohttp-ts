@@ -12,13 +12,6 @@ import { encode as encodeVarint } from "quicvarint";
 import { describe, expect } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
 import {
-	kAead,
-	kAeadKey,
-	kAeadNonce,
-	kRecipientContext,
-	kSenderContext,
-} from "../src/constants.js";
-import {
 	computeChunkNonce,
 	DEFAULT_MAX_FRAME_SIZE,
 	frameChunk,
@@ -45,6 +38,7 @@ import {
 	splitAt,
 	splitPointsArb,
 } from "./props-helpers.js";
+import { aeadOf, hpkeOf } from "./test-utils.js";
 
 // ============================================================================
 // Shared fixtures - built once and reused across every property run below.
@@ -74,12 +68,7 @@ const server = new ChunkedOHTTPServer([serverKeyConfig]);
  */
 const responseKeys = await (async () => {
 	const { serverCtx } = await freshRequestPair();
-	const responseCtx = await serverCtx.createResponseContext();
-	return {
-		aead: responseCtx[kAead],
-		aeadKey: responseCtx[kAeadKey],
-		aeadNonce: responseCtx[kAeadNonce],
-	};
+	return aeadOf(serverCtx, await serverCtx.createResponseContext());
 })();
 
 const CRYPTO = { numRuns: CRYPTO_RUNS };
@@ -123,14 +112,14 @@ describe("chunk-boundary independence", () => {
 			const cipherBody = await collectStream(
 				streamOfBytes(plaintext)
 					.pipeThrough(createChunkerTransform(maxChunkSize))
-					.pipeThrough(createRequestEncryptTransform(clientCtx[kSenderContext])),
+					.pipeThrough(createRequestEncryptTransform(hpkeOf(clientCtx).senderContext)),
 			);
 
 			// Each delivery shape needs its own recipient context: the context owns
 			// the sequence numbering, so it cannot decrypt the same body twice.
 			const decryptWithFreshContext = async (pieces: readonly Uint8Array[]) => {
 				const serverCtx = await recipientFor(clientCtx);
-				return decryptRequestFrames(serverCtx[kRecipientContext], pieces);
+				return decryptRequestFrames(hpkeOf(serverCtx).recipientContext, pieces);
 			};
 
 			// One giant buffer (a single read).
@@ -197,7 +186,7 @@ describe("truncation is rejected", () => {
 
 			const serverCtx = await recipientFor(clientCtx);
 			const error = await expectOHTTPError(
-				decryptRequestFrames(serverCtx[kRecipientContext], [body.subarray(0, cut)]),
+				decryptRequestFrames(hpkeOf(serverCtx).recipientContext, [body.subarray(0, cut)]),
 			);
 
 			// Below the final marker, the stream ends without ever seeing one:
@@ -216,7 +205,7 @@ describe("truncation is rejected", () => {
 
 		const serverCtx = await recipientFor(clientCtx);
 		const error = await expectOHTTPError(
-			decryptRequestFrames(serverCtx[kRecipientContext], [body]),
+			decryptRequestFrames(hpkeOf(serverCtx).recipientContext, [body]),
 		);
 		expect(error.code).toBe(OHTTPErrorCode.InvalidMessage);
 	});
@@ -228,7 +217,7 @@ describe("truncation is rejected", () => {
 
 		const serverCtx = await recipientFor(clientCtx);
 		const error = await expectOHTTPError(
-			decryptRequestFrames(serverCtx[kRecipientContext], [midFrame]),
+			decryptRequestFrames(hpkeOf(serverCtx).recipientContext, [midFrame]),
 		);
 		expect(error.code).toBe(OHTTPErrorCode.InvalidMessage);
 	});
@@ -393,7 +382,7 @@ describe("frame reordering, duplication, and dropping", () => {
 			const body = concat(...order.map((idx) => frames[idx] as Uint8Array), finalFrame);
 
 			const serverCtx = await recipientFor(clientCtx);
-			await expectOHTTPError(decryptRequestFrames(serverCtx[kRecipientContext], [body]));
+			await expectOHTTPError(decryptRequestFrames(hpkeOf(serverCtx).recipientContext, [body]));
 		},
 	);
 
@@ -414,7 +403,7 @@ describe("frame reordering, duplication, and dropping", () => {
 
 			const serverCtx = await recipientFor(clientCtx);
 			await expectOHTTPError(
-				decryptRequestFrames(serverCtx[kRecipientContext], [concat(...withDup, finalFrame)]),
+				decryptRequestFrames(hpkeOf(serverCtx).recipientContext, [concat(...withDup, finalFrame)]),
 			);
 		},
 	);
@@ -430,7 +419,7 @@ describe("frame reordering, duplication, and dropping", () => {
 
 		const serverCtx = await recipientFor(clientCtx);
 		await expectOHTTPError(
-			decryptRequestFrames(serverCtx[kRecipientContext], [concat(...withoutOne, finalFrame)]),
+			decryptRequestFrames(hpkeOf(serverCtx).recipientContext, [concat(...withoutOne, finalFrame)]),
 		);
 	});
 });
@@ -440,16 +429,14 @@ describe("frame reordering, duplication, and dropping", () => {
 // ============================================================================
 
 describe("maxFrameSize enforcement", () => {
-	const maxFrameSize = 64;
+	const maxFrameSize = DEFAULT_MAX_FRAME_SIZE;
 
 	it.prop([fc.integer({ min: maxFrameSize + 1, max: maxFrameSize + 10_000 })], CRYPTO)(
 		"a declared non-final length above maxFrameSize is rejected before that many bytes arrive",
 		async (declaredLength) => {
 			// Only the length prefix is sent - never the (nonexistent) payload -
 			// proving the check runs before the frame is buffered.
-			const error = await expectOHTTPError(
-				decryptResponseFrames([encodeVarint(declaredLength)], maxFrameSize),
-			);
+			const error = await expectOHTTPError(decryptResponseFrames([encodeVarint(declaredLength)]));
 			expect(error.code).toBe(OHTTPErrorCode.ChunkLimitExceeded);
 		},
 	);
@@ -458,7 +445,7 @@ describe("maxFrameSize enforcement", () => {
 		"a final chunk whose accumulated length exceeds maxFrameSize is rejected",
 		async (overflowLength) => {
 			const body = concat(encodeVarint(0), new Uint8Array(overflowLength));
-			const error = await expectOHTTPError(decryptResponseFrames([body], maxFrameSize));
+			const error = await expectOHTTPError(decryptResponseFrames([body]));
 			expect(error.code).toBe(OHTTPErrorCode.ChunkLimitExceeded);
 		},
 	);
@@ -470,7 +457,7 @@ describe("maxFrameSize enforcement", () => {
 		// concern - it's real ciphertext or bust, tested elsewhere).
 		const header = encodeVarint(maxFrameSize);
 		const errorOrUndefined = await Promise.race([
-			decryptResponseFrames([header], maxFrameSize).then(
+			decryptResponseFrames([header]).then(
 				() => undefined,
 				(e: unknown) => e,
 			),
@@ -493,20 +480,13 @@ describe("ChunkedOHTTPClient/ChunkedOHTTPServer round-trip", () => {
 			const runClient = new ChunkedOHTTPClient(suite, publicKeyConfig);
 			const runServer = new ChunkedOHTTPServer([serverKeyConfig]);
 
-			const { encapsulatedRequest, createResponseContext } =
+			const { encapsulatedRequest, context: bytesClient } =
 				await runClient.encapsulate(requestPayload);
-			const { request, createResponseContext: serverCreateResponse } =
-				await runServer.decapsulate(encapsulatedRequest);
+			const { request, context: bytesGateway } = await runServer.decapsulate(encapsulatedRequest);
 			expect(request).toEqual(requestPayload);
 
-			const responseCtx = await serverCreateResponse();
-			const encapsulatedResponse = await runServer.encapsulateResponse(
-				responseCtx,
-				responsePayload,
-			);
-			expect(
-				await runClient.decapsulateResponse(createResponseContext, encapsulatedResponse),
-			).toEqual(responsePayload);
+			const encapsulatedResponse = await bytesGateway.encryptResponse(responsePayload);
+			expect(await bytesClient.decryptResponse(encapsulatedResponse)).toEqual(responsePayload);
 		},
 	);
 });
@@ -622,26 +602,19 @@ async function expectOHTTPError(promise: Promise<unknown>): Promise<OHTTPError> 
 function decryptRequestFrames(
 	recipientContext: Parameters<typeof createRequestDecryptTransform>[0],
 	pieces: readonly Uint8Array[],
-	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
 ): Promise<Uint8Array> {
 	return collectStream(
-		streamFromPieces(pieces).pipeThrough(
-			createRequestDecryptTransform(recipientContext, maxFrameSize),
-		),
+		streamFromPieces(pieces).pipeThrough(createRequestDecryptTransform(recipientContext)),
 	);
 }
 
-function decryptResponseFrames(
-	pieces: readonly Uint8Array[],
-	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
-): Promise<Uint8Array> {
+function decryptResponseFrames(pieces: readonly Uint8Array[]): Promise<Uint8Array> {
 	return collectStream(
 		streamFromPieces(pieces).pipeThrough(
 			createResponseDecryptTransform(
 				responseKeys.aead,
 				responseKeys.aeadKey,
 				responseKeys.aeadNonce,
-				maxFrameSize,
 			),
 		),
 	);

@@ -18,8 +18,8 @@ export function frameChunk(ciphertext: Uint8Array, isFinal: boolean): Uint8Array
 /**
  * Result of parsing a framed chunk
  */
-export interface ParsedChunk {
-	readonly ciphertext: Uint8Array<ArrayBuffer>;
+export interface ParsedChunk<T extends ArrayBufferLike = ArrayBuffer> {
+	readonly ciphertext: Uint8Array<T>;
 	readonly isFinal: boolean;
 	readonly bytesConsumed: number;
 }
@@ -28,24 +28,32 @@ export interface ParsedChunk {
  * Parse a framed chunk, returning the ciphertext and whether it's final
  *
  * Returns undefined if not enough data available, including a length prefix
- * split across reads. A final chunk extends to end of stream, so call this on
- * a final frame only once the whole body has been read.
- * Throws OHTTPError if the varint encoding is malformed, or if the declared
- * frame length exceeds `maxFrameSize`.
+ * split across reads. A final chunk extends to end of stream, so it is only
+ * returned once `endOfStream` says `data` holds the rest of the body.
+ * Throws OHTTPError if the varint encoding is malformed, if a frame exceeds
+ * the 16 KiB-plus-tag cap every chunk context enforces, or (InvalidMessage) if
+ * `endOfStream` is set and `data` ends mid-frame.
  *
  * `ciphertext` views `data`; do not mutate `data` while holding it.
  */
-export function parseFramedChunk(
-	data: Uint8Array<ArrayBuffer>,
-	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
-): ParsedChunk | undefined {
-	if (data.length === 0) {
+export function parseFramedChunk<T extends ArrayBufferLike>(
+	data: Uint8Array<T>,
+	{ endOfStream = false }: { endOfStream?: boolean } = {},
+): ParsedChunk<T> | undefined {
+	const incomplete = (): undefined => {
+		if (endOfStream) {
+			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+		}
 		return undefined;
+	};
+
+	if (data.length === 0) {
+		return incomplete();
 	}
 
 	// A length prefix split across reads is incomplete, not malformed
 	if (data.length < 1 << ((data[0] as number) >> 6)) {
-		return undefined;
+		return incomplete();
 	}
 
 	// Decode varint length - may throw on malformed input
@@ -62,8 +70,11 @@ export function parseFramedChunk(
 	if (length === 0) {
 		// Final chunk - extends to end of stream, so only the cap bounds it
 		const ciphertext = data.subarray(varintLength);
-		if (ciphertext.length > maxFrameSize) {
+		if (ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
 			throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+		}
+		if (!endOfStream) {
+			return undefined;
 		}
 		return {
 			ciphertext,
@@ -73,13 +84,12 @@ export function parseFramedChunk(
 	}
 
 	// Non-final chunk
-	if (length > maxFrameSize) {
+	if (length > DEFAULT_MAX_FRAME_SIZE) {
 		throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 	}
 	const totalLength = varintLength + length;
 	if (data.length < totalLength) {
-		// Not enough data
-		return undefined;
+		return incomplete();
 	}
 
 	return {

@@ -134,7 +134,7 @@ export interface KeyConfig {
 export interface KeyConfigWithPrivate extends KeyConfig {
 	/** HPKE key pair, valid for every suite in {@link suites} */
 	readonly keyPair: KeyPair;
-	/** One suite per advertised (KDF, AEAD) pair; {@link selectSuite} picks one */
+	/** One suite per advertised (KDF, AEAD) pair */
 	readonly suites: readonly CipherSuite[];
 }
 
@@ -270,6 +270,27 @@ async function assertKeyPairServesSuites(
 		if (bytes.length !== publicKeyBytes.length || !bytes.every((b, i) => b === publicKeyBytes[i])) {
 			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 		}
+	}
+}
+
+/**
+ * A mismatched pair fails here rather than as DecryptionFailed on every request.
+ * Compares exporter secrets so only the KEM and KDF run, not the AEAD, which
+ * the runtime may lack.
+ */
+async function assertKeysMatch(suite: CipherSuite, keyPair: KeyPair): Promise<void> {
+	const { encapsulatedSecret, ctx } = await suite.SetupSender(keyPair.publicKey);
+	let recipient: Awaited<ReturnType<CipherSuite["SetupRecipient"]>>;
+	try {
+		recipient = await suite.SetupRecipient(keyPair, encapsulatedSecret);
+	} catch {
+		// e.g. a private key of another KEM: not a pair either
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+	const probe = new Uint8Array(0);
+	const [a, b] = await Promise.all([ctx.Export(probe, 32), recipient.Export(probe, 32)]);
+	if (!a.every((byte, i) => byte === b[i])) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
 }
 
@@ -520,13 +541,28 @@ export function supportsKeyConfig(suite: CipherSuite, config: KeyConfig): boolea
  *
  * First match means the gateway's order decides. Where it lists two keys this
  * suite can use, the earlier one wins.
+ *
+ * Given a list of suites, returns the first suite with a usable config and
+ * that config, so the client's order decides between suites, e.g. ML-KEM
+ * before X25519 to prefer post-quantum when the gateway offers it.
  */
-export function selectKeyConfig(suite: CipherSuite, configs: readonly KeyConfig[]): KeyConfig {
-	const selected = configs.find((config) => supportsKeyConfig(suite, config));
-	if (selected === undefined) {
-		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+export function selectKeyConfig(suite: CipherSuite, configs: readonly KeyConfig[]): KeyConfig;
+export function selectKeyConfig(
+	suites: readonly CipherSuite[],
+	configs: readonly KeyConfig[],
+): { suite: CipherSuite; config: KeyConfig };
+export function selectKeyConfig(
+	suites: CipherSuite | readonly CipherSuite[],
+	configs: readonly KeyConfig[],
+): KeyConfig | { suite: CipherSuite; config: KeyConfig } {
+	const list: readonly CipherSuite[] = Array.isArray(suites) ? suites : [suites as CipherSuite];
+	for (const suite of list) {
+		const config = configs.find((c) => supportsKeyConfig(suite, c));
+		if (config !== undefined) {
+			return Array.isArray(suites) ? { suite, config } : config;
+		}
 	}
-	return selected;
+	throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
 }
 
 /**
@@ -613,11 +649,26 @@ export async function deriveKeyConfig(
 	};
 }
 
+function checkedSuites(
+	suites: CipherSuite | readonly CipherSuite[],
+	keyId: number,
+): readonly [CipherSuite, ...CipherSuite[]] {
+	if (!isValidKeyId(keyId)) {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
+	const suiteList = resolveSuites(suites);
+	if (!isValidKemId(suiteList[0].KEM.id)) {
+		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
+	}
+	return suiteList;
+}
+
 /**
  * Import a key pair to create a KeyConfigWithPrivate
  *
  * Both public and private key bytes are required since deriving the public key
  * from the private key is KEM-specific and not exposed by the hpke library.
+ * Throws `InvalidKeyConfig` if they are not a pair.
  *
  * @param suites - HPKE cipher suite, or one per (KDF, AEAD) pair to advertise
  * @param keyId - Key identifier (0-255)
@@ -630,33 +681,44 @@ export async function importKeyConfig(
 	publicKeyBytes: Uint8Array,
 	privateKeyBytes: Uint8Array,
 ): Promise<KeyConfigWithPrivate> {
-	if (!isValidKeyId(keyId)) {
-		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
-	}
+	const suite = checkedSuites(suites, keyId)[0];
+	const keyPair: KeyPair = {
+		publicKey: await suite.DeserializePublicKey(publicKeyBytes),
+		privateKey: await suite.DeserializePrivateKey(privateKeyBytes, false),
+	};
+	return keyConfigFromKeyPair(suites, keyId, keyPair);
+}
 
-	const suiteList = resolveSuites(suites);
+/**
+ * Create a KeyConfigWithPrivate from an existing key pair
+ *
+ * Lets the private key stay a non-extractable CryptoKey, e.g. from
+ * `crypto.subtle.unwrapKey`, so its bytes never pass through JS. That holds
+ * only for KEMs the suite runs on WebCrypto; JS backends keep key bytes anyway.
+ * Throws `InvalidKeyConfig` if the keys are not a pair.
+ *
+ * @param suites - HPKE cipher suite, or one per (KDF, AEAD) pair to advertise
+ * @param keyId - Key identifier (0-255)
+ * @param keyPair - Key pair usable by the suites' KEM
+ */
+export async function keyConfigFromKeyPair(
+	suites: CipherSuite | readonly CipherSuite[],
+	keyId: number,
+	keyPair: KeyPair,
+): Promise<KeyConfigWithPrivate> {
+	const suiteList = checkedSuites(suites, keyId);
 	const suite = suiteList[0];
+	const kemId = suite.KEM.id as KemId;
 
-	// Validate KEM ID
-	const kemId = suite.KEM.id;
-	if (!isValidKemId(kemId)) {
-		throw new OHTTPError(OHTTPErrorCode.UnsupportedCipherSuite);
-	}
-
-	const algorithms = symmetricAlgorithmsOf(suiteList);
-
-	const publicKey = await suite.DeserializePublicKey(publicKeyBytes);
-	const privateKey = await suite.DeserializePrivateKey(privateKeyBytes, false);
-
-	const keyPair: KeyPair = { publicKey, privateKey };
-
-	await assertKeyPairServesSuites(suiteList, publicKey, publicKeyBytes);
+	const publicKey = await suite.SerializePublicKey(keyPair.publicKey);
+	await assertKeyPairServesSuites(suiteList, keyPair.publicKey, publicKey);
+	await assertKeysMatch(suite, keyPair);
 
 	return {
 		keyId,
 		kemId,
-		publicKey: publicKeyBytes,
-		symmetricAlgorithms: algorithms,
+		publicKey,
+		symmetricAlgorithms: symmetricAlgorithmsOf(suiteList),
 		keyPair,
 		suites: suiteList,
 	};

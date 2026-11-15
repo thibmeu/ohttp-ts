@@ -33,13 +33,13 @@ export async function chunkedOHTTP(): Promise<boolean> {
 	const request = new TextEncoder().encode(
 		`POST /upload HTTP/1.1\r\n\r\n${"X".repeat(200)}`, // Large enough to chunk
 	);
-	const { encapsulatedRequest, createResponseContext } = await client.encapsulate(request);
+	const { encapsulatedRequest, context } = await client.encapsulate(request);
 	//   +---------------------------->|       Gateway Request       |
 	//   |                             |   [+ Encapsulated Request   |
 	//   |                             |           (chunk 1 ... N) ] |
 	//   |                             +---------------------------->|
 	//   |                             |                             |
-	const { request: decryptedRequest, createResponseContext: serverCreateResponse } =
+	const { request: decryptedRequest, context: gatewayContext } =
 		await gateway.decapsulate(encapsulatedRequest);
 	//   |                             |                             |
 	//   |                             |        Gateway Response     |
@@ -48,17 +48,13 @@ export async function chunkedOHTTP(): Promise<boolean> {
 	const response = new TextEncoder().encode(
 		`HTTP/1.1 200 OK\r\n\r\n${"Y".repeat(150)}`, // Large enough to chunk
 	);
-	const responseCtx = await serverCreateResponse();
-	const encapsulatedResponse = await gateway.encapsulateResponse(responseCtx, response);
+	const encapsulatedResponse = await gatewayContext.encryptResponse(response);
 	//   |        Relay Response       |<----------------------------+
 	//   |  [+ Encapsulated Response   |                             |
 	//   |           (chunk 1 ... M) ] |                             |
 	//   |<----------------------------+                             |
 	//   |                             |                             |
-	const decryptedResponse = await client.decapsulateResponse(
-		createResponseContext,
-		encapsulatedResponse,
-	);
+	const decryptedResponse = await context.decryptResponse(encapsulatedResponse);
 
 	const requestMatch =
 		new TextDecoder().decode(decryptedRequest) === new TextDecoder().decode(request);

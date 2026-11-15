@@ -15,12 +15,7 @@ import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it } from "vitest";
 import { bhttpEncoder } from "../src/bhttp.js";
 import { ChunkedOHTTPClient } from "../src/client.js";
-import {
-	CHUNKED_REQUEST_LABEL,
-	kRecipientContext,
-	kSenderContext,
-	MediaType,
-} from "../src/constants.js";
+import { CHUNKED_REQUEST_LABEL, MediaType } from "../src/constants.js";
 import {
 	buildRequestInfo,
 	computeChunkNonce,
@@ -46,7 +41,7 @@ import {
 import { ChunkedOHTTPServer } from "../src/server.js";
 import { collectStream } from "../src/streaming.js";
 import { concat } from "../src/utils.js";
-import { hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
+import { hex, hpkeOf, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
 import chunkedVectors from "./vectors/chunked-ohttp-08.json";
 
 describe("chunk framing", () => {
@@ -72,7 +67,7 @@ describe("chunk framing", () => {
 		const data = new Uint8Array([1, 2, 3, 4, 5]);
 		const framed = frameChunk(data, false);
 
-		const parsed = parseFramedChunk(framed);
+		const parsed = parseFramedChunk(framed, { endOfStream: true });
 		expect(parsed).toBeDefined();
 		expect(parsed?.isFinal).toBe(false);
 		expect(parsed?.ciphertext).toEqual(data);
@@ -83,7 +78,7 @@ describe("chunk framing", () => {
 		const data = new Uint8Array([1, 2, 3]);
 		const framed = frameChunk(data, true);
 
-		const parsed = parseFramedChunk(framed);
+		const parsed = parseFramedChunk(framed, { endOfStream: true });
 		expect(parsed).toBeDefined();
 		expect(parsed?.isFinal).toBe(true);
 		expect(parsed?.ciphertext).toEqual(data);
@@ -101,31 +96,35 @@ describe("chunk framing", () => {
 		const combined = concat(framed1, framed2, framed3);
 
 		// Parse first chunk
-		const parsed1 = parseFramedChunk(combined);
+		const parsed1 = parseFramedChunk(combined, { endOfStream: true });
 		expect(parsed1?.isFinal).toBe(false);
 		expect(parsed1?.ciphertext).toEqual(chunk1);
 
 		// Parse second chunk
 		const remaining1 = combined.slice(parsed1?.bytesConsumed ?? 0);
-		const parsed2 = parseFramedChunk(remaining1);
+		const parsed2 = parseFramedChunk(remaining1, { endOfStream: true });
 		expect(parsed2?.isFinal).toBe(false);
 		expect(parsed2?.ciphertext).toEqual(chunk2);
 
 		// Parse final chunk
 		const remaining2 = remaining1.slice(parsed2?.bytesConsumed ?? 0);
-		const parsed3 = parseFramedChunk(remaining2);
+		const parsed3 = parseFramedChunk(remaining2, { endOfStream: true });
 		expect(parsed3?.isFinal).toBe(true);
 		expect(parsed3?.ciphertext).toEqual(chunk3);
 	});
 
-	it("returns undefined for empty input", () => {
+	it("waits on empty input and rejects it at end of stream", () => {
 		expect(parseFramedChunk(new Uint8Array(0))).toBeUndefined();
+		expect(() => parseFramedChunk(new Uint8Array(0), { endOfStream: true })).toThrow(
+			/INVALID_MESSAGE/,
+		);
 	});
 
-	it("returns undefined for incomplete non-final chunk", () => {
+	it("waits on an incomplete non-final chunk and rejects it at end of stream", () => {
 		// Length says 10 bytes but only 3 follow
 		const incomplete = new Uint8Array([10, 1, 2, 3]);
 		expect(parseFramedChunk(incomplete)).toBeUndefined();
+		expect(() => parseFramedChunk(incomplete, { endOfStream: true })).toThrow(/INVALID_MESSAGE/);
 	});
 });
 
@@ -149,26 +148,42 @@ describe("chunked OHTTP round-trip", () => {
 
 		// Client encapsulates request
 		const request = new TextEncoder().encode("GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n");
-		const { encapsulatedRequest, createResponseContext } = await client.encapsulate(request);
+		const { encapsulatedRequest, context: bytesClient } = await client.encapsulate(request);
 
 		// Server decapsulates
-		const { request: decryptedRequest, createResponseContext: serverCreateResponse } =
+		const { request: decryptedRequest, context: bytesGateway } =
 			await server.decapsulate(encapsulatedRequest);
 
 		expect(decryptedRequest).toEqual(request);
 
 		// Server encrypts response
 		const response = new TextEncoder().encode("HTTP/1.1 200 OK\r\n\r\nHello");
-		const responseCtx = await serverCreateResponse();
-		const encapsulatedResponse = await server.encapsulateResponse(responseCtx, response);
+		const encapsulatedResponse = await bytesGateway.encryptResponse(response);
 
 		// Client decapsulates response
-		const decryptedResponse = await client.decapsulateResponse(
-			createResponseContext,
-			encapsulatedResponse,
-		);
+		const decryptedResponse = await bytesClient.decryptResponse(encapsulatedResponse);
 
 		expect(decryptedResponse).toEqual(response);
+	});
+
+	it("draws a fresh response nonce on every encryptResponse call", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const serverKeyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, serverKeyConfig);
+		const server = new ChunkedOHTTPServer([serverKeyConfig]);
+
+		const { encapsulatedRequest, context: bytesClient } = await client.encapsulate(
+			new Uint8Array(0),
+		);
+		const { context: bytesGateway } = await server.decapsulate(encapsulatedRequest);
+
+		const response = new TextEncoder().encode("same plaintext");
+		const one = await bytesGateway.encryptResponse(response);
+		const two = await bytesGateway.encryptResponse(response);
+		const n = getResponseNonceLength(suite);
+		expect(one.subarray(0, n)).not.toEqual(two.subarray(0, n));
+		expect(one.subarray(n)).not.toEqual(two.subarray(n));
+		expect(await bytesClient.decryptResponse(two)).toEqual(response);
 	});
 
 	it("handles empty request and response", async () => {
@@ -186,23 +201,19 @@ describe("chunked OHTTP round-trip", () => {
 		const server = new ChunkedOHTTPServer([serverKeyConfig]);
 
 		// Empty request
-		const { encapsulatedRequest, createResponseContext } = await client.encapsulate(
+		const { encapsulatedRequest, context: bytesClient } = await client.encapsulate(
 			new Uint8Array(0),
 		);
 
-		const { request: decryptedRequest, createResponseContext: serverCreateResponse } =
+		const { request: decryptedRequest, context: bytesGateway } =
 			await server.decapsulate(encapsulatedRequest);
 
 		expect(decryptedRequest).toEqual(new Uint8Array(0));
 
 		// Empty response
-		const responseCtx = await serverCreateResponse();
-		const encapsulatedResponse = await server.encapsulateResponse(responseCtx, new Uint8Array(0));
+		const encapsulatedResponse = await bytesGateway.encryptResponse(new Uint8Array(0));
 
-		const decryptedResponse = await client.decapsulateResponse(
-			createResponseContext,
-			encapsulatedResponse,
-		);
+		const decryptedResponse = await bytesClient.decryptResponse(encapsulatedResponse);
 
 		expect(decryptedResponse).toEqual(new Uint8Array(0));
 	});
@@ -232,8 +243,8 @@ describe("chunked OHTTP round-trip", () => {
 			request[i] = i % 256;
 		}
 
-		const { encapsulatedRequest, createResponseContext } = await client.encapsulate(request);
-		const { request: decryptedRequest, createResponseContext: serverCreateResponse } =
+		const { encapsulatedRequest, context: bytesClient } = await client.encapsulate(request);
+		const { request: decryptedRequest, context: bytesGateway } =
 			await server.decapsulate(encapsulatedRequest);
 
 		expect(decryptedRequest).toEqual(request);
@@ -244,13 +255,9 @@ describe("chunked OHTTP round-trip", () => {
 			response[i] = (i * 7) % 256;
 		}
 
-		const responseCtx = await serverCreateResponse();
-		const encapsulatedResponse = await server.encapsulateResponse(responseCtx, response);
+		const encapsulatedResponse = await bytesGateway.encryptResponse(response);
 
-		const decryptedResponse = await client.decapsulateResponse(
-			createResponseContext,
-			encapsulatedResponse,
-		);
+		const decryptedResponse = await bytesClient.decryptResponse(encapsulatedResponse);
 
 		expect(decryptedResponse).toEqual(response);
 	});
@@ -310,7 +317,7 @@ describe("chunked OHTTP streaming API", () => {
 		const server = new ChunkedOHTTPServer([serverKeyConfig]);
 
 		// Client sends request
-		const { encapsulatedRequest, createResponseContext } = await client.encapsulate(
+		const { encapsulatedRequest, context: bytesClient } = await client.encapsulate(
 			new TextEncoder().encode("request"),
 		);
 
@@ -336,10 +343,7 @@ describe("chunked OHTTP streaming API", () => {
 		);
 
 		// Client decapsulates
-		const decryptedResponse = await client.decapsulateResponse(
-			createResponseContext,
-			encapsulatedResponse,
-		);
+		const decryptedResponse = await bytesClient.decryptResponse(encapsulatedResponse);
 
 		expect(decryptedResponse).toEqual(concat(respChunk1, respChunk2));
 	});
@@ -376,6 +380,7 @@ describe("chunk sequence guard", () => {
 		const spare = await server.createRequestContext(spareReq.header);
 
 		return {
+			client,
 			server,
 			serverReq,
 			spare,
@@ -429,7 +434,7 @@ describe("chunk sequence guard", () => {
 
 	it("claims the final request chunk synchronously", async () => {
 		const { spare, spareReq, spareSealed } = await finishedContexts();
-		const extra = await spareReq[kSenderContext].Seal(data);
+		const extra = await hpkeOf(spareReq).senderContext.Seal(data);
 
 		const final = spare.openFinalChunk(spareSealed);
 
@@ -437,19 +442,17 @@ describe("chunk sequence guard", () => {
 		expect(await final).toEqual(data);
 	});
 
-	it("never reuses a response context across buffered and incremental sealing", async () => {
-		const { server, serverReq } = await finishedContexts();
-		const SEQ = OHTTPErrorCode.ChunkSequenceError;
-
-		const buffered = await serverReq.createResponseContext();
-		const first = server.encapsulateResponse(buffered, data);
-		await expect(server.encapsulateResponse(buffered, data)).rejects.toThrow(SEQ);
-		await first;
-		await expect(buffered.sealChunk(data)).rejects.toThrow(SEQ);
-
-		const incremental = await serverReq.createResponseContext();
-		await incremental.sealChunk(data);
-		await expect(server.encapsulateResponse(incremental, data)).rejects.toThrow(SEQ);
+	it("keeps HPKE and AEAD keys off the context objects", async () => {
+		const { serverReq } = await finishedContexts();
+		const responseCtx = await serverReq.createResponseContext();
+		for (const ctx of [serverReq, responseCtx]) {
+			expect(Object.getOwnPropertySymbols(ctx)).toEqual([]);
+		}
+		expect(Object.keys(responseCtx).sort()).toEqual([
+			"responseNonce",
+			"sealChunk",
+			"sealFinalChunk",
+		]);
 	});
 });
 
@@ -504,7 +507,7 @@ describe("draft-08 Appendix A test vectors", () => {
 
 		let offset = 39;
 		for (const chunk of vector.requestChunks) {
-			const parsed = parseFramedChunk(encapsulated.subarray(offset));
+			const parsed = parseFramedChunk(encapsulated.subarray(offset), { endOfStream: true });
 			expect(parsed).toBeDefined();
 			if (parsed === undefined) throw new Error("unreachable");
 			// The vector's `ciphertext` carries its own varint length prefix.
@@ -534,7 +537,7 @@ describe("draft-08 Appendix A test vectors", () => {
 
 		const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
 			keyConfig.suites[0],
-			ctx[kRecipientContext],
+			hpkeOf(ctx).recipientContext,
 			hex(vector.enc),
 			hex(vector.responseNonce),
 		);
@@ -659,16 +662,15 @@ describe("chunked OHTTP error handling", () => {
 		const server = new ChunkedOHTTPServer([serverKeyConfig]);
 
 		// Create valid request
-		const { encapsulatedRequest, createResponseContext } = await client.encapsulate(
+		const { encapsulatedRequest, context: bytesClient } = await client.encapsulate(
 			new Uint8Array([1, 2, 3]),
 		);
 
 		// Server processes
-		const { createResponseContext: serverCreateResponse } =
-			await server.decapsulate(encapsulatedRequest);
+		const serverReq = await server.createRequestContext(encapsulatedRequest.subarray(0, 39));
 
 		// Build malformed response: seal non-final but frame as final
-		const responseCtx = await serverCreateResponse();
+		const responseCtx = await serverReq.createResponseContext();
 		const sealedWrongAad = await responseCtx.sealChunk(new Uint8Array([4, 5, 6])); // non-final AAD
 
 		const malformedResponse = concat(
@@ -677,9 +679,7 @@ describe("chunked OHTTP error handling", () => {
 		);
 
 		// Client should reject
-		await expect(
-			client.decapsulateResponse(createResponseContext, malformedResponse),
-		).rejects.toThrow(OHTTPError);
+		await expect(bytesClient.decryptResponse(malformedResponse)).rejects.toThrow(OHTTPError);
 	});
 
 	it("supports custom labels", async () => {
@@ -707,21 +707,17 @@ describe("chunked OHTTP error handling", () => {
 		});
 
 		const request = new Uint8Array([1, 2, 3]);
-		const { encapsulatedRequest, createResponseContext } = await client.encapsulate(request);
+		const { encapsulatedRequest, context: bytesClient } = await client.encapsulate(request);
 
-		const { request: decrypted, createResponseContext: serverCreateResponse } =
+		const { request: decrypted, context: bytesGateway } =
 			await server.decapsulate(encapsulatedRequest);
 
 		expect(decrypted).toEqual(request);
 
 		const response = new Uint8Array([4, 5, 6]);
-		const responseCtx = await serverCreateResponse();
-		const encapsulatedResponse = await server.encapsulateResponse(responseCtx, response);
+		const encapsulatedResponse = await bytesGateway.encryptResponse(response);
 
-		const decryptedResponse = await client.decapsulateResponse(
-			createResponseContext,
-			encapsulatedResponse,
-		);
+		const decryptedResponse = await bytesClient.decryptResponse(encapsulatedResponse);
 
 		expect(decryptedResponse).toEqual(response);
 	});
@@ -773,7 +769,7 @@ describe("varint edge cases", () => {
 		const framed = frameChunk(data, false);
 		expect(framed[0]).toBe(0x40);
 		expect(framed[1]).toBe(0x40);
-		const parsed = parseFramedChunk(framed);
+		const parsed = parseFramedChunk(framed, { endOfStream: true });
 		expect(parsed?.ciphertext).toEqual(data);
 		expect(parsed?.isFinal).toBe(false);
 	});
@@ -782,7 +778,7 @@ describe("varint edge cases", () => {
 		const data = new Uint8Array(16384).fill(0xcd);
 		const framed = frameChunk(data, false);
 		expect((framed[0] ?? 0) & 0xc0).toBe(0x80);
-		const parsed = parseFramedChunk(framed);
+		const parsed = parseFramedChunk(framed, { endOfStream: true });
 		expect(parsed?.ciphertext).toEqual(data);
 		expect(parsed?.isFinal).toBe(false);
 	});
@@ -791,6 +787,9 @@ describe("varint edge cases", () => {
 		// 2-, 4- and 8-byte varint markers with the rest still in flight
 		for (const incomplete of [[0x40], [0x80, 0, 0], [0xc0, 0, 0, 0, 0, 0, 0]]) {
 			expect(parseFramedChunk(new Uint8Array(incomplete))).toBeUndefined();
+			expect(() => parseFramedChunk(new Uint8Array(incomplete), { endOfStream: true })).toThrow(
+				/INVALID_MESSAGE/,
+			);
 		}
 	});
 
@@ -828,6 +827,14 @@ describe("draft-08 chunk validation (regression)", () => {
 		const { client } = await newPair();
 		const ctx = await client.createRequestContext();
 		await expect(ctx.sealChunk(new Uint8Array(0))).rejects.toThrow(/CHUNK_LIMIT_EXCEEDED/);
+	});
+
+	it("rejects an empty non-final chunk on manual open, like the stream path", async () => {
+		const { client, server } = await newPair();
+		const clientReq = await client.createRequestContext();
+		const serverReq = await server.createRequestContext(clientReq.header);
+		const emptySealed = await hpkeOf(clientReq).senderContext.Seal(new Uint8Array(0));
+		await expect(serverReq.openChunk(emptySealed)).rejects.toThrow(/CHUNK_LIMIT_EXCEEDED/);
 	});
 });
 
@@ -1478,22 +1485,19 @@ describe("received frame size limits (DoS regression)", () => {
 	it("parseFramedChunk rejects a frame larger than the cap instead of waiting for it", () => {
 		// 1 GiB declared, one byte present.
 		const hostile = concat(encodeVarint4(0x3fffffff), new Uint8Array([0x00]));
-		expect(() => parseFramedChunk(hostile)).toThrow(OHTTPError);
-		expect(() => parseFramedChunk(hostile)).toThrow(/CHUNK_LIMIT_EXCEEDED/);
+		expect(() => parseFramedChunk(hostile, { endOfStream: true })).toThrow(OHTTPError);
+		expect(() => parseFramedChunk(hostile, { endOfStream: true })).toThrow(/CHUNK_LIMIT_EXCEEDED/);
 	});
 
-	it("parseFramedChunk honours an explicit cap and still returns undefined below it", () => {
+	it("parseFramedChunk returns undefined for an incomplete frame under the cap", () => {
 		const frame = concat(encodeVarint4(4096), new Uint8Array(10));
-		// Under the cap but genuinely incomplete: still "need more data".
-		expect(parseFramedChunk(frame, 8192)).toBeUndefined();
-		// Over a tighter cap: rejected outright.
-		expect(() => parseFramedChunk(frame, 1024)).toThrow(OHTTPError);
+		expect(parseFramedChunk(frame)).toBeUndefined();
 	});
 
 	it("parseFramedChunk accepts a frame exactly at the cap", () => {
-		const size = 64;
+		const size = DEFAULT_MAX_FRAME_SIZE;
 		const frame = concat(encodeVarint4(size), new Uint8Array(size));
-		const parsed = parseFramedChunk(frame, size);
+		const parsed = parseFramedChunk(frame);
 		expect(parsed?.isFinal).toBe(false);
 		expect(parsed?.ciphertext.length).toBe(size);
 	});
@@ -1544,11 +1548,17 @@ describe("received frame size limits (DoS regression)", () => {
 	});
 
 	it("parseFramedChunk bounds the final chunk too", () => {
-		const oversized = concat(new Uint8Array([0x00]), new Uint8Array(4097));
-		expect(() => parseFramedChunk(oversized, 4096)).toThrow(/CHUNK_LIMIT_EXCEEDED/);
-		expect(
-			parseFramedChunk(concat(new Uint8Array([0x00]), new Uint8Array(4096)), 4096)?.isFinal,
-		).toBe(true);
+		const oversized = concat(new Uint8Array([0x00]), new Uint8Array(DEFAULT_MAX_FRAME_SIZE + 1));
+		// Rejected as soon as it is over the cap, before end of stream
+		expect(() => parseFramedChunk(oversized)).toThrow(/CHUNK_LIMIT_EXCEEDED/);
+		const atCap = concat(new Uint8Array([0x00]), new Uint8Array(DEFAULT_MAX_FRAME_SIZE));
+		expect(parseFramedChunk(atCap, { endOfStream: true })?.isFinal).toBe(true);
+	});
+
+	it("parseFramedChunk waits for end of stream before returning a final chunk", () => {
+		const partial = concat(new Uint8Array([0x00]), new Uint8Array(10));
+		expect(parseFramedChunk(partial)).toBeUndefined();
+		expect(parseFramedChunk(partial, { endOfStream: true })?.ciphertext.length).toBe(10);
 	});
 
 	it("messages above one frame round-trip as standard-sized chunks", async () => {
@@ -1573,21 +1583,25 @@ describe("non-minimal varint framing", () => {
 	// the same frame length has up to four wire encodings and all decode alike.
 	it("accepts a non-minimal 2-byte final-chunk marker", () => {
 		const frame = concat(new Uint8Array([0x40, 0x00]), new Uint8Array([1, 2, 3]));
-		const parsed = parseFramedChunk(frame);
+		const parsed = parseFramedChunk(frame, { endOfStream: true });
 		expect(parsed?.isFinal).toBe(true);
 		expect(parsed?.ciphertext).toEqual(new Uint8Array([1, 2, 3]));
 		expect(parsed?.bytesConsumed).toBe(frame.length);
 	});
 
 	it("accepts a non-minimal 4-byte final-chunk marker", () => {
-		const parsed = parseFramedChunk(new Uint8Array([0x80, 0x00, 0x00, 0x00]));
+		const parsed = parseFramedChunk(new Uint8Array([0x80, 0x00, 0x00, 0x00]), {
+			endOfStream: true,
+		});
 		expect(parsed?.isFinal).toBe(true);
 		expect(parsed?.ciphertext).toEqual(new Uint8Array(0));
 		expect(parsed?.bytesConsumed).toBe(4);
 	});
 
 	it("accepts a non-minimal 8-byte final-chunk marker", () => {
-		const parsed = parseFramedChunk(new Uint8Array([0xc0, 0, 0, 0, 0, 0, 0, 0]));
+		const parsed = parseFramedChunk(new Uint8Array([0xc0, 0, 0, 0, 0, 0, 0, 0]), {
+			endOfStream: true,
+		});
 		expect(parsed?.isFinal).toBe(true);
 		expect(parsed?.ciphertext).toEqual(new Uint8Array(0));
 		expect(parsed?.bytesConsumed).toBe(8);
@@ -1596,7 +1610,7 @@ describe("non-minimal varint framing", () => {
 	it("accepts a non-minimal encoding of a small non-final length", () => {
 		const payload = new Uint8Array([9, 8, 7, 6, 5]);
 		const frame = concat(encodeVarint(5, 2), payload);
-		const parsed = parseFramedChunk(frame);
+		const parsed = parseFramedChunk(frame, { endOfStream: true });
 		expect(parsed?.isFinal).toBe(false);
 		expect(parsed?.ciphertext).toEqual(payload);
 		expect(parsed?.bytesConsumed).toBe(7);
@@ -1604,7 +1618,7 @@ describe("non-minimal varint framing", () => {
 
 	it("rejects an 8-byte varint declaring a value above quicvarint's MAX", () => {
 		const frame = new Uint8Array([0xc0, 0, 0, 0, 0x80, 0, 0, 0]);
-		expect(() => parseFramedChunk(frame)).toThrow(/INVALID_MESSAGE/);
+		expect(() => parseFramedChunk(frame, { endOfStream: true })).toThrow(/INVALID_MESSAGE/);
 	});
 });
 
@@ -1654,18 +1668,13 @@ describe("chunked multi-suite key configs (RFC 9458 Appendix A)", () => {
 
 		for (const suite of [aes128(), aes256()]) {
 			const client = new ChunkedOHTTPClient(suite, published);
-			const { encapsulatedRequest, createResponseContext } = await client.encapsulate(request);
-			const { request: decrypted, createResponseContext: serverResponse } =
+			const { encapsulatedRequest, context: bytesClient } = await client.encapsulate(request);
+			const { request: decrypted, context: bytesGateway } =
 				await server.decapsulate(encapsulatedRequest);
 
 			expect(decrypted).toEqual(request);
-			const encapsulatedResponse = await server.encapsulateResponse(
-				await serverResponse(),
-				response,
-			);
-			await expect(
-				client.decapsulateResponse(createResponseContext, encapsulatedResponse),
-			).resolves.toEqual(response);
+			const encapsulatedResponse = await bytesGateway.encryptResponse(response);
+			await expect(bytesClient.decryptResponse(encapsulatedResponse)).resolves.toEqual(response);
 		}
 	});
 
@@ -1839,8 +1848,10 @@ describe("cancelling a peer that keeps sending", () => {
 		const encapsulatedRequest = new Uint8Array(
 			await new Request("https://gateway.example.com/", init).arrayBuffer(),
 		);
-		const { createResponseContext } = await server.decapsulate(encapsulatedRequest);
-		const responseCtx = await createResponseContext();
+		const serverReq = await server.createRequestContext(
+			encapsulatedRequest.subarray(0, parseRequestHeader(encapsulatedRequest).offset),
+		);
+		const responseCtx = await serverReq.createResponseContext();
 
 		const parts = [
 			responseCtx.responseNonce,
@@ -2018,7 +2029,7 @@ describe("chunked HTTP padding", () => {
 		const { init } = await client.encapsulateRequest(new Request("https://example.com/"));
 		const bytes = new Uint8Array(await new Request("https://gateway.example/", init).arrayBuffer());
 		const { offset } = parseRequestHeader(bytes);
-		const frame = parseFramedChunk(bytes.subarray(offset));
+		const frame = parseFramedChunk(bytes.subarray(offset), { endOfStream: true });
 		expect(frame?.isFinal).toBe(true);
 		expect(frame?.ciphertext.length).toBe(1024 + 16);
 		const decoded = await server.decapsulateRequest(
@@ -2177,15 +2188,46 @@ describe("chunked HTTP padding", () => {
 // Helpers
 
 function checkPaddedFrames(bytes: Uint8Array<ArrayBuffer>, finalSize: number | undefined) {
-	const first = parseFramedChunk(bytes);
+	const first = parseFramedChunk(bytes, { endOfStream: true });
 	expect(first).toBeDefined();
 	if (!first) throw new Error("Missing first frame");
 	expect(first.isFinal).toBe(false);
 	expect(first.ciphertext).toHaveLength(16384 + 16);
-	const final = parseFramedChunk(bytes.subarray(first.bytesConsumed));
+	const final = parseFramedChunk(bytes.subarray(first.bytesConsumed), { endOfStream: true });
 	expect(final).toBeDefined();
 	if (!final) throw new Error("Missing final frame");
 	expect(final.isFinal).toBe(true);
 	if (finalSize === undefined) expect(final.ciphertext.length).toBeLessThan(8192 + 16);
 	else expect(final.ciphertext).toHaveLength(finalSize + 16);
 }
+
+describe("chunked transport hints and client key snapshot", () => {
+	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	it("sets Incremental: ?1 on the relay request and the gateway response (draft-08 Section 4)", async () => {
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new ChunkedOHTTPClient(suite, keyConfig);
+		const server = new ChunkedOHTTPServer([keyConfig]);
+
+		const { init } = await client.encapsulateRequest(new Request("https://target.example/"));
+		const outer = new Request("https://gateway.example/", init);
+		expect(outer.headers.get("incremental")).toBe("?1");
+
+		const { context } = await server.decapsulateRequest(outer);
+		const response = await context.encapsulateResponse(new Response("ok"));
+		expect(response.headers.get("incremental")).toBe("?1");
+		await response.arrayBuffer();
+	});
+
+	it("keeps its own copy of the key config", async () => {
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const published = { ...keyConfig, publicKey: keyConfig.publicKey.slice() };
+		const client = new ChunkedOHTTPClient(suite, published);
+		published.publicKey.fill(0);
+		(published as { keyId: number }).keyId = 2;
+
+		const { encapsulatedRequest } = await client.encapsulate(new Uint8Array([1]));
+		const { request } = await new ChunkedOHTTPServer([keyConfig]).decapsulate(encapsulatedRequest);
+		expect(request).toEqual(new Uint8Array([1]));
+	});
+});

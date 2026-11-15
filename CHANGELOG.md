@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Chunked `encapsulate`/`decapsulate` return `{ ..., context }` like the
+  non-chunked classes; use `context.decryptResponse` / `context.encryptResponse`.
+  `decapsulateResponse` and `encapsulateResponse` are removed.
+- `parseFramedChunk(data, { endOfStream })` replaces `maxFrameSize`. A final
+  chunk is returned only at end of stream; a frame cut short there throws
+  `InvalidMessage`.
+- Size constants moved from `Labels` to `Limits` (`MAX_CHUNK_SIZE`,
+  `MAX_FRAME_SIZE`, `DEFAULT_MAX_CHUNKED_MESSAGE_SIZE`).
+- `ChunkedServerRequestContext.keyConfig` is now `keyId`.
+- Removed `KeyConfig.selectSuite` and the `ClientEncapsulationContext`,
+  `ServerEncapsulationContext` and `EncapsulatedRequestHeader` types.
+- `KeyConfig.import` rejects a private key that does not match the public key.
+- Chunked requests and responses send `Incremental: ?1`
+  (draft-ietf-ohai-chunked-ohttp-08); browser clients need a relay that allows
+  it in `Access-Control-Allow-Headers`.
+
+### Added
+
+- `KeyConfig.fromKeyPair(suites, keyId, keyPair)`, e.g. for non-extractable
+  `CryptoKey`s.
+- `KeyConfig.select([suiteA, suiteB], configs)` returns `{ suite, config }` for
+  the first suite, in client order, that a config supports.
+
+### Fixed
+
+- Chunked contexts no longer expose AEAD keys, nonces or HPKE contexts as
+  symbol-keyed properties.
+- Clients copy the key config they are given.
+
 ## [0.6.3] - 2026-11-13
 
 ### Fixed

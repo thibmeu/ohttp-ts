@@ -81,17 +81,3 @@ export const DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE = 1 << 30;
  * AAD for final chunk (draft-08 Section 6.1-6.2)
  */
 export const FINAL_CHUNK_AAD = /* @__PURE__ */ encodeString("final");
-
-/**
- * Keys for the HPKE/AEAD state the chunked contexts carry from the object
- * literal that builds them to the streaming transforms that consume it.
- * Not re-exported from the package entry point.
- */
-export const kSenderContext: unique symbol = /* @__PURE__ */ Symbol("senderContext");
-export const kRecipientContext: unique symbol = /* @__PURE__ */ Symbol("recipientContext");
-export const kEnc: unique symbol = /* @__PURE__ */ Symbol("enc");
-export const kSuite: unique symbol = /* @__PURE__ */ Symbol("suite");
-export const kAead: unique symbol = /* @__PURE__ */ Symbol("aead");
-export const kAeadKey: unique symbol = /* @__PURE__ */ Symbol("aeadKey");
-export const kAeadNonce: unique symbol = /* @__PURE__ */ Symbol("aeadNonce");
-export const kClaim: unique symbol = /* @__PURE__ */ Symbol("claim");

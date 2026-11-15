@@ -80,11 +80,11 @@ async function collect(): Promise<Metrics> {
 	const f1m = await makeFixture(1_048_576);
 
 	const cenc1k = (await chunkedClient.encapsulate(f1k.payload)).encapsulatedRequest;
-	const { encapsulatedRequest: cenc1m, createResponseContext } = await chunkedClient.encapsulate(
+	const { encapsulatedRequest: cenc1m, context: cclient } = await chunkedClient.encapsulate(
 		f1m.payload,
 	);
-	const cres = await (await chunkedServer.decapsulate(cenc1m)).createResponseContext();
-	const cresponse = await chunkedServer.encapsulateResponse(cres, f1m.payload);
+	const { context: cserver } = await chunkedServer.decapsulate(cenc1m);
+	const cresponse = await cserver.encryptResponse(f1m.payload);
 
 	const ops: Array<[string, () => Promise<unknown>]> = [
 		["encapsulate 1KB", () => client.encapsulate(f1k.payload)],
@@ -97,11 +97,8 @@ async function collect(): Promise<Metrics> {
 		["chunked encapsulate 1MB", () => chunkedClient.encapsulate(f1m.payload)],
 		["chunked decapsulate 1KB", () => chunkedServer.decapsulate(cenc1k)],
 		["chunked decapsulate 1MB", () => chunkedServer.decapsulate(cenc1m)],
-		["chunked encapsulateResponse 1MB", () => chunkedServer.encapsulateResponse(cres, f1m.payload)],
-		[
-			"chunked decapsulateResponse 1MB",
-			() => chunkedClient.decapsulateResponse(createResponseContext, cresponse),
-		],
+		["chunked encryptResponse 1MB", () => cserver.encryptResponse(f1m.payload)],
+		["chunked decryptResponse 1MB", () => cclient.decryptResponse(cresponse)],
 	];
 
 	const out: Metrics = {};
