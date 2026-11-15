@@ -91,11 +91,9 @@ async function main(): Promise<void> {
 	const chunkedEnc1KB = (await chunkedClient.encapsulate(f1k.payload)).encapsulatedRequest;
 	const chunkedEnc1MB = (await chunkedClient.encapsulate(f1m.payload)).encapsulatedRequest;
 	const chunkedRoundTrip = async (payload: Uint8Array): Promise<void> => {
-		const { encapsulatedRequest, createResponseContext } = await chunkedClient.encapsulate(payload);
-		const { createResponseContext: srvCreateResponse } =
-			await chunkedServer.decapsulate(encapsulatedRequest);
-		const encRes = await chunkedServer.encapsulateResponse(await srvCreateResponse(), payload);
-		await chunkedClient.decapsulateResponse(createResponseContext, encRes);
+		const { encapsulatedRequest, context } = await chunkedClient.encapsulate(payload);
+		const { context: serverContext } = await chunkedServer.decapsulate(encapsulatedRequest);
+		await context.decryptResponse(await serverContext.encryptResponse(payload));
 	};
 
 	// Few iters for large payloads so a mid-loop GC stays unlikely (see header).

@@ -74,11 +74,11 @@ import {
 	importKeyConfig,
 	type KeyConfig as KeyConfigType,
 	type KeyConfigWithPrivate as KeyConfigWithPrivateType,
+	keyConfigFromKeyPair,
 	parseKeyConfig,
 	parseKeyConfigs,
 	type SymmetricAlgorithm as SymmetricAlgorithmType,
 	selectKeyConfig,
-	selectSuite,
 	serializeKeyConfig,
 	serializeKeyConfigs,
 } from "./keyConfig.ts";
@@ -87,18 +87,18 @@ import {
 export const KeyConfig = {
 	/** Generate a new KeyConfig with random key pair */
 	generate: generateKeyConfig,
-	/** Derive a deterministic KeyConfig from a seed */
+	/** Derive a deterministic KeyConfig from a seed (for testing; the seed is the private key) */
 	derive: deriveKeyConfig,
 	/** Import a KeyConfig from raw key bytes */
 	import: importKeyConfig,
+	/** Create a KeyConfig from an existing key pair, e.g. non-extractable CryptoKeys */
+	fromKeyPair: keyConfigFromKeyPair,
 	/** Parse a single KeyConfig from bytes */
 	parse: parseKeyConfig,
 	/** Parse multiple KeyConfigs from application/ohttp-keys format */
 	parseMultiple: parseKeyConfigs,
-	/** Pick the first config a cipher suite can use */
+	/** Pick the first config a suite can use, or the first usable suite from a list */
 	select: selectKeyConfig,
-	/** Pick the suite a request header names, gateway side */
-	selectSuite,
 	/** Serialize a KeyConfig to bytes */
 	serialize: serializeKeyConfig,
 	/** Serialize multiple KeyConfigs to application/ohttp-keys format */
@@ -146,12 +146,16 @@ export const Labels = {
 	CHUNKED_RESPONSE: CHUNKED_RESPONSE_LABEL,
 	/** AAD for final chunk in chunked OHTTP */
 	FINAL_CHUNK_AAD,
-	/** Default maximum chunk size sent (16384 bytes) */
-	DEFAULT_MAX_CHUNK_SIZE,
-	/** Standard maximum ciphertext frame accepted (16384-byte chunk plus tag) */
-	DEFAULT_MAX_FRAME_SIZE,
-	/** Default aggregate plaintext limit for one chunked message (1 GiB) */
-	DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
+} as const;
+
+/** Chunked OHTTP size limits */
+export const Limits = {
+	/** Plaintext bytes per chunk sent (16384) */
+	MAX_CHUNK_SIZE: DEFAULT_MAX_CHUNK_SIZE,
+	/** Largest ciphertext frame accepted (16384-byte chunk plus tag) */
+	MAX_FRAME_SIZE: DEFAULT_MAX_FRAME_SIZE,
+	/** Default `maxMessageSize` for the chunked client and server (1 GiB) */
+	DEFAULT_MAX_CHUNKED_MESSAGE_SIZE: DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 } as const;
 
 // ============================================================================
@@ -187,11 +191,5 @@ export const Incremental = {
 // Low-level encapsulation (for advanced use)
 // ============================================================================
 
-export {
-	AEAD_TAG_SIZE,
-	type ClientEncapsulationContext,
-	type EncapsulatedRequestHeader,
-	type ResponseCrypto,
-	type ServerEncapsulationContext,
-} from "./encapsulation.ts";
+export { AEAD_TAG_SIZE, type ResponseCrypto } from "./encapsulation.ts";
 export { frameChunk, type ParsedChunk, parseFramedChunk } from "./framing.ts";

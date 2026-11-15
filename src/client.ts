@@ -1,5 +1,5 @@
 import { MessageLimitExceededError, type Padding } from "bhttp-ts";
-import type { AEAD as AeadImpl, CipherSuite, Key, SenderContext } from "hpke";
+import type { CipherSuite, Key, SenderContext } from "hpke";
 import {
 	bhttpDecoder,
 	bhttpEncoder,
@@ -12,11 +12,6 @@ import {
 	DEFAULT_MAX_FRAME_SIZE,
 	DEFAULT_MAX_OHTTP_MESSAGE_SIZE,
 	isMediaType,
-	kAead,
-	kAeadKey,
-	kAeadNonce,
-	kEnc,
-	kSenderContext,
 	MediaType,
 } from "./constants.ts";
 import {
@@ -37,6 +32,7 @@ import {
 	type ResponseCrypto,
 } from "./encapsulation.ts";
 import { asInvalidMessage, OHTTPError, OHTTPErrorCode } from "./errors.ts";
+import { INCREMENTAL_HEADER } from "./incremental.ts";
 import {
 	type AeadId,
 	isValidAeadId,
@@ -163,10 +159,6 @@ export interface ChunkedRequestContext {
 	sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Create a response context after receiving the response nonce */
 	createResponseContext(responseNonce: Uint8Array): Promise<ChunkedResponseContext>;
-	/** HPKE sender context for streaming transforms */
-	readonly [kSenderContext]: SenderContext;
-	/** Encapsulated secret for response key derivation */
-	readonly [kEnc]: Uint8Array;
 }
 
 /**
@@ -177,12 +169,20 @@ export interface ChunkedResponseContext {
 	openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
 	/** Open the final chunk */
 	openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>>;
-	/** Derived response AEAD (for the pipelined buffer path) */
-	readonly [kAead]: AeadImpl;
-	/** Derived response AEAD key */
-	readonly [kAeadKey]: Uint8Array;
-	/** Derived response AEAD base nonce */
-	readonly [kAeadNonce]: Uint8Array;
+}
+
+/**
+ * HPKE state behind each chunked request context, kept off the object so code
+ * that logs or serializes a context cannot reach it. Not re-exported from the
+ * package entry point.
+ */
+export const senderStates = new WeakMap<
+	ChunkedRequestContext,
+	{ readonly senderContext: SenderContext; readonly enc: Uint8Array }
+>();
+
+function senderState(ctx: ChunkedRequestContext) {
+	return senderStates.get(ctx) as NonNullable<ReturnType<typeof senderStates.get>>;
 }
 
 /**
@@ -200,7 +200,7 @@ const RELAY_INIT = { method: "POST", credentials: "omit", referrerPolicy: "no-re
  *
  * The `init` object is a valid `RequestInit` containing:
  * - method: "POST"
- * - headers: { "Content-Type": "message/ohttp-chunked-req" }
+ * - headers: { "Content-Type": "message/ohttp-chunked-req", "Incremental": "?1" }
  * - body: ReadableStream (streaming encapsulated request)
  * - duplex: "half" (required for streaming bodies in Node.js/Workers)
  * - signal (the effective one), credentials: "omit", referrerPolicy: "no-referrer"
@@ -249,7 +249,8 @@ export class OHTTPClient {
 	constructor(suite: CipherSuite, keyConfig: KeyConfig, options: OHTTPClientOptions = {}) {
 		assertResponseCrypto([suite], options.responseCrypto);
 		this.#suite = suite;
-		this.#keyConfig = keyConfig;
+		// Own copy: the public key is imported once, keyId is read per request
+		this.#keyConfig = { ...keyConfig, publicKey: new Uint8Array(keyConfig.publicKey) };
 		this.#requestLabel = options.requestLabel ?? DEFAULT_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? DEFAULT_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
@@ -443,7 +444,8 @@ export class ChunkedOHTTPClient {
 	constructor(suite: CipherSuite, keyConfig: KeyConfig, options: ChunkedOHTTPClientOptions = {}) {
 		assertResponseCrypto([suite], options.responseCrypto);
 		this.#suite = suite;
-		this.#keyConfig = keyConfig;
+		// Own copy: the public key is imported once, keyId is read per request
+		this.#keyConfig = { ...keyConfig, publicKey: new Uint8Array(keyConfig.publicKey) };
 		this.#requestLabel = options.requestLabel ?? CHUNKED_REQUEST_LABEL;
 		this.#responseLabel = options.responseLabel ?? CHUNKED_RESPONSE_LABEL;
 		this.#responseCrypto = options.responseCrypto;
@@ -519,10 +521,8 @@ export class ChunkedOHTTPClient {
 		const claimRequest = createChunkBudget(this.maxMessageSize);
 		const maxMessageSize = this.maxMessageSize;
 
-		return {
+		const requestContext: ChunkedRequestContext = {
 			header,
-			[kSenderContext]: senderContext,
-			[kEnc]: enc,
 
 			async sealChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				if (requestFinished) {
@@ -563,10 +563,6 @@ export class ChunkedOHTTPClient {
 				const maxChunks = 2 ** 32;
 
 				return {
-					[kAead]: aead,
-					[kAeadKey]: aeadKey,
-					[kAeadNonce]: aeadNonce,
-
 					async openChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
@@ -598,64 +594,56 @@ export class ChunkedOHTTPClient {
 				};
 			},
 		};
+		senderStates.set(requestContext, { senderContext, enc });
+		return requestContext;
 	}
 
 	/**
 	 * Encapsulate a complete request as chunked
 	 *
-	 * Convenience method that splits the request into chunks.
-	 * Returns the full encapsulated message and a function to create response context.
+	 * Convenience method that splits the request into chunks. The returned
+	 * context decrypts the complete chunked response, as {@link OHTTPClient.encapsulate}.
 	 */
-	async encapsulate(request: Uint8Array) {
+	async encapsulate(request: Uint8Array): Promise<EncapsulatedRequest> {
 		const ctx = await this.createRequestContext();
+		const { senderContext, enc } = senderState(ctx);
 
 		// Chunk + seal through the same pipelined transforms as the streaming API
 		// (the seals run in a concurrent window), then prepend the header.
 		const encapsulatedRequest = await collectStream(
 			streamOfBytes(request)
 				.pipeThrough(createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE))
-				.pipeThrough(createRequestEncryptTransform(ctx[kSenderContext], this.maxMessageSize)),
+				.pipeThrough(createRequestEncryptTransform(senderContext, this.maxMessageSize)),
 			ctx.header,
 		);
 
-		return {
-			encapsulatedRequest,
-			responseNonceLength: getResponseNonceLength(this.#suite),
-			createResponseContext: (nonce: Uint8Array) => ctx.createResponseContext(nonce),
+		const suite = this.#suite;
+		const responseLabel = this.#responseLabel;
+		const responseCrypto = this.#responseCrypto;
+		const maxMessageSize = this.maxMessageSize;
+		const context: ClientContext = {
+			async decryptResponse(encapsulatedResponse: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+				const nonceLength = getResponseNonceLength(suite);
+				if (encapsulatedResponse.length < nonceLength) {
+					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+				}
+				const { aead, aeadKey, aeadNonce } = await deriveChunkedResponseKeys(
+					suite,
+					senderContext,
+					enc,
+					encapsulatedResponse.subarray(0, nonceLength),
+					responseLabel,
+					responseCrypto,
+				);
+				return collectStream(
+					streamOfBytes(encapsulatedResponse.subarray(nonceLength)).pipeThrough(
+						createResponseDecryptTransform(aead, aeadKey, aeadNonce, maxMessageSize),
+					),
+				);
+			},
 		};
-	}
 
-	/**
-	 * Decapsulate a complete chunked response
-	 *
-	 * Convenience method that parses and decrypts all response chunks.
-	 */
-	async decapsulateResponse(
-		createResponseContext: (responseNonce: Uint8Array) => Promise<ChunkedResponseContext>,
-		encapsulatedResponse: Uint8Array,
-	): Promise<Uint8Array<ArrayBuffer>> {
-		const nonceLength = getResponseNonceLength(this.#suite);
-		if (encapsulatedResponse.length < nonceLength) {
-			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
-		}
-
-		// Extract response nonce
-		const responseNonce = encapsulatedResponse.subarray(0, nonceLength);
-		const ctx = await createResponseContext(responseNonce);
-
-		// Decrypt the framed body through the pipelined response transform
-		// (opens run in a concurrent window; counters are claimed synchronously).
-		return collectStream(
-			streamOfBytes(encapsulatedResponse.subarray(nonceLength)).pipeThrough(
-				createResponseDecryptTransform(
-					ctx[kAead],
-					ctx[kAeadKey],
-					ctx[kAeadNonce],
-					DEFAULT_MAX_FRAME_SIZE,
-					this.maxMessageSize,
-				),
-			),
-		);
+		return { encapsulatedRequest, context };
 	}
 
 	/**
@@ -680,14 +668,11 @@ export class ChunkedOHTTPClient {
 		options: StreamOperationOptions = {},
 	): Promise<EncapsulatedChunkedRequestInit> {
 		const requestCtx = await this.createRequestContext();
+		const { senderContext, enc } = senderState(requestCtx);
 		const suite = this.#suite;
 		const maxMessageSize = this.maxMessageSize;
 		const responseLabel = this.#responseLabel;
 		const responseCrypto = this.#responseCrypto;
-
-		// Get the HPKE sender context for creating the encrypt transform
-		// We need to access it through the request context internals
-		// For now, we'll build the pipeline manually
 
 		// Encode request to BHTTP stream
 		const bhttpStream = bhttpEncoder().encodeRequestStream(request, {
@@ -698,10 +683,7 @@ export class ChunkedOHTTPClient {
 		// Create the encryption pipeline:
 		// BHTTP bytes → chunker → OHTTP encrypt → framed ciphertext
 		const chunkerTransform = createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE);
-		const encryptTransform = createRequestEncryptTransform(
-			requestCtx[kSenderContext],
-			maxMessageSize,
-		);
+		const encryptTransform = createRequestEncryptTransform(senderContext, maxMessageSize);
 
 		// Pipe through transforms
 		const signal = options.signal ?? request.signal;
@@ -760,8 +742,8 @@ export class ChunkedOHTTPClient {
 					// Derive response keys
 					const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
 						suite,
-						requestCtx[kSenderContext],
-						requestCtx[kEnc],
+						senderContext,
+						enc,
 						responseNonce,
 						responseLabel,
 						responseCrypto,
@@ -772,7 +754,6 @@ export class ChunkedOHTTPClient {
 						aead,
 						aeadKey,
 						aeadNonce,
-						DEFAULT_MAX_FRAME_SIZE,
 						maxMessageSize,
 					);
 
@@ -812,8 +793,10 @@ export class ChunkedOHTTPClient {
 		const init: StreamingRequestInit = {
 			...RELAY_INIT,
 			signal,
+			// draft-08 Section 4: ask relays to forward each chunk as it arrives
 			headers: {
 				"Content-Type": MediaType.CHUNKED_REQUEST,
+				[INCREMENTAL_HEADER]: "?1",
 			},
 			body: finalStream,
 			duplex: "half",

@@ -130,13 +130,15 @@ export interface StreamOperationOptions {
 /**
  * How many per-chunk AEAD calls a streaming transform keeps in flight.
  *
- * Chunk seals/opens are independent (counter-derived nonces, one fixed key, no
- * chaining), so a small window of them can run concurrently while output order
- * is preserved by draining a FIFO. On Node every `crypto.subtle` call runs on
- * the libuv threadpool (default size 4) and Chromium similarly dispatches to a
- * worker pool, so a window of 4 overlaps the per-call latency that otherwise
- * serializes the stream; on runtimes with synchronous-under-the-hood crypto
- * (workerd) it is harmless. Measured by bench:overlap (chunkedSeal c=1 vs c=4).
+ * Response chunk seals/opens are independent (counter-derived nonces, one fixed
+ * key, no chaining), so a small window of them can run concurrently while
+ * output order is preserved by draining a FIFO. On Node every `crypto.subtle`
+ * call runs on the libuv threadpool (default size 4) and Chromium similarly
+ * dispatches to a worker pool, so a window of 4 overlaps the per-call latency
+ * that otherwise serializes the stream; on runtimes with synchronous-under-the-
+ * hood crypto (workerd) it is harmless. Measured by bench:overlap (chunkedSeal
+ * c=1 vs c=4).
+ * The request leg gains nothing: hpke serializes Seal/Open on its context.
  */
 const AEAD_PIPELINE_DEPTH = 4;
 
@@ -354,7 +356,6 @@ export function createRequestEncryptTransform(
  */
 function createFramedDecryptTransform(
 	openFrame: (ciphertext: Uint8Array, isFinal: boolean) => Promise<Uint8Array>,
-	maxFrameSize: number,
 	maxMessageSize: number,
 ): TransformStream<Uint8Array, Uint8Array> {
 	const claim = createChunkBudget(maxMessageSize);
@@ -385,7 +386,7 @@ function createFramedDecryptTransform(
 					}
 
 					// `length` is the peer's claim: reject before buffering that much.
-					if (length > maxFrameSize) {
+					if (length > DEFAULT_MAX_FRAME_SIZE) {
 						throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 					}
 
@@ -407,7 +408,7 @@ function createFramedDecryptTransform(
 			// The final chunk is delimited by end-of-stream, so it has no declared
 			// length to bound it. Checking here covers both the marker arriving in
 			// the same read as its payload and a payload spread over many reads.
-			if (inFinal && buffer.length > maxFrameSize) {
+			if (inFinal && buffer.length > DEFAULT_MAX_FRAME_SIZE) {
 				throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 			}
 		},
@@ -435,13 +436,11 @@ function createFramedDecryptTransform(
  */
 export function createRequestDecryptTransform(
 	recipientContext: RecipientContext,
-	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
 	maxMessageSize: number = DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	return createFramedDecryptTransform(
 		(ciphertext, isFinal) =>
 			recipientContext.Open(ciphertext, isFinal ? FINAL_CHUNK_AAD : undefined),
-		maxFrameSize,
 		maxMessageSize,
 	);
 }
@@ -510,22 +509,17 @@ export function createResponseDecryptTransform(
 	aead: AeadImpl,
 	aeadKey: Uint8Array,
 	baseNonce: Uint8Array,
-	maxFrameSize: number = DEFAULT_MAX_FRAME_SIZE,
 	maxMessageSize: number = DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	let counter = 0;
 	// The counter is claimed synchronously at call time: opens are pipelined, so
 	// the next frame's open may start before this one's promise resolves.
-	return createFramedDecryptTransform(
-		(ciphertext, isFinal) => {
-			if (counter >= MAX_CHUNKS) {
-				return Promise.reject(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
-			}
-			return openResponseChunk(aead, aeadKey, baseNonce, counter++, ciphertext, isFinal);
-		},
-		maxFrameSize,
-		maxMessageSize,
-	);
+	return createFramedDecryptTransform((ciphertext, isFinal) => {
+		if (counter >= MAX_CHUNKS) {
+			return Promise.reject(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
+		}
+		return openResponseChunk(aead, aeadKey, baseNonce, counter++, ciphertext, isFinal);
+	}, maxMessageSize);
 }
 
 /**

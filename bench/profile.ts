@@ -128,12 +128,9 @@ async function main(): Promise<void> {
 
 	// Chunked (draft-ietf-ohai-chunked-ohttp): same payloads, 16KB chunks, framed.
 	const chunkedRoundTrip = async (p: Uint8Array): Promise<void> => {
-		const { encapsulatedRequest, createResponseContext } = await chunkedClient.encapsulate(p);
-		const { createResponseContext: srvCreateResponse } =
-			await chunkedServer.decapsulate(encapsulatedRequest);
-		const rctx = await srvCreateResponse();
-		const encRes = await chunkedServer.encapsulateResponse(rctx, p);
-		await chunkedClient.decapsulateResponse(createResponseContext, encRes);
+		const { encapsulatedRequest, context } = await chunkedClient.encapsulate(p);
+		const { context: serverContext } = await chunkedServer.decapsulate(encapsulatedRequest);
+		await context.decryptResponse(await serverContext.encryptResponse(p));
 	};
 
 	// Chunked high-level API: streaming bhttp encode/decode both ways.

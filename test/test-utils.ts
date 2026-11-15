@@ -2,7 +2,14 @@
  * Test utilities - not exported from main package
  */
 
-import { AEAD_ChaCha20Poly1305 } from "hpke";
+import { AEAD_ChaCha20Poly1305, type RecipientContext, type SenderContext } from "hpke";
+import { type ChunkedRequestContext, senderStates } from "../src/client.js";
+import { deriveChunkedResponseKeys } from "../src/encapsulation.js";
+import {
+	type ChunkedServerRequestContext,
+	type ChunkedServerResponseContext,
+	recipientStates,
+} from "../src/server.js";
 
 /**
  * Whether the current runtime's WebCrypto implements ChaCha20-Poly1305.
@@ -61,4 +68,33 @@ export function hex(s: string): Uint8Array {
 		throw new Error(`invalid hex in test vector: ${s}`);
 	}
 	return bytes;
+}
+
+/** HPKE state behind a chunked request context (client or gateway side) */
+export function hpkeOf(ctx: ChunkedRequestContext): {
+	senderContext: SenderContext;
+	enc: Uint8Array;
+};
+export function hpkeOf(ctx: ChunkedServerRequestContext): {
+	recipientContext: RecipientContext;
+	enc: Uint8Array;
+};
+export function hpkeOf(ctx: ChunkedRequestContext | ChunkedServerRequestContext) {
+	const state =
+		senderStates.get(ctx as ChunkedRequestContext) ??
+		recipientStates.get(ctx as ChunkedServerRequestContext);
+	if (state === undefined) throw new Error("not a chunked request context");
+	return state;
+}
+
+/** Response AEAD keys for a gateway response context, re-derived from its request */
+export function aeadOf(req: ChunkedServerRequestContext, res: ChunkedServerResponseContext) {
+	const state = recipientStates.get(req);
+	if (state === undefined) throw new Error("not a chunked request context");
+	return deriveChunkedResponseKeys(
+		state.suite,
+		state.recipientContext,
+		state.enc,
+		res.responseNonce,
+	);
 }

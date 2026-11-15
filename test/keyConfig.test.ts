@@ -11,11 +11,14 @@ import {
 	AeadId,
 	deriveKeyConfig,
 	generateKeyConfig,
+	importKeyConfig,
 	KdfId,
 	KemId,
 	type KeyConfig,
+	keyConfigFromKeyPair,
 	parseKeyConfig,
 	parseKeyConfigs,
+	selectKeyConfig,
 	serializeKeyConfig,
 	serializeKeyConfigs,
 } from "../src/keyConfig.js";
@@ -387,5 +390,64 @@ describe("serializeKeyConfig validation", () => {
 			symmetricAlgorithms: Array(16_383).fill(algorithm),
 		};
 		expect(() => serializeKeyConfigs([oversizedConfig])).toThrow(/INVALID_KEY_CONFIG/);
+	});
+});
+
+describe("importKeyConfig key pair check", () => {
+	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	it("imports a matching pair and rejects a private key from another pair", async () => {
+		const one = await suite.GenerateKeyPair(true);
+		const two = await suite.GenerateKeyPair(true);
+		const pub = await suite.SerializePublicKey(one.publicKey);
+
+		await expect(
+			importKeyConfig(suite, 1, pub, await suite.SerializePrivateKey(one.privateKey)),
+		).resolves.toBeDefined();
+		await expect(
+			importKeyConfig(suite, 1, pub, await suite.SerializePrivateKey(two.privateKey)),
+		).rejects.toThrow(/INVALID_KEY_CONFIG/);
+	});
+});
+
+describe("keyConfigFromKeyPair", () => {
+	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	it("accepts a non-extractable pair and rejects a mismatched one", async () => {
+		const one = await suite.GenerateKeyPair(false);
+		const two = await suite.GenerateKeyPair(false);
+
+		const config = await keyConfigFromKeyPair(suite, 1, one);
+		expect(config.keyPair.privateKey.extractable).toBe(false);
+		expect(config.publicKey).toEqual(await suite.SerializePublicKey(one.publicKey));
+		await expect(
+			keyConfigFromKeyPair(suite, 1, { publicKey: one.publicKey, privateKey: two.privateKey }),
+		).rejects.toThrow(/INVALID_KEY_CONFIG/);
+	});
+
+	it("does not need the runtime to support the first suite's AEAD", async () => {
+		const broken = () => ({
+			...AEAD_AES_128_GCM(),
+			Seal: () => Promise.reject(new Error("unsupported")),
+			Open: () => Promise.reject(new Error("unsupported")),
+		});
+		const noAead = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, broken);
+		const pair = await noAead.GenerateKeyPair(false);
+		await expect(keyConfigFromKeyPair(noAead, 1, pair)).resolves.toBeDefined();
+	});
+});
+
+describe("selectKeyConfig with several suites", () => {
+	const x25519 = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+	const exportOnly = new CipherSuite(
+		KEM_DHKEM_X25519_HKDF_SHA256,
+		KDF_HKDF_SHA256,
+		AEAD_EXPORT_ONLY,
+	);
+
+	it("returns the first suite in client order with a usable config", async () => {
+		const config = await generateKeyConfig(x25519, 1);
+		expect(selectKeyConfig([exportOnly, x25519], [config])).toEqual({ suite: x25519, config });
+		expect(() => selectKeyConfig([exportOnly], [config])).toThrow(/UNSUPPORTED_CIPHER_SUITE/);
 	});
 });

@@ -56,7 +56,7 @@ describe("frameChunk / parseFramedChunk round-trip", () => {
 		"round-trips a non-final frame for arbitrary ciphertext, including varint boundary lengths",
 		(ct) => {
 			const framed = frameChunk(ct, false);
-			const parsed = parseFramedChunk(framed);
+			const parsed = parseFramedChunk(framed, { endOfStream: true });
 			expect(parsed).toBeDefined();
 			if (parsed === undefined) return;
 			expect(parsed.isFinal).toBe(false);
@@ -71,7 +71,7 @@ describe("frameChunk / parseFramedChunk round-trip", () => {
 		"round-trips a final frame for arbitrary ciphertext",
 		(ct) => {
 			const framed = frameChunk(ct, true);
-			const parsed = parseFramedChunk(framed);
+			const parsed = parseFramedChunk(framed, { endOfStream: true });
 			expect(parsed).toBeDefined();
 			if (parsed === undefined) return;
 			expect(parsed.isFinal).toBe(true);
@@ -94,7 +94,7 @@ describe("frameChunk / parseFramedChunk round-trip", () => {
 			let offset = 0;
 			let isFinal = false;
 			while (!isFinal) {
-				const parsed = parseFramedChunk(stream.subarray(offset));
+				const parsed = parseFramedChunk(stream.subarray(offset), { endOfStream: true });
 				expect(parsed).toBeDefined();
 				if (parsed === undefined) return;
 				recovered.push(parsed.ciphertext);
@@ -114,23 +114,21 @@ describe("frameChunk / parseFramedChunk round-trip", () => {
 
 describe("parseFramedChunk truncation safety", () => {
 	it.prop([truncatedFrameArb])(
-		"on any prefix of a framed non-final chunk, either returns undefined or throws — never a wrong ParsedChunk",
+		"on any strict prefix of a framed non-final chunk, waits mid-stream and rejects at end of stream",
 		({ ct, framed, varintLength, prefixLength }) => {
 			const prefix = framed.subarray(0, prefixLength);
 			const totalLength = varintLength + ct.length;
 
-			if (prefixLength === 0) {
-				expect(parseFramedChunk(prefix)).toBeUndefined();
-				return;
-			}
 			if (prefixLength < totalLength) {
-				// Varint or ciphertext still short: not enough data yet.
 				expect(parseFramedChunk(prefix)).toBeUndefined();
+				expect(catchOHTTPError(() => parseFramedChunk(prefix, { endOfStream: true })).code).toBe(
+					OHTTPErrorCode.InvalidMessage,
+				);
 				return;
 			}
 
 			// prefixLength === totalLength === framed.length: the full frame.
-			const parsed = parseFramedChunk(prefix);
+			const parsed = parseFramedChunk(prefix, { endOfStream: true });
 			expect(parsed).toBeDefined();
 			if (parsed === undefined) return;
 			expect(parsed.isFinal).toBe(false);
@@ -148,22 +146,7 @@ describe("parseFramedChunk maxFrameSize enforcement", () => {
 		"throws ChunkLimitExceeded for a declared length over the default max, regardless of bytes present",
 		(declared, trailingCount) => {
 			const frame = concat(encodeVarint(declared), new Uint8Array(trailingCount));
-			expect(catchOHTTPError(() => parseFramedChunk(frame)).code).toBe(
-				OHTTPErrorCode.ChunkLimitExceeded,
-			);
-		},
-	);
-
-	it.prop([
-		fc.integer({ min: 1, max: 5000 }),
-		fc.integer({ min: 1, max: 2000000000 }),
-		fc.integer({ min: 0, max: 20 }),
-	])(
-		"throws ChunkLimitExceeded for a declared length over a custom maxFrameSize, regardless of bytes present",
-		(maxFrameSize, overshoot, trailingCount) => {
-			const declared = maxFrameSize + overshoot;
-			const frame = concat(encodeVarint(declared), new Uint8Array(trailingCount));
-			expect(catchOHTTPError(() => parseFramedChunk(frame, maxFrameSize)).code).toBe(
+			expect(catchOHTTPError(() => parseFramedChunk(frame, { endOfStream: true })).code).toBe(
 				OHTTPErrorCode.ChunkLimitExceeded,
 			);
 		},
@@ -171,9 +154,9 @@ describe("parseFramedChunk maxFrameSize enforcement", () => {
 
 	it.prop([withinLimitArb])(
 		"parses when a declared length is within maxFrameSize and enough bytes are present",
-		({ maxFrameSize, payload }) => {
+		({ payload }) => {
 			const frame = concat(encodeVarint(payload.length), payload);
-			const parsed = parseFramedChunk(frame, maxFrameSize);
+			const parsed = parseFramedChunk(frame);
 			expect(parsed).toBeDefined();
 			if (parsed === undefined) return;
 			expect(parsed.isFinal).toBe(false);

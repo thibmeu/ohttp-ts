@@ -31,6 +31,7 @@ import {
 	generateKeyConfig,
 	getEncLength,
 	getPublicKeyLength,
+	importKeyConfig,
 	isValidAeadId,
 	isValidKdfId,
 	isValidKemId,
@@ -663,3 +664,16 @@ function appendBytes(bytes: Uint8Array, extra: Uint8Array): Uint8Array {
 	out.set(extra, bytes.length);
 	return out;
 }
+
+describe("importKeyConfig validation order", () => {
+	const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+
+	it.prop([
+		fc.oneof(fc.integer({ max: -1 }), fc.integer({ min: 256 }), fc.double({ noInteger: true })),
+		bytesArb(),
+		bytesArb(),
+	])("an invalid keyId is InvalidKeyConfig whatever the key bytes", async (keyId, pub, priv) => {
+		const error = await importKeyConfig(suite, keyId, pub, priv).catch((e: unknown) => e);
+		expect(isOHTTPError(error) && error.code).toBe(OHTTPErrorCode.InvalidKeyConfig);
+	});
+});

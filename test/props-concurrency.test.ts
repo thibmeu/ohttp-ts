@@ -11,7 +11,6 @@ import {
 } from "hpke";
 import { describe, expect } from "vitest";
 import { ChunkedOHTTPClient } from "../src/client.js";
-import { kAeadKey, kAeadNonce } from "../src/constants.js";
 import {
 	computeChunkNonce,
 	frameChunk,
@@ -31,6 +30,7 @@ import {
 } from "../src/streaming.js";
 import { concat } from "../src/utils.js";
 import { bytesArb } from "./props-helpers.js";
+import { aeadOf } from "./test-utils.js";
 
 // ============================================================================
 // Fixtures
@@ -52,13 +52,11 @@ const server = new ChunkedOHTTPServer([serverKeyConfig]);
 
 /** A matched server-side (sealing) and client-side (opening) response context. */
 async function responseContexts() {
-	const { encapsulatedRequest, createResponseContext } = await client.encapsulate(
-		new TextEncoder().encode("request"),
-	);
-	const serverRequestCtx = await server.createRequestContext(encapsulatedRequest.subarray(0, 39));
+	const clientRequestCtx = await client.createRequestContext();
+	const serverRequestCtx = await server.createRequestContext(clientRequestCtx.header);
 	const sealer = await serverRequestCtx.createResponseContext();
-	const opener = await createResponseContext(sealer.responseNonce);
-	return { sealer, opener };
+	const opener = await clientRequestCtx.createResponseContext(sealer.responseNonce);
+	return { sealer, opener, keys: await aeadOf(serverRequestCtx, sealer) };
 }
 
 /**
@@ -140,7 +138,7 @@ function parseFrames(body: Uint8Array): ParsedChunk[] {
 	const frames: ParsedChunk[] = [];
 	let offset = 0;
 	while (offset < body.length) {
-		const frame = parseFramedChunk(body.subarray(offset));
+		const frame = parseFramedChunk(body.subarray(offset), { endOfStream: true });
 		if (frame === undefined) throw new Error("truncated frame");
 		frames.push(frame);
 		offset += frame.bytesConsumed;
@@ -173,7 +171,7 @@ describe("concurrent use of one response context", () => {
 	it.prop([chunksArb()], { numRuns: 20 })(
 		"seals issued together each get their own counter, so no nonce is reused",
 		async (chunks) => {
-			const { sealer } = await responseContexts();
+			const { sealer, keys } = await responseContexts();
 			const ciphertexts = await Promise.all(chunks.map((c) => sealer.sealChunk(c)));
 
 			// Chunk i must open at counter i and at no other counter in range.
@@ -183,8 +181,8 @@ describe("concurrent use of one response context", () => {
 					try {
 						const pt = await openResponseChunk(
 							realAead,
-							sealer[kAeadKey],
-							sealer[kAeadNonce],
+							keys.aeadKey,
+							keys.aeadNonce,
 							counter,
 							ciphertexts[i] as Uint8Array,
 							false,
