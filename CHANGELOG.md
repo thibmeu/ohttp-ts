@@ -34,6 +34,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   instead of resending the request to another origin (including in Workers).
 - Low-level chunk opens throw `DecryptionFailed`, not `ChunkLimitExceeded`, for
   a ciphertext shorter than the AEAD tag, matching the streaming transforms.
+- `frameChunk(ciphertext, false)` throws `ChunkLimitExceeded` for an empty
+  ciphertext instead of emitting a zero length that marks the chunk final.
+- `KeyConfig.import` and `KeyConfig.fromKeyPair` throw `InvalidKeyConfig` for
+  keys hpke cannot deserialize or use, instead of hpke's own error.
 
 ### Added
 

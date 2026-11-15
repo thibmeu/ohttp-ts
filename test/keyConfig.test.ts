@@ -427,6 +427,19 @@ describe("importKeyConfig key pair check", () => {
 			importKeyConfig(suite, 1, pub, await suite.SerializePrivateKey(two.privateKey)),
 		).rejects.toThrow(/INVALID_KEY_CONFIG/);
 	});
+
+	it("reports key bytes hpke cannot deserialize as InvalidKeyConfig", async () => {
+		const pair = await suite.GenerateKeyPair(true);
+		const pub = await suite.SerializePublicKey(pair.publicKey);
+		const priv = await suite.SerializePrivateKey(pair.privateKey);
+
+		await expect(importKeyConfig(suite, 1, new Uint8Array(3), priv)).rejects.toThrow(
+			/INVALID_KEY_CONFIG/,
+		);
+		await expect(importKeyConfig(suite, 1, pub, new Uint8Array(3))).rejects.toThrow(
+			/INVALID_KEY_CONFIG/,
+		);
+	});
 });
 
 describe("keyConfigFromKeyPair", () => {

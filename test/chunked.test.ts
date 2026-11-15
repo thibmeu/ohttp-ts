@@ -55,6 +55,11 @@ describe("chunk framing", () => {
 		expect(framed.slice(1)).toEqual(data);
 	});
 
+	it("refuses an empty non-final chunk, whose zero length would mark it final", () => {
+		expect(() => frameChunk(new Uint8Array(0), false)).toThrow(/CHUNK_LIMIT_EXCEEDED/);
+		expect(frameChunk(new Uint8Array(0), true)).toEqual(new Uint8Array([0]));
+	});
+
 	it("frames final chunk with zero length prefix", () => {
 		const data = new Uint8Array([1, 2, 3]);
 		const framed = frameChunk(data, true);

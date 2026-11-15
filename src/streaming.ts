@@ -208,11 +208,12 @@ async function encryptedFrame(operation: Promise<Uint8Array>, isFinal: boolean) 
 	return [encodeVarint(isFinal ? 0 : result.value.length), result.value];
 }
 
-async function decryptedFrame(operation: Promise<Uint8Array>, isFinal: boolean) {
+async function decryptedFrame(operation: Promise<Uint8Array>) {
 	const result = await settle(operation);
-	if (!result.ok || (!isFinal && result.value.length === 0)) {
-		const error = result.ok ? undefined : result.error;
-		throw error instanceof OHTTPError ? error : new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+	if (!result.ok) {
+		throw result.error instanceof OHTTPError
+			? result.error
+			: new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 	}
 	return [result.value];
 }
@@ -403,7 +404,7 @@ function createFramedDecryptTransform(
 						throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 					}
 					claim(ciphertext.length - AEAD_TAG_SIZE, false);
-					await pipeline.enqueue(decryptedFrame(openFrame(ciphertext, false), false));
+					await pipeline.enqueue(decryptedFrame(openFrame(ciphertext, false)));
 				}
 			}
 
@@ -426,7 +427,7 @@ function createFramedDecryptTransform(
 				throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 			}
 			claim(ciphertext.length - AEAD_TAG_SIZE, true);
-			await pipeline.enqueue(decryptedFrame(openFrame(ciphertext, true), true));
+			await pipeline.enqueue(decryptedFrame(openFrame(ciphertext, true)));
 		},
 	});
 	return { writable, readable: pipeline.readable };

@@ -8,8 +8,14 @@ import { concat } from "./utils.ts";
  *
  * Non-final chunks: length (varint) + ciphertext
  * Final chunk: 0 (varint) + ciphertext
+ *
+ * Throws ChunkLimitExceeded for an empty non-final chunk: its zero length
+ * would mark it final.
  */
 export function frameChunk(ciphertext: Uint8Array, isFinal: boolean): Uint8Array<ArrayBuffer> {
+	if (!isFinal && ciphertext.length === 0) {
+		throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
+	}
 	const length = isFinal ? 0 : ciphertext.length;
 	const lengthBytes = encodeVarint(length);
 	return concat(lengthBytes, ciphertext);

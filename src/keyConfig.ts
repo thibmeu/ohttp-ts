@@ -279,10 +279,12 @@ async function assertKeyPairServesSuites(
  * the runtime may lack.
  */
 async function assertKeysMatch(suite: CipherSuite, keyPair: KeyPair): Promise<void> {
-	const { encapsulatedSecret, ctx } = await suite.SetupSender(keyPair.publicKey);
+	let ctx: Awaited<ReturnType<CipherSuite["SetupSender"]>>["ctx"];
 	let recipient: Awaited<ReturnType<CipherSuite["SetupRecipient"]>>;
 	try {
-		recipient = await suite.SetupRecipient(keyPair, encapsulatedSecret);
+		const sender = await suite.SetupSender(keyPair.publicKey);
+		ctx = sender.ctx;
+		recipient = await suite.SetupRecipient(keyPair, sender.encapsulatedSecret);
 	} catch {
 		// e.g. a private key of another KEM: not a pair either
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
@@ -683,10 +685,15 @@ export async function importKeyConfig(
 	privateKeyBytes: Uint8Array,
 ): Promise<KeyConfigWithPrivate> {
 	const suite = checkedSuites(suites, keyId)[0];
-	const keyPair: KeyPair = {
-		publicKey: await suite.DeserializePublicKey(publicKeyBytes),
-		privateKey: await suite.DeserializePrivateKey(privateKeyBytes, false),
-	};
+	let keyPair: KeyPair;
+	try {
+		keyPair = {
+			publicKey: await suite.DeserializePublicKey(publicKeyBytes),
+			privateKey: await suite.DeserializePrivateKey(privateKeyBytes, false),
+		};
+	} catch {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
 	return keyConfigFromKeyPair(suites, keyId, keyPair);
 }
 
@@ -712,7 +719,12 @@ export async function keyConfigFromKeyPair(
 	const suite = suiteList[0];
 	const kemId = suite.KEM.id as KemId;
 
-	const publicKey = await suite.SerializePublicKey(keyPair.publicKey);
+	let publicKey: Uint8Array;
+	try {
+		publicKey = await suite.SerializePublicKey(keyPair.publicKey);
+	} catch {
+		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
+	}
 	await assertKeyPairServesSuites(suiteList, keyPair.publicKey, publicKey);
 	await assertKeysMatch(suite, keyPair);
 
