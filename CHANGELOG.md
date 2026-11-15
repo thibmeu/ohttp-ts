@@ -44,6 +44,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Chunked contexts no longer expose AEAD keys, nonces or HPKE contexts as
   symbol-keyed properties.
 - Clients copy the key config they are given.
+- Reusing a Node `Buffer` after parsing no longer changes retained keys
+  or breaks response encryption.
+- Queued request opens reject after an authentication failure.
+- Aborting chunked setup handles errors from stream cancellation.
+- Buffered chunked encryption rejects oversized input before crypto work.
 
 ## [0.6.3] - 2026-11-13
 

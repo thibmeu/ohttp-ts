@@ -12,7 +12,7 @@ import {
 	KEM_DHKEM_X25519_HKDF_SHA256,
 } from "hpke";
 import { encode as encodeVarint } from "quicvarint";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { bhttpEncoder } from "../src/bhttp.js";
 import { ChunkedOHTTPClient } from "../src/client.js";
 import { CHUNKED_REQUEST_LABEL, MediaType } from "../src/constants.js";
@@ -588,6 +588,34 @@ describe("draft-08 Appendix A test vectors", () => {
 });
 
 describe("message size policy", () => {
+	it("should reject oversized buffered plaintext before cryptographic work", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const config = await generateKeyConfig(suite, 1);
+		const kdf = KDF_HKDF_SHA256();
+		const client = new ChunkedOHTTPClient(suite, config, { maxMessageSize: 1024 });
+		const server = new ChunkedOHTTPServer([config], {
+			maxMessageSize: 1024,
+			responseCrypto: { kdf: () => kdf },
+		});
+		const { encapsulatedRequest } = await client.encapsulate(new Uint8Array(1));
+		const { context } = await server.decapsulate(encapsulatedRequest);
+		const setup = vi.spyOn(suite, "SetupSender");
+		const extract = vi.spyOn(kdf, "Extract");
+		try {
+			await expect(client.encapsulate(new Uint8Array(1025))).rejects.toMatchObject({
+				code: OHTTPErrorCode.MessageTooLarge,
+			});
+			await expect(context.encryptResponse(new Uint8Array(1025))).rejects.toMatchObject({
+				code: OHTTPErrorCode.MessageTooLarge,
+			});
+			expect(setup).not.toHaveBeenCalled();
+			expect(extract).not.toHaveBeenCalled();
+		} finally {
+			setup.mockRestore();
+			extract.mockRestore();
+		}
+	});
+
 	const suite = () =>
 		new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
@@ -943,7 +971,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		expect(source.cancelled).toBe(true);
 	});
 
-	function streamThenWait(bytes: Uint8Array) {
+	function streamThenWait(bytes: Uint8Array, cancelError?: Error) {
 		let markWaiting!: () => void;
 		let release!: () => void;
 		const waiting = new Promise<void>((resolve) => {
@@ -968,10 +996,59 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 				},
 				cancel() {
 					release();
+					if (cancelError) throw cancelError;
 				},
 			}),
 		};
 	}
+
+	it.each(["request", "response"] as const)(
+		"should handle rejecting cancellation during %s setup",
+		async (direction) => {
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_AES_128_GCM,
+			);
+			const config = await generateKeyConfig(suite, 1);
+			const client = new ChunkedOHTTPClient(suite, config);
+			const server = new ChunkedOHTTPServer([config]);
+			const { init, context } = await client.encapsulateRequest(
+				new Request("https://example.com/"),
+			);
+			await collectStream(init.body as ReadableStream<Uint8Array>);
+			const source = streamThenWait(new Uint8Array(1), new Error("cancel failed"));
+			const controller = new AbortController();
+			const reason = new Error("operation stopped");
+			const options = { signal: controller.signal };
+			const result =
+				direction === "request"
+					? server.decapsulateRequest(
+							new Request("https://gateway.example/", {
+								method: "POST",
+								headers: { "Content-Type": MediaType.CHUNKED_REQUEST },
+								body: source.stream,
+								duplex: "half",
+							} as RequestInit & { duplex: "half" }),
+							options,
+						)
+					: context.decapsulateResponse(
+							new Response(source.stream, {
+								headers: { "Content-Type": MediaType.CHUNKED_RESPONSE },
+							}),
+							options,
+						);
+			const rejected = expect(result).rejects.toBe(reason);
+			await source.waiting;
+
+			controller.abort(reason);
+
+			await rejected;
+			expect(source.stream.locked).toBe(false);
+			// Let Vitest catch unhandled cancellation rejections.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		},
+	);
 
 	it("propagates an operation abort reason while reading a request", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);

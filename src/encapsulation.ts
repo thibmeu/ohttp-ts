@@ -291,7 +291,8 @@ export function parseRequestHeader(data: Uint8Array): {
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
 
-	const enc = data.slice(7, 7 + encLength);
+	// Retain a copy; Buffer.slice() would alias the caller's bytes.
+	const enc = new Uint8Array(data.subarray(7, 7 + encLength));
 
 	return {
 		header: {

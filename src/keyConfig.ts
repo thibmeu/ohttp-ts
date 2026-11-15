@@ -387,7 +387,8 @@ export function parseKeyConfig(data: Uint8Array): KeyConfig {
 	if (offset + publicKeyLength > data.length) {
 		throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 	}
-	const publicKey = data.slice(offset, offset + publicKeyLength);
+	// Retain a copy; Buffer.slice() would alias the caller's bytes.
+	const publicKey = new Uint8Array(data.subarray(offset, offset + publicKeyLength));
 	offset += publicKeyLength;
 
 	// Symmetric Algorithms Length (2 bytes)
@@ -494,7 +495,7 @@ export function parseKeyConfigs(data: Uint8Array): KeyConfig[] {
 			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 		}
 
-		const configBytes = data.slice(offset, offset + length);
+		const configBytes = data.subarray(offset, offset + length);
 		offset += length;
 
 		// Skip configs naming algorithms we lack, so a gateway adding one does not

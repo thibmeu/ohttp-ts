@@ -211,6 +211,54 @@ describe("concurrent use of one response context", () => {
 	);
 });
 
+describe("concurrent request opens after authentication failure", () => {
+	it.prop([chunksArb(), fc.nat()], { numRuns: 30 })(
+		"should reject every queued chunk after a failed open, including the final chunk",
+		async (chunks, k) => {
+			const sealer = await client.createRequestContext();
+			const opener = await server.createRequestContext(sealer.header);
+			const ciphertexts = await Promise.all(
+				chunks.map((chunk, i) =>
+					i === chunks.length - 1 ? sealer.sealFinalChunk(chunk) : sealer.sealChunk(chunk),
+				),
+			);
+			const failAt = k % chunks.length;
+			const bad = new Uint8Array(ciphertexts[failAt] as Uint8Array);
+			bad[0] ^= 1;
+			const opens: Promise<Uint8Array>[] = [];
+			for (let i = 0; i < ciphertexts.length; i++) {
+				// HPKE leaves its sequence unchanged on failure;
+				// the valid retry would otherwise decrypt.
+				if (i === failAt) opens.push(opener.openChunk(bad));
+				opens.push(
+					i === ciphertexts.length - 1
+						? opener.openFinalChunk(ciphertexts[i] as Uint8Array)
+						: opener.openChunk(ciphertexts[i] as Uint8Array),
+				);
+			}
+
+			const results = await Promise.allSettled(opens);
+
+			for (let i = 0; i < failAt; i++) {
+				expect(results[i]).toEqual({ status: "fulfilled", value: chunks[i] });
+			}
+			expect(results[failAt]).toMatchObject({
+				status: "rejected",
+				reason: { code: OHTTPErrorCode.DecryptionFailed },
+			});
+			for (const result of results.slice(failAt + 1)) {
+				expect(result).toMatchObject({
+					status: "rejected",
+					reason: { code: OHTTPErrorCode.ChunkSequenceError },
+				});
+			}
+			await expect(opener.openChunk(ciphertexts[0] as Uint8Array)).rejects.toMatchObject({
+				code: OHTTPErrorCode.ChunkSequenceError,
+			});
+		},
+	);
+});
+
 // ============================================================================
 // 2. Output is a function of the input, not of completion order
 // ============================================================================

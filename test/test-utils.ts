@@ -11,6 +11,13 @@ import {
 	recipientStates,
 } from "../src/server.js";
 
+/** Buffer.slice() semantics without a Node dependency. */
+export class ViewSlicingBytes extends Uint8Array<ArrayBuffer> {
+	override slice(start?: number, end?: number): Uint8Array<ArrayBuffer> {
+		return this.subarray(start, end);
+	}
+}
+
 /**
  * Whether the current runtime's WebCrypto implements ChaCha20-Poly1305.
  *

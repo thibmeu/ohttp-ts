@@ -39,11 +39,37 @@ import {
 	serializeKeyConfig,
 } from "../src/keyConfig.js";
 import { ChunkedOHTTPServer, OHTTPServer } from "../src/server.js";
-import { fromHex, hex, supportsChaCha20Poly1305, toHex } from "./test-utils.js";
+import { fromHex, hex, supportsChaCha20Poly1305, toHex, ViewSlicingBytes } from "./test-utils.js";
 import ohttpJsVectors from "./vectors/ohttp-js.json";
 import rfc9458Vectors from "./vectors/rfc9458.json";
 
 describe("OHTTP round-trip", () => {
+	it.each([
+		["normal", OHTTPClient, OHTTPServer],
+		["chunked", ChunkedOHTTPClient, ChunkedOHTTPServer],
+	] as const)(
+		"should retain only owned request header bytes for %s responses",
+		async (_, Client, Server) => {
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_AES_128_GCM,
+			);
+			const keyConfig = await generateKeyConfig(suite, 1);
+			const client = new Client(suite, keyConfig);
+			const server = new Server([keyConfig]);
+			const { encapsulatedRequest, context } = await client.encapsulate(new Uint8Array([1]));
+			const input = new ViewSlicingBytes(encapsulatedRequest);
+
+			const decoded = await server.decapsulate(input);
+			input.fill(0);
+			const response = new Uint8Array([2]);
+			const encrypted = await decoded.context.encryptResponse(response);
+
+			expect(await context.decryptResponse(encrypted)).toEqual(response);
+		},
+	);
+
 	it("defaults buffered messages to 1 MiB and validates overrides", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 		const keyConfig = await generateKeyConfig(suite, 1);

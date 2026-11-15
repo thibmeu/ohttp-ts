@@ -23,10 +23,29 @@ import {
 	serializeKeyConfigs,
 } from "../src/keyConfig.js";
 import { concat } from "../src/utils.js";
-import { fromHex, toHex } from "./test-utils.js";
+import { fromHex, toHex, ViewSlicingBytes } from "./test-utils.js";
 import rfc9458Vectors from "./vectors/rfc9458.json";
 
 describe("KeyConfig serialization", () => {
+	it.each([false, true])("should own parsed public keys (list: %s)", (list) => {
+		const config = {
+			keyId: 1,
+			kemId: KemId.X25519_HKDF_SHA256,
+			publicKey: new Uint8Array(32).fill(0xab),
+			symmetricAlgorithms: [{ kdfId: KdfId.HKDF_SHA256, aeadId: AeadId.AES_128_GCM }],
+		};
+		const input = new ViewSlicingBytes(
+			list ? serializeKeyConfigs([config]) : serializeKeyConfig(config),
+		);
+
+		const parsed = list ? (parseKeyConfigs(input)[0] as KeyConfig) : parseKeyConfig(input);
+		input.fill(0);
+
+		expect(parsed.publicKey).toEqual(config.publicKey);
+		expect(Object.getPrototypeOf(parsed.publicKey)).toBe(Uint8Array.prototype);
+		expect(parsed.publicKey.buffer.byteLength).toBe(config.publicKey.length);
+	});
+
 	it("round-trips a KeyConfig", () => {
 		const config = {
 			keyId: 1,

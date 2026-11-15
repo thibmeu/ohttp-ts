@@ -469,6 +469,12 @@ export class ChunkedOHTTPServer {
 
 		let requestState: "open" | "final-pending" | "finished" | "failed" = "open";
 		const claimRequest = createChunkBudget(maxMessageSize);
+		// A queued HPKE open can succeed after an earlier one failed.
+		const assertRequestNotFailed = () => {
+			if (requestState === "failed") {
+				throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+			}
+		};
 
 		const requestContext: ChunkedServerRequestContext = {
 			keyId: keyConfig.keyId,
@@ -482,12 +488,15 @@ export class ChunkedOHTTPServer {
 					throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 				}
 				claimRequest(ciphertext.length - AEAD_TAG_SIZE, false);
+				let plaintext: Uint8Array;
 				try {
-					return asOwnedBytes(await recipientContext.Open(ciphertext));
+					plaintext = await recipientContext.Open(ciphertext);
 				} catch {
 					requestState = "failed";
 					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 				}
+				assertRequestNotFailed();
+				return asOwnedBytes(plaintext);
 			},
 
 			async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
@@ -499,14 +508,16 @@ export class ChunkedOHTTPServer {
 				}
 				claimRequest(ciphertext.length - AEAD_TAG_SIZE, true);
 				requestState = "final-pending";
+				let plaintext: Uint8Array;
 				try {
-					const pt = asOwnedBytes(await recipientContext.Open(ciphertext, FINAL_CHUNK_AAD));
-					requestState = "finished";
-					return pt;
+					plaintext = await recipientContext.Open(ciphertext, FINAL_CHUNK_AAD);
 				} catch {
 					requestState = "failed";
 					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 				}
+				assertRequestNotFailed();
+				requestState = "finished";
+				return asOwnedBytes(plaintext);
 			},
 
 			async createResponseContext(): Promise<ChunkedServerResponseContext> {
@@ -589,6 +600,7 @@ export class ChunkedOHTTPServer {
 		const maxMessageSize = this.maxMessageSize;
 		const context: ServerContext = {
 			async encryptResponse(response: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+				assertMessageSize(response, maxMessageSize);
 				// Fresh nonce per call, so counter 0 never repeats under one key
 				const responseNonce = crypto.getRandomValues(new Uint8Array(getResponseNonceLength(suite)));
 				const { aead, aeadKey, aeadNonce } = await deriveChunkedResponseKeys(
@@ -637,7 +649,7 @@ export class ChunkedOHTTPServer {
 
 		const reader = requestBody.getReader();
 		const signal = options.signal ?? request.signal;
-		const abort = () => void reader.cancel(signal.reason);
+		const abort = () => void reader.cancel(signal.reason).catch(() => {});
 		if (signal.aborted) abort();
 		else signal.addEventListener("abort", abort, { once: true });
 		let buffer = new Uint8Array(0);

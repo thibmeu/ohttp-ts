@@ -625,6 +625,7 @@ export class ChunkedOHTTPClient {
 	 * context decrypts the complete chunked response, as {@link OHTTPClient.encapsulate}.
 	 */
 	async encapsulate(request: Uint8Array): Promise<EncapsulatedRequest> {
+		assertMessageSize(request, this.maxMessageSize);
 		const ctx = await this.createRequestContext();
 		const { senderContext, enc } = senderState(ctx);
 
@@ -738,7 +739,7 @@ export class ChunkedOHTTPClient {
 				const nonceLength = getResponseNonceLength(suite);
 				const reader = responseBody.getReader();
 				const signal = options.signal;
-				const abort = () => void reader.cancel(signal?.reason);
+				const abort = () => void reader.cancel(signal?.reason).catch(() => {});
 				if (signal?.aborted) abort();
 				else signal?.addEventListener("abort", abort, { once: true });
 				let buffer = new Uint8Array(0);
