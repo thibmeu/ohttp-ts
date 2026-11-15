@@ -51,8 +51,8 @@ const client = new ChunkedOHTTPClient(suite, {
 const server = new ChunkedOHTTPServer([serverKeyConfig]);
 
 /** A matched server-side (sealing) and client-side (opening) response context. */
-async function responseContexts() {
-	const clientRequestCtx = await client.createRequestContext();
+async function responseContexts(openerClient = client) {
+	const clientRequestCtx = await openerClient.createRequestContext();
 	const serverRequestCtx = await server.createRequestContext(clientRequestCtx.header);
 	const sealer = await serverRequestCtx.createResponseContext();
 	const opener = await clientRequestCtx.createResponseContext(sealer.responseNonce);
@@ -207,6 +207,61 @@ describe("concurrent use of one response context", () => {
 
 			const plaintexts = await Promise.all(ciphertexts.map((ct) => opener.openChunk(ct)));
 			expect(plaintexts).toEqual(chunks);
+		},
+	);
+});
+
+describe("concurrent response opens", () => {
+	it.prop([fc.scheduler(), chunksArb(2), fc.nat(), fc.boolean()], { numRuns: 50 })(
+		"should overlap crypto and reject chunks following a failed open in any completion order",
+		async (s, chunks, k, corrupt) => {
+			// Arrange
+			const aead = scheduledAead(s);
+			let calls = 0;
+			const openerClient = new ChunkedOHTTPClient(suite, serverKeyConfig, {
+				responseCrypto: {
+					aead: () => ({
+						...aead,
+						Open: (...args) => {
+							calls++;
+							return aead.Open(...args);
+						},
+					}),
+				},
+			});
+			const { sealer, opener } = await responseContexts(openerClient);
+			const ciphertexts = await Promise.all(
+				chunks.map((chunk, i) =>
+					i === chunks.length - 1 ? sealer.sealFinalChunk(chunk) : sealer.sealChunk(chunk),
+				),
+			);
+			const failAt = k % (chunks.length - 1);
+			if (corrupt) (ciphertexts[failAt] as Uint8Array)[0] ^= 1;
+
+			// Act: every AEAD call must start before any scheduled result is released.
+			const opens = ciphertexts.map((ct, i) =>
+				i === ciphertexts.length - 1 ? opener.openFinalChunk(ct) : opener.openChunk(ct),
+			);
+			expect(calls).toBe(chunks.length);
+			const results = await s.waitFor(Promise.allSettled(opens));
+
+			// Assert
+			for (let i = 0; i < results.length; i++) {
+				if (!corrupt || i < failAt) {
+					expect(results[i]).toEqual({ status: "fulfilled", value: chunks[i] });
+				} else {
+					expect(results[i]).toMatchObject({
+						status: "rejected",
+						reason: {
+							code:
+								i === failAt ? OHTTPErrorCode.DecryptionFailed : OHTTPErrorCode.ChunkSequenceError,
+						},
+					});
+				}
+			}
+			await expect(opener.openChunk(ciphertexts[0] as Uint8Array)).rejects.toMatchObject({
+				code: OHTTPErrorCode.ChunkSequenceError,
+			});
 		},
 	);
 });

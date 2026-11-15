@@ -444,6 +444,20 @@ describe("keyConfigFromKeyPair", () => {
 		).rejects.toThrow(/INVALID_KEY_CONFIG/);
 	});
 
+	it("should snapshot the key-pair container before asynchronous validation", async () => {
+		const pair = await suite.GenerateKeyPair(false);
+		const other = await suite.GenerateKeyPair(false);
+		const configPromise = keyConfigFromKeyPair(suite, 1, pair);
+		Object.assign(pair, other);
+		const config = await configPromise;
+		const { encapsulatedSecret, ctx } = await suite.SetupSender(
+			await suite.DeserializePublicKey(config.publicKey),
+		);
+		const recipient = await suite.SetupRecipient(config.keyPair, encapsulatedSecret);
+		const plaintext = new Uint8Array([1]);
+		expect(await recipient.Open(await ctx.Seal(plaintext))).toEqual(plaintext);
+	});
+
 	it("does not need the runtime to support the first suite's AEAD", async () => {
 		const broken = () => ({
 			...AEAD_AES_128_GCM(),

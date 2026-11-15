@@ -198,7 +198,7 @@ const RELAY_INIT = {
 	method: "POST",
 	credentials: "omit",
 	referrerPolicy: "no-referrer",
-	redirect: "error",
+	redirect: "manual",
 } as const;
 
 /**
@@ -577,11 +577,26 @@ export class ChunkedOHTTPClient {
 				const claimResponse = createChunkBudget(maxMessageSize);
 				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
 				const maxChunks = 2 ** 32;
-				// A failed open ends the response: its counter is spent, so carrying
-				// on would hand the caller a message with that chunk missing.
-				const fail = (error: unknown): never => {
-					responseFinished = true;
-					throw error;
+				let opened = Promise.resolve(true);
+				// Start crypto immediately; release plaintext only after earlier opens succeed.
+				const open = (ciphertext: Uint8Array, isFinal: boolean) => {
+					const result = Promise.all([
+						opened,
+						openResponseChunk(aead, aeadKey, aeadNonce, counter++, ciphertext, isFinal),
+					]).then(([previousSucceeded, plaintext]) => {
+						if (!previousSucceeded) {
+							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
+						}
+						return plaintext;
+					});
+					opened = result.then(
+						() => true,
+						() => {
+							responseFinished = true;
+							return false;
+						},
+					);
+					return result;
 				};
 
 				return {
@@ -599,9 +614,7 @@ export class ChunkedOHTTPClient {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
 						claimResponse(ciphertext.length - AEAD_TAG_SIZE, false);
-						return openResponseChunk(aead, aeadKey, aeadNonce, counter++, ciphertext, false).catch(
-							fail,
-						);
+						return open(ciphertext, false);
 					},
 
 					async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
@@ -619,7 +632,7 @@ export class ChunkedOHTTPClient {
 						}
 						claimResponse(ciphertext.length - AEAD_TAG_SIZE, true);
 						responseFinished = true;
-						return openResponseChunk(aead, aeadKey, aeadNonce, counter, ciphertext, true);
+						return open(ciphertext, true);
 					},
 				};
 			},

@@ -1176,7 +1176,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
 			"message/ohttp-chunked-req",
 		);
-		expect(init.redirect).toBe("error");
+		expect(init.redirect).toBe("manual");
 
 		// Simulate relay forwarding to gateway (server decapsulates)
 		const relayRequest = new Request("https://relay.example.com/ohttp", init);

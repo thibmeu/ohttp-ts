@@ -70,6 +70,21 @@ describe("OHTTP round-trip", () => {
 		},
 	);
 
+	it.each([
+		["normal", OHTTPClient, OHTTPServer],
+		["chunked", ChunkedOHTTPClient, ChunkedOHTTPServer],
+	] as const)("should own the key-pair container for %s servers", async (_, Client, Server) => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const config = await generateKeyConfig(suite, 1);
+		const client = new Client(suite, config);
+		const server = new Server([config]);
+		const message = new Uint8Array([1]);
+		const { encapsulatedRequest } = await client.encapsulate(message);
+		Object.assign(config.keyPair, await suite.GenerateKeyPair());
+
+		expect((await server.decapsulate(encapsulatedRequest)).request).toEqual(message);
+	});
+
 	it("defaults buffered messages to 1 MiB and validates overrides", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 		const keyConfig = await generateKeyConfig(suite, 1);
@@ -660,7 +675,7 @@ describe("OHTTP Request/Response API", () => {
 		// Verify init format
 		expect(init.method).toBe("POST");
 		expect((init.headers as Record<string, string>)["Content-Type"]).toBe(MediaType.REQUEST);
-		expect(init.redirect).toBe("error");
+		expect(init.redirect).toBe("manual");
 
 		// Server decapsulates
 		const relayRequest = new Request("https://relay.example.com/ohttp", init);

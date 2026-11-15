@@ -30,8 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Chunked requests and responses send `Incremental: ?1`
   (draft-ietf-ohai-chunked-ohttp-08); browser clients need a relay that allows
   it in `Access-Control-Allow-Headers`.
-- The relay `RequestInit` sets `redirect: "error"`, so a relay redirect fails
-  instead of resending the request to another origin.
+- The relay `RequestInit` sets `redirect: "manual"`, so a relay redirect is returned
+  instead of resending the request to another origin (including in Workers).
 - Low-level chunk opens throw `DecryptionFailed`, not `ChunkLimitExceeded`, for
   a ciphertext shorter than the AEAD tag, matching the streaming transforms.
 
@@ -45,6 +45,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Concurrent response chunk opens reject after an earlier authentication failure,
+  while AEAD operations still run in parallel.
+- Servers and `KeyConfig.fromKeyPair` copy the key-pair container.
 - Chunked contexts no longer expose AEAD keys, nonces or HPKE contexts as
   symbol-keyed properties.
 - Clients copy the key config they are given.

@@ -239,7 +239,7 @@ function validateKeyConfigs(
 		) {
 			throw new OHTTPError(OHTTPErrorCode.InvalidKeyConfig);
 		}
-		return { ...config, suites };
+		return { ...config, suites, keyPair: { ...config.keyPair } };
 	});
 }
 

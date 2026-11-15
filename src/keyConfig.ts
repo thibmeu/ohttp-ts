@@ -707,6 +707,7 @@ export async function keyConfigFromKeyPair(
 	keyId: number,
 	keyPair: KeyPair,
 ): Promise<KeyConfigWithPrivate> {
+	keyPair = { ...keyPair };
 	const suiteList = checkedSuites(suites, keyId);
 	const suite = suiteList[0];
 	const kemId = suite.KEM.id as KemId;
