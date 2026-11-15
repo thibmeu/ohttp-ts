@@ -16,7 +16,7 @@ import {
 } from "hpke";
 import { describe, expect, it, vi } from "vitest";
 import { bhttpEncoder } from "../src/bhttp.js";
-import { OHTTPClient } from "../src/client.js";
+import { ChunkedOHTTPClient, OHTTPClient } from "../src/client.js";
 import { MediaType } from "../src/constants.js";
 import {
 	AEAD_TAG_SIZE,
@@ -337,6 +337,16 @@ describe("OHTTP round-trip", () => {
 					{ responseCrypto },
 				),
 		).toThrow(expect.objectContaining({ code: OHTTPErrorCode.UnsupportedCipherSuite }));
+	});
+
+	it("rejects a key identifier that does not fit one byte", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = { ...(await generateKeyConfig(suite, 1)), keyId: 257 };
+		for (const Client of [OHTTPClient, ChunkedOHTTPClient]) {
+			expect(() => new Client(suite, keyConfig)).toThrow(
+				expect.objectContaining({ code: OHTTPErrorCode.InvalidKeyConfig }),
+			);
+		}
 	});
 
 	it("supports multiple key configs for key rotation", async () => {

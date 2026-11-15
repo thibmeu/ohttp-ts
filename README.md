@@ -129,6 +129,23 @@ One key pair covers every suite, since it belongs to the KEM they share, and the
 advertised pairs are derived from the suites. The request header says which pair
 it used.
 
+To keep the gateway's private key out of JavaScript, build the config from
+`CryptoKey`s with `KeyConfig.fromKeyPair`. The private key can be
+non-extractable, for example one returned by `crypto.subtle.unwrapKey`:
+
+```typescript
+// Node.js, Deno and Cloudflare Workers can derive the public key from the
+// private one (https://wicg.github.io/webcrypto-modern-algos/). Elsewhere,
+// import the public key bytes with `suite.DeserializePublicKey`.
+const publicKey = await crypto.subtle.getPublicKey(privateKey, []);
+const keyConfig = await KeyConfig.fromKeyPair(suite, 0x01, { publicKey, privateKey });
+```
+
+This holds for KEMs the suite runs on WebCrypto; JavaScript backends such as
+`@panva/hpke-noble` hold key bytes regardless. `fromKeyPair` and
+`KeyConfig.import` both throw `InvalidKeyConfig` when the two keys are not a
+pair.
+
 ### Protocol Flow
 
 ![OHTTP protocol flow](docs/protocol-flow.svg)
