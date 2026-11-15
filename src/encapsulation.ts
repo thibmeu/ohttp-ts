@@ -451,17 +451,14 @@ export async function encapsulateResponse(
 		throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 	}
 
-	// Export secret from HPKE context
-	const secret = await recipientContext.Export(encodeString(label), nonceLength);
-
-	// Derive AEAD key and nonce using HKDF over the exported secret.
-	// salt = concat(enc, response_nonce)
-	// prk = Extract(salt, secret); aead_key = Expand(prk, "key", Nk); ...
-	const salt = concat(enc, responseNonce);
-	const { kdf, aead } = resolveResponseCrypto(suite, responseCrypto);
-	const prk = await kdf.Extract(salt, secret);
-	const aeadKey = await kdf.Expand(prk, encodeString("key"), suite.AEAD.Nk);
-	const aeadNonce = await kdf.Expand(prk, encodeString("nonce"), suite.AEAD.Nn);
+	const { aeadKey, aeadNonce, aead } = await deriveResponseKeys(
+		suite,
+		recipientContext,
+		enc,
+		responseNonce,
+		label,
+		responseCrypto,
+	);
 
 	// Encrypt response using raw AEAD
 	const ct = await aead.Seal(aeadKey, aeadNonce, new Uint8Array(0), response);
@@ -490,15 +487,14 @@ export async function decapsulateResponse(
 	const responseNonce = encapsulatedResponse.subarray(0, nonceLength);
 	const ciphertext = encapsulatedResponse.subarray(nonceLength);
 
-	// Export secret from HPKE context
-	const secret = await senderContext.Export(encodeString(label), nonceLength);
-
-	// Derive AEAD key and nonce
-	const salt = concat(enc, responseNonce);
-	const { kdf, aead } = resolveResponseCrypto(suite, responseCrypto);
-	const prk = await kdf.Extract(salt, secret);
-	const aeadKey = await kdf.Expand(prk, encodeString("key"), suite.AEAD.Nk);
-	const aeadNonce = await kdf.Expand(prk, encodeString("nonce"), suite.AEAD.Nn);
+	const { aeadKey, aeadNonce, aead } = await deriveResponseKeys(
+		suite,
+		senderContext,
+		enc,
+		responseNonce,
+		label,
+		responseCrypto,
+	);
 
 	// Decrypt response
 	try {
@@ -513,14 +509,15 @@ export async function decapsulateResponse(
 // ============================================================================
 
 /**
- * Derive response AEAD key and base nonce for chunked responses (draft-08 Section 6.2)
+ * Derive the response AEAD key and nonce (RFC 9458 Section 4.4). Chunked
+ * responses use the nonce as the per-chunk base (draft-08 Section 6.2).
  */
-export async function deriveChunkedResponseKeys(
+export async function deriveResponseKeys(
 	suite: CipherSuite,
 	context: SenderContext | RecipientContext,
 	enc: Uint8Array,
 	responseNonce: Uint8Array,
-	label: string = CHUNKED_RESPONSE_LABEL,
+	label: string,
 	responseCrypto?: ResponseCrypto,
 ): Promise<{ aeadKey: Uint8Array; aeadNonce: Uint8Array; aead: AeadImpl }> {
 	const nonceLength = getResponseNonceLength(suite);

@@ -114,11 +114,6 @@ export async function collectStream(
 	return concat(parts);
 }
 
-/**
- * Maximum chunks allowed per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
- */
-const MAX_CHUNKS = 2 ** 32;
-
 const EMPTY = new Uint8Array(0);
 
 /** Cancellation shared by one high-level streaming operation. */
@@ -470,9 +465,6 @@ export function createResponseEncryptTransform(
 		async write(chunk) {
 			if (pendingChunk !== undefined) {
 				claim(pendingChunk.length, false);
-				if (counter >= MAX_CHUNKS) {
-					throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
-				}
 				await pipeline.enqueue(
 					encryptedFrame(
 						sealResponseChunk(aead, aeadKey, baseNonce, counter++, pendingChunk, false),
@@ -484,10 +476,6 @@ export function createResponseEncryptTransform(
 		},
 
 		async close() {
-			if (counter >= MAX_CHUNKS) {
-				throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
-			}
-
 			claim((pendingChunk ?? EMPTY).length, true);
 			await pipeline.enqueue(
 				encryptedFrame(
@@ -518,9 +506,6 @@ export function createResponseDecryptTransform(
 	// The counter is claimed synchronously at call time: opens are pipelined, so
 	// the next frame's open may start before this one's promise resolves.
 	return createFramedDecryptTransform((ciphertext, isFinal) => {
-		if (counter >= MAX_CHUNKS) {
-			return Promise.reject(new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded));
-		}
 		return openResponseChunk(aead, aeadKey, baseNonce, counter++, ciphertext, isFinal);
 	}, maxMessageSize);
 }

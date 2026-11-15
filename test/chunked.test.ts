@@ -15,13 +15,13 @@ import { encode as encodeVarint } from "quicvarint";
 import { describe, expect, it, vi } from "vitest";
 import { bhttpEncoder } from "../src/bhttp.js";
 import { ChunkedOHTTPClient } from "../src/client.js";
-import { CHUNKED_REQUEST_LABEL, MediaType } from "../src/constants.js";
+import { CHUNKED_REQUEST_LABEL, CHUNKED_RESPONSE_LABEL, MediaType } from "../src/constants.js";
 import {
 	AEAD_TAG_SIZE,
 	buildRequestInfo,
 	computeChunkNonce,
 	DEFAULT_MAX_FRAME_SIZE,
-	deriveChunkedResponseKeys,
+	deriveResponseKeys,
 	frameChunk,
 	getResponseNonceLength,
 	parseFramedChunk,
@@ -579,11 +579,12 @@ describe("draft-08 Appendix A test vectors", () => {
 		const server = new ChunkedOHTTPServer([keyConfig]);
 		const ctx = await server.createRequestContext(hex(vector.encapsulatedRequest).subarray(0, 39));
 
-		const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
+		const { aeadKey, aeadNonce, aead } = await deriveResponseKeys(
 			keyConfig.suites[0],
 			hpkeOf(ctx).recipientContext,
 			hex(vector.enc),
 			hex(vector.responseNonce),
+			CHUNKED_RESPONSE_LABEL,
 		);
 
 		expect(toHex(aeadNonce)).toBe(vector.aeadNonce);

@@ -24,7 +24,7 @@ import {
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	decapsulateRequest,
-	deriveChunkedResponseKeys,
+	deriveResponseKeys,
 	encapsulateResponse,
 	FINAL_CHUNK_AAD,
 	getEncLength,
@@ -542,7 +542,7 @@ export class ChunkedOHTTPServer {
 				const responseNonce = crypto.getRandomValues(new Uint8Array(nonceLength));
 
 				// Derive key material
-				const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
+				const { aeadKey, aeadNonce, aead } = await deriveResponseKeys(
 					suite,
 					recipientContext,
 					enc,
@@ -557,8 +557,6 @@ export class ChunkedOHTTPServer {
 				let counter = 0;
 				let responseFinished = false;
 				const claimResponse = createChunkBudget(maxMessageSize);
-				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
-				const maxChunks = 2 ** 32;
 
 				return {
 					responseNonce,
@@ -567,9 +565,6 @@ export class ChunkedOHTTPServer {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 						}
-						if (counter >= maxChunks) {
-							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
-						}
 						claimResponse(chunk.length, false);
 						return sealResponseChunk(aead, aeadKey, aeadNonce, counter++, chunk, false);
 					},
@@ -577,9 +572,6 @@ export class ChunkedOHTTPServer {
 					async sealFinalChunk(chunk: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
-						}
-						if (counter >= maxChunks) {
-							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
 						claimResponse(chunk.length, true);
 						responseFinished = true;
@@ -619,7 +611,7 @@ export class ChunkedOHTTPServer {
 				assertMessageSize(response, maxMessageSize);
 				// Fresh nonce per call, so counter 0 never repeats under one key
 				const responseNonce = crypto.getRandomValues(new Uint8Array(getResponseNonceLength(suite)));
-				const { aead, aeadKey, aeadNonce } = await deriveChunkedResponseKeys(
+				const { aead, aeadKey, aeadNonce } = await deriveResponseKeys(
 					suite,
 					recipientContext,
 					enc,
@@ -762,7 +754,7 @@ export class ChunkedOHTTPServer {
 				const responseNonce = crypto.getRandomValues(new Uint8Array(nonceLength));
 
 				// Derive response keys
-				const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
+				const { aeadKey, aeadNonce, aead } = await deriveResponseKeys(
 					suite,
 					recipientContext,
 					enc,

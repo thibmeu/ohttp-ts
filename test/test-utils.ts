@@ -4,7 +4,8 @@
 
 import { AEAD_ChaCha20Poly1305, type RecipientContext, type SenderContext } from "hpke";
 import { type ChunkedRequestContext, senderStates } from "../src/client.js";
-import { deriveChunkedResponseKeys } from "../src/encapsulation.js";
+import { CHUNKED_RESPONSE_LABEL } from "../src/constants.js";
+import { deriveResponseKeys } from "../src/encapsulation.js";
 import {
 	type ChunkedServerRequestContext,
 	type ChunkedServerResponseContext,
@@ -98,10 +99,11 @@ export function hpkeOf(ctx: ChunkedRequestContext | ChunkedServerRequestContext)
 export function aeadOf(req: ChunkedServerRequestContext, res: ChunkedServerResponseContext) {
 	const state = recipientStates.get(req);
 	if (state === undefined) throw new Error("not a chunked request context");
-	return deriveChunkedResponseKeys(
+	return deriveResponseKeys(
 		state.suite,
 		state.recipientContext,
 		state.enc,
 		res.responseNonce,
+		CHUNKED_RESPONSE_LABEL,
 	);
 }

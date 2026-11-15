@@ -24,7 +24,7 @@ import {
 	DEFAULT_REQUEST_LABEL,
 	DEFAULT_RESPONSE_LABEL,
 	decapsulateResponse,
-	deriveChunkedResponseKeys,
+	deriveResponseKeys,
 	encapsulateRequest,
 	FINAL_CHUNK_AAD,
 	getResponseNonceLength,
@@ -560,7 +560,7 @@ export class ChunkedOHTTPClient {
 				if (responseNonce.length !== getResponseNonceLength(suite)) {
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
-				const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
+				const { aeadKey, aeadNonce, aead } = await deriveResponseKeys(
 					suite,
 					senderContext,
 					enc,
@@ -575,8 +575,6 @@ export class ChunkedOHTTPClient {
 				let counter = 0;
 				let responseFinished = false;
 				const claimResponse = createChunkBudget(maxMessageSize);
-				// Max chunks: 2^32 per draft-ietf-ohai-chunked-ohttp-08 Section 7.3
-				const maxChunks = 2 ** 32;
 				let opened = Promise.resolve(true);
 				// Start crypto immediately; release plaintext only after earlier opens succeed.
 				const open = (ciphertext: Uint8Array, isFinal: boolean) => {
@@ -604,9 +602,6 @@ export class ChunkedOHTTPClient {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 						}
-						if (counter >= maxChunks) {
-							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
-						}
 						if (ciphertext.length < AEAD_TAG_SIZE) {
 							throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
 						}
@@ -620,9 +615,6 @@ export class ChunkedOHTTPClient {
 					async openFinalChunk(ciphertext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 						if (responseFinished) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
-						}
-						if (counter >= maxChunks) {
-							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
 						if (ciphertext.length < AEAD_TAG_SIZE) {
 							throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
@@ -671,7 +663,7 @@ export class ChunkedOHTTPClient {
 				if (encapsulatedResponse.length < nonceLength) {
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
-				const { aead, aeadKey, aeadNonce } = await deriveChunkedResponseKeys(
+				const { aead, aeadKey, aeadNonce } = await deriveResponseKeys(
 					suite,
 					senderContext,
 					enc,
@@ -785,7 +777,7 @@ export class ChunkedOHTTPClient {
 					const remainder = buffer.subarray(nonceLength);
 
 					// Derive response keys
-					const { aeadKey, aeadNonce, aead } = await deriveChunkedResponseKeys(
+					const { aeadKey, aeadNonce, aead } = await deriveResponseKeys(
 						suite,
 						senderContext,
 						enc,

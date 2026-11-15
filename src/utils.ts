@@ -77,6 +77,7 @@ export function createChunkBudget(maxMessageSize: number) {
 	let chunks = 0;
 	let bytes = 0;
 	return (size: number, final: boolean): void => {
+		// At most 2^32 chunks per message (draft-ietf-ohai-chunked-ohttp-08 Section 7.3)
 		if (chunks >= 2 ** 32 || size > DEFAULT_MAX_CHUNK_SIZE || (!final && size === 0)) {
 			throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 		}
