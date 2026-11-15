@@ -296,6 +296,9 @@ export class OHTTPServer {
 			this.maxMessageSize,
 		);
 		assertMessageSize(ctx.request, this.maxMessageSize);
+		// Keep only what the response needs, not the decrypted request
+		const { recipientContext, enc, suite } = ctx;
+		const responseState = { recipientContext, enc, suite };
 
 		const responseLabel = this.#responseLabel;
 		const responseCrypto = this.#responseCrypto;
@@ -304,9 +307,15 @@ export class OHTTPServer {
 			async encryptResponse(response: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 				assertMessageSize(response, maxMessageSize);
 				// Generate random response nonce
-				const nonceLength = getResponseNonceLength(ctx.suite);
+				const nonceLength = getResponseNonceLength(suite);
 				const responseNonce = crypto.getRandomValues(new Uint8Array(nonceLength));
-				return encapsulateResponse(ctx, response, responseNonce, responseLabel, responseCrypto);
+				return encapsulateResponse(
+					responseState,
+					response,
+					responseNonce,
+					responseLabel,
+					responseCrypto,
+				);
 			},
 		};
 
@@ -328,6 +337,7 @@ export class OHTTPServer {
 		// Validate content type
 		const contentType = request.headers.get("content-type");
 		if (!isMediaType(contentType, MediaType.REQUEST)) {
+			void request.body?.cancel().catch(() => {});
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 
@@ -484,7 +494,10 @@ export class ChunkedOHTTPServer {
 				if (requestState !== "open") {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
-				if (ciphertext.length < AEAD_TAG_SIZE || ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
+				if (ciphertext.length < AEAD_TAG_SIZE) {
+					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+				}
+				if (ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 				}
 				claimRequest(ciphertext.length - AEAD_TAG_SIZE, false);
@@ -503,7 +516,10 @@ export class ChunkedOHTTPServer {
 				if (requestState !== "open") {
 					throw new OHTTPError(OHTTPErrorCode.ChunkSequenceError);
 				}
-				if (ciphertext.length < AEAD_TAG_SIZE || ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
+				if (ciphertext.length < AEAD_TAG_SIZE) {
+					throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+				}
+				if (ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
 					throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 				}
 				claimRequest(ciphertext.length - AEAD_TAG_SIZE, true);
@@ -639,6 +655,7 @@ export class ChunkedOHTTPServer {
 		// Validate content type
 		const contentType = request.headers.get("content-type");
 		if (!isMediaType(contentType, MediaType.CHUNKED_REQUEST)) {
+			void request.body?.cancel().catch(() => {});
 			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 		}
 

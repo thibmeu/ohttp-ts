@@ -660,6 +660,7 @@ describe("OHTTP Request/Response API", () => {
 		// Verify init format
 		expect(init.method).toBe("POST");
 		expect((init.headers as Record<string, string>)["Content-Type"]).toBe(MediaType.REQUEST);
+		expect(init.redirect).toBe("error");
 
 		// Server decapsulates
 		const relayRequest = new Request("https://relay.example.com/ohttp", init);
@@ -727,12 +728,14 @@ describe("OHTTP Request/Response API", () => {
 		const httpRequest = new Request("https://target.example.com/", { method: "GET" });
 		const { context } = await client.encapsulateRequest(httpRequest);
 
-		// Response with wrong content-type
-		const badResponse = new Response("data", {
+		// Response with wrong content-type; its body must be released, not left open
+		const cancel = vi.fn();
+		const badResponse = new Response(new ReadableStream({ cancel }), {
 			headers: { "Content-Type": "text/plain" },
 		});
 
 		await expect(context.decapsulateResponse(badResponse)).rejects.toThrow(OHTTPError);
+		expect(cancel).toHaveBeenCalled();
 	});
 
 	it("reports malformed inner bhttp as InvalidMessage", async () => {

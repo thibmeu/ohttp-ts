@@ -193,8 +193,13 @@ function senderState(ctx: ChunkedRequestContext) {
  */
 export type StreamingRequestInit = RequestInit & { duplex: "half" };
 
-/** Outer-request defaults: no ambient cookies or page referrer reach the relay */
-const RELAY_INIT = { method: "POST", credentials: "omit", referrerPolicy: "no-referrer" } as const;
+/** Outer-request defaults: no ambient cookies, page referrer, or redirect away from the relay */
+const RELAY_INIT = {
+	method: "POST",
+	credentials: "omit",
+	referrerPolicy: "no-referrer",
+	redirect: "error",
+} as const;
 
 /**
  * Result of encapsulating a chunked HTTP request (Request/Response API)
@@ -299,7 +304,7 @@ export class OHTTPClient {
 		const publicKey = await this.#importedPublicKey;
 
 		// Encapsulate the request
-		const ctx = await encapsulateRequest(
+		const { encapsulatedRequest, senderContext, enc, suite } = await encapsulateRequest(
 			this.#suite,
 			publicKey,
 			this.#keyConfig,
@@ -309,7 +314,8 @@ export class OHTTPClient {
 			this.#requestLabel,
 		);
 
-		// Create client context
+		// Keep only what the response needs, not the request bytes
+		const responseState = { senderContext, enc, suite };
 		const responseLabel = this.#responseLabel;
 		const responseCrypto = this.#responseCrypto;
 		const maxMessageSize = this.maxMessageSize;
@@ -321,7 +327,7 @@ export class OHTTPClient {
 					throw new OHTTPError(OHTTPErrorCode.MessageTooLarge);
 				}
 				const response = await decapsulateResponse(
-					ctx,
+					responseState,
 					encapsulatedResponse,
 					responseLabel,
 					responseCrypto,
@@ -331,10 +337,7 @@ export class OHTTPClient {
 			},
 		};
 
-		return {
-			encapsulatedRequest: ctx.encapsulatedRequest,
-			context,
-		};
+		return { encapsulatedRequest, context };
 	}
 
 	/**
@@ -379,6 +382,7 @@ export class OHTTPClient {
 				// Validate content type
 				const contentType = response.headers.get("content-type");
 				if (!isMediaType(contentType, MediaType.RESPONSE)) {
+					void response.body?.cancel().catch(() => {});
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
 
@@ -588,7 +592,10 @@ export class ChunkedOHTTPClient {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						if (ciphertext.length < AEAD_TAG_SIZE || ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
+						if (ciphertext.length < AEAD_TAG_SIZE) {
+							throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+						}
+						if (ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
 						claimResponse(ciphertext.length - AEAD_TAG_SIZE, false);
@@ -604,7 +611,10 @@ export class ChunkedOHTTPClient {
 						if (counter >= maxChunks) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
-						if (ciphertext.length < AEAD_TAG_SIZE || ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
+						if (ciphertext.length < AEAD_TAG_SIZE) {
+							throw new OHTTPError(OHTTPErrorCode.DecryptionFailed);
+						}
+						if (ciphertext.length > DEFAULT_MAX_FRAME_SIZE) {
 							throw new OHTTPError(OHTTPErrorCode.ChunkLimitExceeded);
 						}
 						claimResponse(ciphertext.length - AEAD_TAG_SIZE, true);
@@ -727,6 +737,7 @@ export class ChunkedOHTTPClient {
 				// Validate content type
 				const contentType = response.headers.get("content-type");
 				if (!isMediaType(contentType, MediaType.CHUNKED_RESPONSE)) {
+					void response.body?.cancel().catch(() => {});
 					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
 				}
 

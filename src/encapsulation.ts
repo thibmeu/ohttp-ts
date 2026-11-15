@@ -438,7 +438,7 @@ export async function decapsulateRequest(
  * Encapsulate a response using HPKE-derived keys (RFC 9458 Section 4.4)
  */
 export async function encapsulateResponse(
-	serverContext: ServerEncapsulationContext,
+	serverContext: Pick<ServerEncapsulationContext, "recipientContext" | "enc" | "suite">,
 	response: Uint8Array,
 	responseNonce: Uint8Array,
 	label: string = DEFAULT_RESPONSE_LABEL,
@@ -474,7 +474,7 @@ export async function encapsulateResponse(
  * Decapsulate a response using HPKE-derived keys (RFC 9458 Section 4.4)
  */
 export async function decapsulateResponse(
-	clientContext: ClientEncapsulationContext,
+	clientContext: Pick<ClientEncapsulationContext, "senderContext" | "enc" | "suite">,
 	encapsulatedResponse: Uint8Array,
 	label: string = DEFAULT_RESPONSE_LABEL,
 	responseCrypto?: ResponseCrypto,

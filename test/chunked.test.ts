@@ -17,6 +17,7 @@ import { bhttpEncoder } from "../src/bhttp.js";
 import { ChunkedOHTTPClient } from "../src/client.js";
 import { CHUNKED_REQUEST_LABEL, MediaType } from "../src/constants.js";
 import {
+	AEAD_TAG_SIZE,
 	buildRequestInfo,
 	computeChunkNonce,
 	DEFAULT_MAX_FRAME_SIZE,
@@ -415,6 +416,23 @@ describe("chunk sequence guard", () => {
 			] as const,
 		};
 	}
+
+	it("rejects a chunk shorter than the AEAD tag as DecryptionFailed", async () => {
+		const { spare, spareReq } = await finishedContexts();
+		const short = new Uint8Array(AEAD_TAG_SIZE - 1);
+		const response = await spareReq.createResponseContext(
+			(await spare.createResponseContext()).responseNonce,
+		);
+
+		for (const open of [
+			spare.openChunk,
+			spare.openFinalChunk,
+			response.openChunk,
+			response.openFinalChunk,
+		]) {
+			await expect(open(short)).rejects.toThrow(OHTTPErrorCode.DecryptionFailed);
+		}
+	});
 
 	it("rejects any chunk after the final chunk", async () => {
 		const { contexts } = await finishedContexts();
@@ -1158,6 +1176,7 @@ describe("chunked OHTTP with streaming BHTTP (Request/Response API)", () => {
 		expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
 			"message/ohttp-chunked-req",
 		);
+		expect(init.redirect).toBe("error");
 
 		// Simulate relay forwarding to gateway (server decapsulates)
 		const relayRequest = new Request("https://relay.example.com/ohttp", init);

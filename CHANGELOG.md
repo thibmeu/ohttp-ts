@@ -30,6 +30,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Chunked requests and responses send `Incremental: ?1`
   (draft-ietf-ohai-chunked-ohttp-08); browser clients need a relay that allows
   it in `Access-Control-Allow-Headers`.
+- The relay `RequestInit` sets `redirect: "error"`, so a relay redirect fails
+  instead of resending the request to another origin.
+- Low-level chunk opens throw `DecryptionFailed`, not `ChunkLimitExceeded`, for
+  a ciphertext shorter than the AEAD tag, matching the streaming transforms.
 
 ### Added
 
@@ -49,6 +53,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Queued request opens reject after an authentication failure.
 - Aborting chunked setup handles errors from stream cancellation.
 - Buffered chunked encryption rejects oversized input before crypto work.
+- Response contexts no longer keep the decrypted request (server) or the
+  encapsulated request (client) alive.
+- A request or response rejected for its `Content-Type` has its body cancelled.
 
 ## [0.6.3] - 2026-11-13
 
