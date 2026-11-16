@@ -718,7 +718,7 @@ export class ChunkedOHTTPClient {
 
 		// Create the encryption pipeline:
 		// BHTTP bytes → chunker → OHTTP encrypt → framed ciphertext
-		const chunkerTransform = createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE);
+		const chunkerTransform = createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE, this.#padding !== 0);
 		const encryptTransform = createRequestEncryptTransform(senderContext, maxMessageSize);
 
 		// Pipe through transforms

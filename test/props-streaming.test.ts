@@ -82,10 +82,10 @@ describe("createChunkerTransform", () => {
 		[fc.array(bytesArb({ maxLength: 200 }), { maxLength: 10 }), fc.integer({ min: 1, max: 100 })],
 		CRYPTO,
 	)(
-		"emits chunks of at most n, all but the last exactly n, concatenating to the input",
+		"fixed-size: emits chunks of at most n, all but the last exactly n, concatenating to the input",
 		async (writes, maxChunkSize) => {
 			const chunks = await collectPieces(
-				streamFromPieces(writes).pipeThrough(createChunkerTransform(maxChunkSize)),
+				streamFromPieces(writes).pipeThrough(createChunkerTransform(maxChunkSize, true)),
 			);
 
 			for (let i = 0; i < chunks.length; i++) {
@@ -98,6 +98,20 @@ describe("createChunkerTransform", () => {
 			expect(concat(...chunks)).toEqual(concat(...writes));
 		},
 	);
+
+	it.prop(
+		[fc.array(bytesArb({ maxLength: 200 }), { maxLength: 10 }), fc.integer({ min: 1, max: 100 })],
+		CRYPTO,
+	)("default: splits each write on its own, never holding bytes back", async (writes, n) => {
+		const chunks = await collectPieces(
+			streamFromPieces(writes).pipeThrough(createChunkerTransform(n)),
+		);
+		expect(chunks).toEqual(
+			writes.flatMap((w) =>
+				Array.from({ length: Math.ceil(w.length / n) }, (_, i) => w.subarray(i * n, (i + 1) * n)),
+			),
+		);
+	});
 });
 
 // ============================================================================

@@ -2156,8 +2156,13 @@ describe("chunked HTTP padding", () => {
 		const bytes = new Uint8Array(await new Request("https://gateway.example/", init).arrayBuffer());
 		const { offset } = parseRequestHeader(bytes);
 		const frame = parseFramedChunk(bytes.subarray(offset), { endOfStream: true });
-		expect(frame?.isFinal).toBe(true);
+		expect(frame?.isFinal).toBe(false);
 		expect(frame?.ciphertext.length).toBe(1024 + 16);
+		const final = parseFramedChunk(bytes.subarray(offset + (frame?.bytesConsumed ?? 0)), {
+			endOfStream: true,
+		});
+		expect(final?.isFinal).toBe(true);
+		expect(final?.ciphertext.length).toBe(16);
 		const decoded = await server.decapsulateRequest(
 			new Request("https://gateway.example/", { ...init, body: bytes }),
 		);
@@ -2200,15 +2205,15 @@ describe("chunked HTTP padding", () => {
 		const response = await received.context.encapsulateResponse(new Response("hello"));
 		const responseBytes = await collectStream(response.body as ReadableStream<Uint8Array>);
 
-		// The BHTTP body ends in the first frame; this byte belongs to final padding.
-		bytes[bytes.length - 17] = (bytes[bytes.length - 17] as number) ^ 1;
+		// Last padding byte, before the empty final frame (marker + tag).
+		bytes[bytes.length - 33] = (bytes[bytes.length - 33] as number) ^ 1;
 		await expect(
 			server
 				.decapsulateRequest(new Request("https://gateway.example/", { ...init, body: bytes }))
 				.then(({ request }) => collectStream(request.body as ReadableStream<Uint8Array>)),
 		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.DecryptionFailed }));
-		responseBytes[responseBytes.length - 17] =
-			(responseBytes[responseBytes.length - 17] as number) ^ 1;
+		responseBytes[responseBytes.length - 33] =
+			(responseBytes[responseBytes.length - 33] as number) ^ 1;
 		await expect(
 			context
 				.decapsulateResponse(new Response(responseBytes, { headers: response.headers }))
@@ -2254,8 +2259,8 @@ describe("chunked HTTP padding", () => {
 		);
 		expect(await decoded.text()).toBe(body);
 
-		// Changing the final padding bytes must still fail authentication.
-		request[request.length - 17] = (request[request.length - 17] as number) ^ 1;
+		// Changing the last padding byte must still fail authentication.
+		request[request.length - 33] = (request[request.length - 33] as number) ^ 1;
 		await expect(server.decapsulate(request)).rejects.toThrow(
 			expect.objectContaining({ code: OHTTPErrorCode.DecryptionFailed }),
 		);
@@ -2314,17 +2319,15 @@ describe("chunked HTTP padding", () => {
 // Helpers
 
 function checkPaddedFrames(bytes: Uint8Array<ArrayBuffer>, finalSize: number | undefined) {
-	const first = parseFramedChunk(bytes, { endOfStream: true });
-	expect(first).toBeDefined();
-	if (!first) throw new Error("Missing first frame");
-	expect(first.isFinal).toBe(false);
-	expect(first.ciphertext).toHaveLength(16384 + 16);
-	const final = parseFramedChunk(bytes.subarray(first.bytesConsumed), { endOfStream: true });
-	expect(final).toBeDefined();
-	if (!final) throw new Error("Missing final frame");
-	expect(final.isFinal).toBe(true);
-	if (finalSize === undefined) expect(final.ciphertext.length).toBeLessThan(8192 + 16);
-	else expect(final.ciphertext).toHaveLength(finalSize + 16);
+	const sizes: number[] = [];
+	for (let rest = bytes; rest.length > 0; ) {
+		const frame = parseFramedChunk(rest, { endOfStream: true });
+		if (!frame) throw new Error("Truncated frame");
+		sizes.push(frame.ciphertext.length - 16);
+		rest = rest.subarray(frame.bytesConsumed);
+	}
+	expect(sizes.at(-1)).toBe(0);
+	if (finalSize !== undefined) expect(sizes).toEqual([16384, finalSize, 0]);
 }
 
 describe("chunked transport hints and client key snapshot", () => {
@@ -2356,4 +2359,37 @@ describe("chunked transport hints and client key snapshot", () => {
 		const { request } = await new ChunkedOHTTPServer([keyConfig]).decapsulate(encapsulatedRequest);
 		expect(request).toEqual(new Uint8Array([1]));
 	});
+});
+
+describe("time to first byte", () => {
+	it.each([
+		{ padding: 0, written: 100, delivered: 100 },
+		{ padding: undefined, written: 20_000, delivered: 16_000 }, // first full chunk
+	])(
+		"delivers $delivered of $written open-body bytes, padding $padding",
+		async ({ padding, written, delivered }) => {
+			const suite = new CipherSuite(
+				KEM_DHKEM_X25519_HKDF_SHA256,
+				KDF_HKDF_SHA256,
+				AEAD_AES_128_GCM,
+			);
+			const keyConfig = await generateKeyConfig(suite, 1);
+			const client = new ChunkedOHTTPClient(suite, keyConfig, { padding });
+			const server = new ChunkedOHTTPServer([keyConfig], { padding });
+			const { init, context } = await client.encapsulateRequest(
+				new Request("https://example.com/"),
+			);
+			const { context: serverCtx } = await server.decapsulateRequest(
+				new Request("https://relay.example/", { ...init, duplex: "half" } as RequestInit),
+			);
+
+			const body = new TransformStream<Uint8Array, Uint8Array>();
+			void body.writable.getWriter().write(new Uint8Array(written)); // never closed
+			const outer = await serverCtx.encapsulateResponse(new Response(body.readable));
+			const reader = (await context.decapsulateResponse(outer)).body?.getReader();
+			let got = 0;
+			while (got < delivered) got += (await reader?.read())?.value?.length ?? 0;
+		},
+		2_000,
+	);
 });

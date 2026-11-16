@@ -770,7 +770,7 @@ export class ChunkedOHTTPServer {
 				});
 
 				// Create the encryption pipeline
-				const chunkerTransform = createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE);
+				const chunkerTransform = createChunkerTransform(DEFAULT_MAX_CHUNK_SIZE, padding !== 0);
 				const encryptTransform = createResponseEncryptTransform(
 					aead,
 					aeadKey,

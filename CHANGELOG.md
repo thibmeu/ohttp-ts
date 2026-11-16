@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Streaming no longer stalls on small writes: chunks are sealed as they arrive
+  and closed with an empty final chunk. With padding on, frames stay 16 KiB.
+
 ## [0.7.0] - 2026-11-15
 
 ### Breaking changes

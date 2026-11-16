@@ -320,25 +320,19 @@ export function createRequestEncryptTransform(
 	maxMessageSize: number = DEFAULT_MAX_CHUNKED_OHTTP_MESSAGE_SIZE,
 ): TransformStream<Uint8Array, Uint8Array> {
 	const claim = createChunkBudget(maxMessageSize);
-	let pendingChunk: Uint8Array | undefined;
 	const pipeline = createCryptoPipeline();
 	const writable = pipeline.writable({
 		async write(chunk) {
-			// Seals are issued without awaiting the previous one. hpke's context
-			// lock is FIFO, so sequence numbers follow call order.
-			if (pendingChunk !== undefined) {
-				claim(pendingChunk.length, false);
-				await pipeline.enqueue(encryptedFrame(senderContext.Seal(pendingChunk), false));
-			}
-			// Store current chunk as pending (might be final)
-			pendingChunk = chunk;
+			// Seal on arrival; close sends an empty final chunk. hpke's context lock
+			// is FIFO, so sequence numbers follow call order.
+			if (chunk.length === 0) return;
+			claim(chunk.length, false);
+			await pipeline.enqueue(encryptedFrame(senderContext.Seal(chunk), false));
 		},
 
 		async close() {
-			claim((pendingChunk ?? EMPTY).length, true);
-			await pipeline.enqueue(
-				encryptedFrame(senderContext.Seal(pendingChunk ?? EMPTY, FINAL_CHUNK_AAD), true),
-			);
+			claim(0, true);
+			await pipeline.enqueue(encryptedFrame(senderContext.Seal(EMPTY, FINAL_CHUNK_AAD), true));
 		},
 	});
 	return { writable, readable: pipeline.readable };
@@ -459,29 +453,20 @@ export function createResponseEncryptTransform(
 ): TransformStream<Uint8Array, Uint8Array> {
 	const claim = createChunkBudget(maxMessageSize);
 	let counter = 0;
-	let pendingChunk: Uint8Array | undefined;
 	const pipeline = createCryptoPipeline();
 	const writable = pipeline.writable({
 		async write(chunk) {
-			if (pendingChunk !== undefined) {
-				claim(pendingChunk.length, false);
-				await pipeline.enqueue(
-					encryptedFrame(
-						sealResponseChunk(aead, aeadKey, baseNonce, counter++, pendingChunk, false),
-						false,
-					),
-				);
-			}
-			pendingChunk = chunk;
+			if (chunk.length === 0) return;
+			claim(chunk.length, false);
+			await pipeline.enqueue(
+				encryptedFrame(sealResponseChunk(aead, aeadKey, baseNonce, counter++, chunk, false), false),
+			);
 		},
 
 		async close() {
-			claim((pendingChunk ?? EMPTY).length, true);
+			claim(0, true);
 			await pipeline.enqueue(
-				encryptedFrame(
-					sealResponseChunk(aead, aeadKey, baseNonce, counter, pendingChunk ?? EMPTY, true),
-					true,
-				),
+				encryptedFrame(sealResponseChunk(aead, aeadKey, baseNonce, counter, EMPTY, true), true),
 			);
 		},
 	});
@@ -511,16 +496,23 @@ export function createResponseDecryptTransform(
 }
 
 /**
- * Create a TransformStream that chunks input into fixed-size pieces.
- *
- * Input: arbitrary Uint8Array chunks
- * Output: Uint8Array chunks of at most maxChunkSize bytes
- *
- * This is used to split large inputs before encryption.
+ * Split input into chunks of at most maxChunkSize bytes, emitted per write.
+ * `fixedSize` coalesces writes into full chunks so frame sizes hide write
+ * sizes (for padding), holding back a partial chunk until close.
  */
 export function createChunkerTransform(
 	maxChunkSize: number,
+	fixedSize = false,
 ): TransformStream<Uint8Array, Uint8Array> {
+	if (!fixedSize) {
+		return new TransformStream<Uint8Array, Uint8Array>({
+			transform(chunk, controller) {
+				for (let i = 0; i < chunk.length; i += maxChunkSize) {
+					controller.enqueue(chunk.subarray(i, i + maxChunkSize));
+				}
+			},
+		});
+	}
 	const buffer = new StreamBuffer();
 
 	return new TransformStream<Uint8Array, Uint8Array>({
@@ -535,7 +527,6 @@ export function createChunkerTransform(
 		},
 
 		flush(controller) {
-			// Emit remaining data (may be empty, which is valid for final chunk)
 			if (buffer.length > 0) {
 				controller.enqueue(buffer.read(buffer.length));
 			}

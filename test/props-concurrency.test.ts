@@ -331,8 +331,9 @@ describe("AEAD completion order", () => {
 
 			// Oracle is the input, not a second run of the same transform: frame i has
 			// to open at counter i, which pins order independently of how it was drained.
+			const expected = [...chunks, new Uint8Array(0)];
 			const frames = parseFrames(body);
-			expect(frames.length).toBe(chunks.length);
+			expect(frames.length).toBe(expected.length);
 			for (let i = 0; i < frames.length; i++) {
 				const frame = frames[i] as ParsedChunk;
 				expect(frame.isFinal).toBe(i === frames.length - 1);
@@ -344,7 +345,7 @@ describe("AEAD completion order", () => {
 					frame.ciphertext,
 					frame.isFinal,
 				);
-				expect(pt).toEqual(chunks[i]);
+				expect(pt).toEqual(expected[i]);
 			}
 		},
 	);
@@ -467,7 +468,9 @@ describe("nonces emitted by the response transforms", () => {
 
 			expect(new Set(nonces).size, "a nonce was reused").toBe(nonces.length);
 			// and they are the counter-derived ones, in order
-			expect(nonces).toEqual(chunks.map((_, i) => computeChunkNonce(baseNonce, i).join(",")));
+			expect(nonces).toEqual(
+				[...chunks, null].map((_, i) => computeChunkNonce(baseNonce, i).join(",")),
+			);
 		},
 	);
 });

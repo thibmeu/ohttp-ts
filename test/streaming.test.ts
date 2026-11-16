@@ -63,7 +63,7 @@ describe("streaming crypto pipeline", () => {
 		// Assert: the final seal also respects the ceiling and FIFO output order.
 		expect(await output).toEqual(
 			new Uint8Array(
-				[1, 2, 3, 4, 5].flatMap((i) => [i === 5 ? 0 : 17, ...new Uint8Array(17).fill(i)]),
+				[1, 2, 3, 4, 5, 6].flatMap((i) => [i === 6 ? 0 : 17, ...new Uint8Array(17).fill(i)]),
 			),
 		);
 	});
