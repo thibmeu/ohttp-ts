@@ -6,10 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-23
+
 ### Fixed
 
 - Streaming no longer stalls on small writes: chunks are sealed as they arrive
   and closed with an empty final chunk. With padding on, frames stay 16 KiB.
+
+### Security
+
+- bhttp-ts 0.7.0: stricter BHTTP decoding. Invalid field names or values,
+  content on GET/HEAD/204/205/304, a Host that does not match the authority,
+  and non-streaming headers over 64 KiB now fail with `InvalidMessage`.
+- quicvarint 0.2.2: stricter input checks.
 
 ## [0.7.0] - 2026-11-15
 
