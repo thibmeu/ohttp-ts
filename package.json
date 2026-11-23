@@ -61,38 +61,35 @@
 	},
 	"homepage": "https://github.com/thibmeu/ohttp-ts#readme",
 	"dependencies": {
-		"bhttp-ts": "0.6.1",
-		"quicvarint": "0.2.1"
+		"bhttp-ts": "0.7.0",
+		"quicvarint": "0.2.2"
 	},
 	"peerDependencies": {
 		"hpke": "^1"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",
-		"@biomejs/biome": "2.6.7",
-		"@cloudflare/vitest-plugin": "^1.8.1",
+		"@biomejs/biome": "2.6.8",
+		"@cloudflare/vitest-plugin": "^1.9.0",
 		"@fast-check/vitest": "0.5.0",
 		"@hpke/chacha20poly1305": "1.8.1",
-		"@panva/hpke-noble": "1.1.8",
-		"@playwright/test": "1.65.0",
+		"@panva/hpke-noble": "1.1.9",
+		"@playwright/test": "1.65.1",
 		"@types/node": "26.6.6",
-		"@vitest/browser": "5.1.0",
-		"@vitest/browser-playwright": "5.1.0",
-		"@vitest/coverage-v8": "5.1.0",
+		"@vitest/browser": "5.1.1",
+		"@vitest/browser-playwright": "5.1.1",
+		"@vitest/coverage-v8": "5.1.1",
 		"esbuild": "0.28.2",
 		"esbuild-visualizer": "0.7.0",
-		"fast-check": "4.10.2",
-		"hpke": "1.1.8",
+		"fast-check": "4.11.0",
+		"hpke": "1.1.10",
 		"publint": "0.3.25",
-		"tsdown": "0.23.1",
+		"tsdown": "0.23.7",
 		"typescript": "7.0.2",
 		"vite": "8.3.8",
-		"vitest": "5.1.0"
+		"vitest": "5.1.1"
 	},
 	"overrides": {
-		"tsdown": {
-			"typescript": "7.0.2"
-		},
 		"@arethetypeswrong/core": {
 			"typescript": "5.9.3"
 		}

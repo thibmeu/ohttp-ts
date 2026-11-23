@@ -19,5 +19,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - uses: actions/cache@v6
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('package-lock.json') }}
       - run: npx playwright install chromium firefox --with-deps
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+      # Browsers come from cache; only the system libraries still need apt.
+      - run: npx playwright install-deps chromium firefox
+        if: steps.pw-cache.outputs.cache-hit == 'true'
       - run: npm run test:browser

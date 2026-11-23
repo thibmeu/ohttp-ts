@@ -15,5 +15,7 @@ export default defineConfig({
 		// Property tests run 200 cases each; the 5s default trips them under
 		// parallel load even though each passes on its own.
 		testTimeout: 30_000,
+		// One shared workerd isolate instead of one per file (~1.5s spawn each).
+		isolate: false,
 	},
 });
