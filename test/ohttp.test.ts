@@ -148,6 +148,49 @@ describe("OHTTP round-trip", () => {
 		expect(extracts).toBe(0);
 	});
 
+	// A gateway must not emit a response its client rejects for oversized headers.
+	it.each([
+		["OHTTP", OHTTPClient, OHTTPServer],
+		["chunked OHTTP", ChunkedOHTTPClient, ChunkedOHTTPServer],
+	] as const)("rejects %s response headers over the metadata limit", async (_, Client, Server) => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const { init } = await new Client(suite, keyConfig).encapsulateRequest(
+			new Request("https://example.com"),
+		);
+		const { context } = await new Server([keyConfig]).decapsulateRequest(
+			new Request("https://gateway.example", init),
+		);
+		// Chunked responses fail while streaming, so read the body either way.
+		await expect(
+			context
+				.encapsulateResponse(new Response(null, { headers: { "x-big": "a".repeat(70_000) } }))
+				.then((response) => response.arrayBuffer()),
+		).rejects.toThrow(expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }));
+	});
+
+	// Another gateway may still send one: report the limit, not a framing error.
+	it("reports response headers over the metadata limit as MessageTooLarge", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const { init, context } = await new OHTTPClient(suite, keyConfig).encapsulateRequest(
+			new Request("https://example.com"),
+		);
+		const { context: serverContext } = await new OHTTPServer([keyConfig]).decapsulate(
+			new Uint8Array(await new Request("https://gateway.example", init).arrayBuffer()),
+		);
+		const oversized = await bhttpEncoder().encodeResponse(
+			new Response(null, { headers: { "x-big": "a".repeat(70_000) } }),
+			{ maxMetadataSize: Number.MAX_SAFE_INTEGER },
+		);
+		const response = new Response(await serverContext.encryptResponse(oversized), {
+			headers: { "Content-Type": MediaType.RESPONSE },
+		});
+		await expect(context.decapsulateResponse(response)).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+	});
+
 	it("limits buffered HTTP bodies and cancels oversized inputs", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 		const keyConfig = await generateKeyConfig(suite, 1);

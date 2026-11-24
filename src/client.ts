@@ -1,6 +1,7 @@
-import { MessageLimitExceededError, type Padding } from "bhttp-ts";
+import type { Padding } from "bhttp-ts";
 import type { CipherSuite, Key, SenderContext } from "hpke";
 import {
+	asInvalidMessage,
 	bhttpDecoder,
 	bhttpEncoder,
 	DEFAULT_PADDING,
@@ -31,7 +32,7 @@ import {
 	openResponseChunk,
 	type ResponseCrypto,
 } from "./encapsulation.ts";
-import { asInvalidMessage, OHTTPError, OHTTPErrorCode } from "./errors.ts";
+import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
 import { INCREMENTAL_HEADER } from "./incremental.ts";
 import {
 	type AeadId,
@@ -365,10 +366,7 @@ export class OHTTPClient {
 				padding: this.#padding,
 			});
 		} catch (error) {
-			if (error instanceof MessageLimitExceededError) {
-				throw new OHTTPError(OHTTPErrorCode.MessageTooLarge);
-			}
-			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+			throw asInvalidMessage(error);
 		}
 
 		// Encapsulate
@@ -404,10 +402,10 @@ export class OHTTPClient {
 				// Decode Binary HTTP to Response
 				try {
 					return bhttpDecoder().decodeResponse(binaryResponse);
-				} catch {
+				} catch (error) {
 					// Decryption already succeeded, so this is the gateway's framing bug.
-					// Matches the streaming path, which reports InvalidMessage.
-					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+					// Matches the streaming path.
+					throw asInvalidMessage(error);
 				}
 			},
 		};
