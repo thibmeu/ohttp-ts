@@ -348,8 +348,8 @@ main buffered and streaming paths.
 The chunked API deliberately exposes one resource setting: `maxMessageSize`.
 Plaintext chunks use the draft's 16 KiB size, and the ciphertext bound is
 derived from it. Streaming operations accept an `AbortSignal`, and the BHTTP
-decoder applies a separate metadata limit. Keeping these related bounds inside
-the library avoids contradictory settings at the client and gateway.
+encoder and decoder apply a separate 64 KiB metadata limit. Keeping these related
+bounds inside the library avoids contradictory settings at the client and gateway.
 
 - **Replay protection** is out of scope ([RFC 9458 Section 6.5](https://www.rfc-editor.org/rfc/rfc9458.html#name-replay-attacks))
 - **Decryption errors are opaque** to prevent oracle attacks

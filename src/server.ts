@@ -1,6 +1,7 @@
-import { MessageLimitExceededError, type Padding } from "bhttp-ts";
+import type { Padding } from "bhttp-ts";
 import type { CipherSuite, RecipientContext } from "hpke";
 import {
+	asInvalidMessage,
 	bhttpDecoder,
 	bhttpEncoder,
 	DEFAULT_PADDING,
@@ -34,7 +35,7 @@ import {
 	type ResponseCrypto,
 	sealResponseChunk,
 } from "./encapsulation.ts";
-import { asInvalidMessage, OHTTPError, OHTTPErrorCode } from "./errors.ts";
+import { OHTTPError, OHTTPErrorCode } from "./errors.ts";
 import { INCREMENTAL_HEADER } from "./incremental.ts";
 import {
 	isValidKeyId,
@@ -350,12 +351,12 @@ export class OHTTPServer {
 		let innerRequest: Request;
 		try {
 			innerRequest = bhttpDecoder().decodeRequest(binaryRequest);
-		} catch {
+		} catch (error) {
 			// Decryption already succeeded, so this is the client's framing bug, not
 			// a crypto failure. Reporting DecryptionFailed here would make the real
 			// ones unreadable in gateway logs, and the client learns nothing it did
 			// not already know: it encoded the plaintext.
-			throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+			throw asInvalidMessage(error);
 		}
 
 		// Create HTTP context
@@ -371,10 +372,7 @@ export class OHTTPServer {
 						padding,
 					});
 				} catch (error) {
-					if (error instanceof MessageLimitExceededError) {
-						throw new OHTTPError(OHTTPErrorCode.MessageTooLarge);
-					}
-					throw new OHTTPError(OHTTPErrorCode.InvalidMessage);
+					throw asInvalidMessage(error);
 				}
 
 				// Encrypt

@@ -2,6 +2,7 @@ import {
 	BHttpDecoder,
 	BHttpEncoder,
 	MessageLimitExceededError,
+	MetadataLimitExceededError,
 	type Padding,
 	padmeWithFloor,
 } from "bhttp-ts";
@@ -34,7 +35,16 @@ export function resolvePadding(value: Padding, maxMessageSize: number): Padding 
 }
 
 export function mapBhttpEncodingError(error: unknown): unknown {
-	return error instanceof MessageLimitExceededError
+	return error instanceof MessageLimitExceededError || error instanceof MetadataLimitExceededError
 		? new OHTTPError(OHTTPErrorCode.MessageTooLarge)
 		: error;
+}
+
+/**
+ * Keep the code a decryption pipeline raised and report Binary HTTP size limits
+ * as MessageTooLarge; anything else is a framing error.
+ */
+export function asInvalidMessage(error: unknown): OHTTPError {
+	const mapped = mapBhttpEncodingError(error);
+	return mapped instanceof OHTTPError ? mapped : new OHTTPError(OHTTPErrorCode.InvalidMessage);
 }
