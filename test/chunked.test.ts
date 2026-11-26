@@ -697,6 +697,29 @@ describe("message size policy", () => {
 });
 
 describe("chunked OHTTP error handling", () => {
+	// A gateway must not emit a response its client rejects for oversized headers.
+	it("rejects response headers over the metadata limit", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const { init } = await new ChunkedOHTTPClient(suite, keyConfig).encapsulateRequest(
+			new Request("https://example.com"),
+		);
+		const { context } = await new ChunkedOHTTPServer([keyConfig]).decapsulateRequest(
+			new Request("https://gateway.example", init),
+		);
+		const response = await context.encapsulateResponse(
+			new Response(null, { headers: { "x-big": "a".repeat(70_000) } }),
+		);
+		// Read the stream directly: Chromium's arrayBuffer() masks its error as "Failed to fetch".
+		const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+		const drain = async () => {
+			while (!(await reader.read()).done) {}
+		};
+		await expect(drain()).rejects.toThrow(
+			expect.objectContaining({ code: OHTTPErrorCode.MessageTooLarge }),
+		);
+	});
+
 	it("rejects corrupted chunk ciphertext", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 
