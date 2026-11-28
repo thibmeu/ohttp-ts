@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- When a request decrypts but its Binary HTTP does not decode,
+  `decapsulateRequest` throws an `OHTTPError` with a `context`, so the gateway
+  can send an encapsulated error as RFC 9458 Section 5.2 requires.
+
+### Fixed
+
+- The RFC 9458 Appendix A request and response plaintexts, which omit the empty
+  header section, now decode. Requires bhttp-ts 0.7.2.
+- The README gateway example checked only the host and followed redirects. It
+  now checks the whole origin, does not follow redirects, and encapsulates
+  rejections and fetch failures.
+
 ## [0.7.2] - 2026-11-26
 
 ### Fixed

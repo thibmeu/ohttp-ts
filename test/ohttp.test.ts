@@ -15,7 +15,7 @@ import {
 	KEM_DHKEM_X25519_HKDF_SHA256,
 } from "hpke";
 import { describe, expect, it, vi } from "vitest";
-import { bhttpEncoder } from "../src/bhttp.js";
+import { bhttpDecoder, bhttpEncoder } from "../src/bhttp.js";
 import { ChunkedOHTTPClient, OHTTPClient } from "../src/client.js";
 import { MediaType } from "../src/constants.js";
 import {
@@ -563,6 +563,25 @@ describe("RFC 9458 Appendix A test vectors", () => {
 		expect(toHex(encapsulatedResponse)).toBe(vector.encapsulatedResponse);
 	});
 
+	// Both plaintexts omit the empty header section; RFC 9292 Section 3.8 only
+	// names trailers and content, but the high-level API must accept them.
+	it("decodes the RFC's request and response plaintexts", async () => {
+		const { keyConfig } = await rfcServer();
+		const { request } = await new OHTTPServer([keyConfig]).decapsulateRequest(
+			new Request("https://gateway.example/", {
+				method: "POST",
+				headers: { "Content-Type": MediaType.REQUEST },
+				body: hex(vector.encapsulatedRequest),
+			}),
+		);
+		expect(request.method).toBe("GET");
+		expect(request.url).toBe("https://example.com/");
+
+		const response = bhttpDecoder().decodeResponse(hex(vector.response));
+		expect(response.status).toBe(200);
+		expect([...response.headers]).toEqual([]);
+	});
+
 	it("uses max(Nn, Nk) for the response nonce, as the RFC's vector does", async () => {
 		const { suite } = await rfcServer();
 		expect(getResponseNonceLength(suite)).toBe(hex(vector.responseNonce).length);
@@ -592,6 +611,28 @@ describe("Interoperability with chris-wood/ohttp-js", () => {
 });
 
 describe("OHTTP error handling", () => {
+	// RFC 9458 Section 5.2: errors after decryption go back encapsulated.
+	it("lets the gateway encapsulate an error for undecodable Binary HTTP", async () => {
+		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
+		const keyConfig = await generateKeyConfig(suite, 1);
+		const client = new OHTTPClient(suite, keyConfig);
+		const { encapsulatedRequest, context } = await client.encapsulate(Uint8Array.of(0xff));
+
+		const err = await new OHTTPServer([keyConfig])
+			.decapsulateRequest(
+				new Request("https://gateway.example/", {
+					method: "POST",
+					headers: { "Content-Type": MediaType.REQUEST },
+					body: encapsulatedRequest,
+				}),
+			)
+			.catch((e: unknown) => e);
+		if (!(err instanceof OHTTPError) || err.context === undefined) throw err;
+		const encapsulated = await err.context.encapsulateResponse(new Response(null, { status: 400 }));
+		const binary = await context.decryptResponse(new Uint8Array(await encapsulated.arrayBuffer()));
+		expect(bhttpDecoder().decodeResponse(binary).status).toBe(400);
+	});
+
 	it("produces opaque decryption errors", async () => {
 		const suite = new CipherSuite(KEM_DHKEM_X25519_HKDF_SHA256, KDF_HKDF_SHA256, AEAD_AES_128_GCM);
 

@@ -347,18 +347,6 @@ export class OHTTPServer {
 		const { request: binaryRequest, context: bytesContext } =
 			await this.decapsulate(encapsulatedRequest);
 
-		// Decode Binary HTTP to Request
-		let innerRequest: Request;
-		try {
-			innerRequest = bhttpDecoder().decodeRequest(binaryRequest);
-		} catch (error) {
-			// Decryption already succeeded, so this is the client's framing bug, not
-			// a crypto failure. Reporting DecryptionFailed here would make the real
-			// ones unreadable in gateway logs, and the client learns nothing it did
-			// not already know: it encoded the plaintext.
-			throw asInvalidMessage(error);
-		}
-
 		// Create HTTP context
 		const maxMessageSize = this.maxMessageSize;
 		const padding = this.#padding;
@@ -387,6 +375,19 @@ export class OHTTPServer {
 				});
 			},
 		};
+
+		// Decode Binary HTTP to Request
+		let innerRequest: Request;
+		try {
+			innerRequest = bhttpDecoder().decodeRequest(binaryRequest);
+		} catch (error) {
+			// Decryption already succeeded, so this is the client's framing bug, not
+			// a crypto failure. Reporting DecryptionFailed here would make the real
+			// ones unreadable in gateway logs, and the client learns nothing it did
+			// not already know: it encoded the plaintext. The context lets the
+			// gateway encapsulate its error response (RFC 9458 Section 5.2).
+			throw new OHTTPError(asInvalidMessage(error).code, context);
+		}
 
 		return { request: innerRequest, context };
 	}
@@ -718,23 +719,6 @@ export class ChunkedOHTTPServer {
 		// Decrypt stream
 		const plaintextStream = ciphertextStream.pipeThrough(decryptTransform);
 
-		let decoded: Request;
-		try {
-			decoded = await bhttpDecoder().decodeRequestStream(plaintextStream);
-		} catch (error) {
-			if (signal.aborted) throw signal.reason;
-			throw asInvalidMessage(error);
-		}
-		const innerRequest =
-			decoded.body === null
-				? decoded
-				: new Request(decoded, {
-						body: mapStreamErrors(decoded.body, (error) =>
-							signal.aborted ? signal.reason : asInvalidMessage(error),
-						),
-						duplex: "half",
-					} as StreamingRequestInit);
-
 		const { recipientContext, enc, suite } = recipientState(requestCtx);
 		const maxMessageSize = this.maxMessageSize;
 		const padding = this.#padding;
@@ -801,6 +785,26 @@ export class ChunkedOHTTPServer {
 				});
 			},
 		};
+
+		let decoded: Request;
+		try {
+			decoded = await bhttpDecoder().decodeRequestStream(plaintextStream);
+		} catch (error) {
+			if (signal.aborted) throw signal.reason;
+			// Decryption and chunk framing fail as OHTTPError; those happened before
+			// protection was removed, so they get no context (RFC 9458 Section 5.2).
+			if (error instanceof OHTTPError) throw error;
+			throw new OHTTPError(asInvalidMessage(error).code, context);
+		}
+		const innerRequest =
+			decoded.body === null
+				? decoded
+				: new Request(decoded, {
+						body: mapStreamErrors(decoded.body, (error) =>
+							signal.aborted ? signal.reason : asInvalidMessage(error),
+						),
+						duplex: "half",
+					} as StreamingRequestInit);
 
 		return { request: innerRequest, context };
 	}

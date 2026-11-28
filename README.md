@@ -359,23 +359,37 @@ bounds inside the library avoids contradictory settings at the client and gatewa
 Every failure is an `OHTTPError` carrying a code: `InvalidKeyConfig`,
 `UnknownKeyId`, `UnsupportedCipherSuite`, `DecryptionFailed`,
 `EncryptionFailed`, `InvalidMessage`, and the sequence and size limit codes. Keep
-that detail for your own logs and answer the relay with a plain 400, as
-[RFC 9458 Section 4.3](https://www.rfc-editor.org/rfc/rfc9458.html#name-request-decapsulation)
-requires of any decapsulation failure:
+that detail for your own logs. If decapsulation fails, the relay gets a plain
+400, as [RFC 9458 Section 4.3](https://www.rfc-editor.org/rfc/rfc9458.html#name-request-decapsulation)
+requires. Anything that goes wrong after decryption must reach the client in an
+encapsulated response
+([Section 5.2](https://www.rfc-editor.org/rfc/rfc9458.html#name-errors)), so the
+relay cannot tell it apart from success. This covers a rejected target, a failed
+fetch, and Binary HTTP that does not decode, which throws an `OHTTPError` with a
+`context`:
 
 ```typescript
 import { isOHTTPError } from "ohttp-ts";
 
 try {
   const { request, context } = await gateway.decapsulateRequest(ohttpRequest);
-  // The client chooses this URL. The gateway MUST check it before fetching.
-  if (new URL(request.url).host !== "example.com") {
-    return new Response(null, { status: 400 });
+  // The client chooses this URL. Check the whole origin, and do not follow
+  // redirects to origins that were never checked.
+  if (new URL(request.url).origin !== "https://example.com") {
+    return await context.encapsulateResponse(new Response(null, { status: 403 }));
   }
-  return await context.encapsulateResponse(await fetch(request));
+  const response = await fetch(request, { redirect: "manual" }).catch(
+    () => new Response(null, { status: 502 }),
+  );
+  // Reading or encoding the target response can still fail, for example on a
+  // browser's status-0 opaque redirect. Report that encapsulated too.
+  return await context
+    .encapsulateResponse(response)
+    .catch(() => context.encapsulateResponse(new Response(null, { status: 502 })));
 } catch (err) {
-  if (isOHTTPError(err)) return new Response(null, { status: 400 });
-  throw err;
+  if (!isOHTTPError(err)) throw err;
+  const badRequest = new Response(null, { status: 400 });
+  return err.context ? await err.context.encapsulateResponse(badRequest) : badRequest;
 }
 ```
 
